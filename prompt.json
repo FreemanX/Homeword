@@ -1,0 +1,57 @@
+{
+  "instructions": "You are a typing assistant. You are given the app the user is typing in and the text typed so far. Predict how the text continues. The prediction starts exactly where the text ends: if the last word is unfinished, begin with its remaining letters (no space); if the last word is complete and there is no trailing space, begin with a space; if the text ends with a space, begin with the next word. After the unfinished word, continue for {words} more words with correct grammar. Stop at the end of the sentence, never write more than one sentence. Never repeat earlier text.",
+  "shots": [
+    {
+      "app": "mail",
+      "text": "I will send you the docu",
+      "completion": "ment by the end of the day"
+    },
+    {
+      "app": "chat",
+      "text": "We are thinking about booking a flight to Lis",
+      "completion": "bon for the first week of June"
+    },
+    {
+      "app": "notes",
+      "text": "Recipe: mix the flour, sugar and but",
+      "completion": "ter until the dough is smooth"
+    },
+    {
+      "app": "terminal",
+      "text": "git commit -m \"fix: handle empty list in the pars",
+      "completion": "er when no arguments are given"
+    },
+    {
+      "app": "essay",
+      "text": "The history of the Roman Empire is a fascin",
+      "completion": "ating story of power and ambition"
+    },
+    {
+      "app": "chat",
+      "text": "Happy birthday! I hope you have a wonder",
+      "completion": "ful day with your family and friends"
+    },
+    {
+      "app": "chat",
+      "text": "Thanks for your help with the",
+      "completion": " project, I really appreciate it"
+    },
+    {
+      "app": "terminal",
+      "text": "ssh -L 8080:localhost:80 deploy@stag",
+      "completion": "ing.example.com -N"
+    },
+    {
+      "app": "notes",
+      "text": "Buy milk, eggs and ",
+      "completion": "bread on the way home from work"
+    },
+    {
+      "app": "review",
+      "text": "The new feature will be avail",
+      "completion": "able next week for all users"
+    }
+  ],
+  "instructions_fullword": "You are a typing assistant. You are given the app the user is typing in and the text typed so far. Predict how the text continues. If the text does not end with a space, start your answer by re-writing its last word in full (completed, if it is unfinished), then continue for {words} more words with correct grammar. If the text ends with a space, start directly with the next word. Stop at the end of the sentence. Never repeat earlier text.",
+  "instructions_short": "Continue the user's text: if the last word is unfinished, give its remaining letters first, then about {words} more words. One sentence at most, correct grammar, never repeat the text."
+}

@@ -1,0 +1,656 @@
+#!/usr/bin/env python3
+"""pred: command line front end for the predictd service.
+
+  pred try [--app auto] [--debounce 0]   type and watch predictions; Enter starts a new round and prints its stats
+  pred ask "git sta" [--app terminal]          one prediction, printed with its timings
+  pred status | start | stop                   manage the background daemon (it also starts itself on first use)
+
+In `try`:  Tab = accept one word   Right = accept all   Esc = dismiss   Enter = end round, start a new one
+           Backspace / Ctrl-W / Ctrl-U edit (append-only editor, no cursor movement)   Ctrl-C or Ctrl-D = quit with session totals
+"""
+import argparse, codecs, re, collections, datetime, json, os, select, shutil, signal, socket, subprocess, sys, termios, time, tty, unicodedata
+
+ROOT = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
+SOCK = f"/tmp/predictd-{os.getuid()}.sock"
+DAEMON_LOG = f"/tmp/predictd-{os.getuid()}.log"
+DIM, RST, BOLD, CYAN, GREEN, YELLOW = "\x1b[90m", "\x1b[0m", "\x1b[1m", "\x1b[36m", "\x1b[32m", "\x1b[33m"
+
+
+# ---------------------------------------------------------------- daemon connection
+
+class Link:
+    """Newline-delimited JSON over the daemon's unix socket (non-blocking reads, buffered)."""
+    def __init__(self, s):
+        self.s, self.buf = s, b""
+        s.setblocking(False)
+
+    def send(self, **req):
+        self.s.setblocking(True)
+        try:
+            self.s.sendall((json.dumps(req) + "\n").encode())
+        finally:
+            self.s.setblocking(False)
+
+    def read(self):
+        """Return the complete messages that have arrived; raise ConnectionError if the daemon went away."""
+        try:
+            d = self.s.recv(65536)
+        except BlockingIOError:
+            d = None
+        if d == b"":
+            raise ConnectionError("daemon closed the connection")
+        if d:
+            self.buf += d
+        out = []
+        while b"\n" in self.buf:
+            line, self.buf = self.buf.split(b"\n", 1)
+            out.append(json.loads(line))
+        return out
+
+    def call(self, timeout=10, **req):
+        self.send(**req)
+        end = time.monotonic() + timeout
+        while time.monotonic() < end:
+            select.select([self.s], [], [], 0.05)
+            for m in self.read():
+                if m.get("id") == req["id"]:
+                    return m
+        raise TimeoutError("no answer from the daemon")
+
+
+def connect():
+    s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    s.connect(SOCK)
+    return Link(s)
+
+
+def ensure_daemon(spawn=True, quiet=False):
+    try:
+        return connect()
+    except OSError:
+        pass
+    binary = os.path.join(ROOT, "predictd")
+    if not spawn:
+        sys.exit("daemon is not running (pred start)")
+    if not os.path.exists(binary):
+        sys.exit(f"{binary} not found: run {ROOT}/build.sh first")
+    if not quiet:
+        print("starting predictd (loads the model, a few seconds)…", flush=True)
+    log = open(DAEMON_LOG, "ab")
+    subprocess.Popen([binary, "--socket", SOCK], stdin=subprocess.DEVNULL, stdout=log, stderr=log, start_new_session=True)
+    end = time.monotonic() + 40
+    while time.monotonic() < end:
+        time.sleep(0.25)
+        try:
+            return connect()
+        except OSError:
+            continue
+    sys.exit(f"daemon did not come up, see {DAEMON_LOG}")
+
+
+# ---------------------------------------------------------------- stats
+
+def pct(xs, p):
+    xs = sorted(xs)
+    return xs[min(len(xs) - 1, int(round(p / 100 * (len(xs) - 1))))] if xs else float("nan")
+
+
+class Round:
+    def __init__(self, n):
+        self.n, self.t0 = n, time.monotonic()
+        self.keys = 0
+        self.sent = self.answered = self.stale = self.empty = self.guard = self.errors = 0
+        self.sugs = []                      # finished suggestion records
+        self.key_to_ghost, self.model_ms, self.queue_ms, self.cached, self.sessions = [], [], [], [], collections.Counter()
+        self.shown_parts = []                # per shown suggestion: where the key→ghost time went
+        self.instant = self.prefetched = 0
+        self.acc_all = self.acc_word = self.acc_chars = self.followed = 0
+        self.final = ""
+
+    def merge(self, o):
+        for k in ("keys", "sent", "answered", "stale", "empty", "guard", "errors", "acc_all", "acc_word", "acc_chars", "followed", "instant", "prefetched"):
+            setattr(self, k, getattr(self, k) + getattr(o, k))
+        for k in ("sugs", "key_to_ghost", "model_ms", "queue_ms", "cached", "shown_parts"):
+            getattr(self, k).extend(getattr(o, k))
+        self.sessions.update(o.sessions)
+
+    def lines(self, title, with_line=True):
+        dur = time.monotonic() - self.t0
+        shown = len(self.sugs)
+        useful = sum(1 for s in self.sugs if s["accepted"] or s["followed"] >= 2)
+        total_out = len(self.final) if with_line else max(self.acc_chars + self.followed, 1)
+        L = [f"{BOLD}{CYAN}── {title} " + "─" * max(0, 58 - len(title)) + RST]
+        if with_line:
+            L.append(f" line      {self.final!r}")
+        L.append(f" typing    {self.keys} keystrokes in {dur:.1f}s" + (f" ({self.keys / dur:.1f}/s)" if dur > 0 and self.keys else ""))
+        L.append(f" requests  {self.sent} sent · {self.answered} answered · {self.stale} stale (typed on before the answer)"
+                 + (f" · {self.guard} guardrail" if self.guard else "") + (f" · {self.errors} errors" if self.errors else ""))
+        L.append(f" ghost     {shown} shown · {useful} useful (accepted, or typed along ≥2 chars) · {self.empty} empty answers · {self.instant} instant from memory/prefetch ({self.prefetched} prefetches)")
+        if self.acc_all or self.acc_word or self.followed:
+            L.append(f" accepted  {self.acc_all} whole + {self.acc_word} word-by-word = {self.acc_chars} chars · typed along {self.followed} chars"
+                     f" · saved {self.acc_chars} keystrokes" + (f" ({100 * self.acc_chars / max(total_out, 1):.0f}% of the line)" if with_line and self.final else ""))
+        if self.key_to_ghost:
+            k = self.key_to_ghost
+            mk = [x for x in k if x > 5] or [float("nan")]
+            L.append(f" latency   last key → ghost  p50 {pct(k, 50):.0f} ms · p90 {pct(k, 90):.0f} ms · max {max(k):.0f} ms · model-backed only p50 {pct(mk, 50):.0f} ms"
+                     f"   (model p50 {pct(self.model_ms, 50):.0f} ms, waiting behind another request p50 {pct(self.queue_ms, 50):.0f} ms)")
+        if self.shown_parts:
+            sp = self.shown_parts
+            g = lambda k: pct([x[k] for x in sp], 50)
+            miss = sum(1 for x in sp if x["cached"] < 0.5)
+            L.append(f" breakdown shown ghosts, p50: wait after last key {g('wait'):.0f} ms + model {g('model'):.0f} + daemon other {g('daemon_other'):.1f} + socket {g('transport'):.1f}"
+                     f" · {miss}/{len(sp)} missed the prefix cache · sessions {dict(collections.Counter(x['session'] for x in sp))}")
+        if self.cached:
+            L.append(f" cache     {100 * sum(self.cached) / len(self.cached):.0f}% of input tokens from the prefix cache · session {dict(self.sessions)}")
+        return L
+
+
+# ---------------------------------------------------------------- try mode
+
+def width(s):
+    return sum(2 if unicodedata.east_asian_width(c) in "WF" else 0 if unicodedata.combining(c) else 1 for c in s)
+
+
+def fit(s, cols, tail=False):
+    """Crop s to `cols` display columns (keeping the end if tail)."""
+    if width(s) <= cols:
+        return s
+    out, w = "", 0
+    for c in (reversed(s) if tail else s):
+        cw = width(c)
+        if w + cw > cols:
+            break
+        out = c + out if tail else out + c
+        w += cw
+    return out
+
+
+SHELL_WORDS = {"cd", "export", "source", "alias", "echo", "set", "unset", "exit", "history", "jobs", "fg", "bg", "type", "which", "eval", "exec", "ulimit", "umask", "pushd", "popd", "z"}
+
+
+def guess_app(text):
+    """terminal if the line starts like a shell command (a real command, short or with shell punctuation), otherwise notes."""
+    words = text.split()
+    if not words:
+        return "notes"
+    first = words[0]
+    if not (first in SHELL_WORDS or (first.islower() and shutil.which(first))):
+        return "notes"
+    shellish = any(c in text for c in "-/|$~\"=&><")
+    return "terminal" if len(words) <= 3 or shellish else "notes"
+
+
+def first_word(g):
+    i = 0
+    while i < len(g) and g[i].isspace():
+        i += 1
+    while i < len(g) and not g[i].isspace():
+        i += 1
+    return g[:i]
+
+
+def run_try(a):
+    if not sys.stdin.isatty():
+        sys.exit("pred try needs a terminal")
+    link = ensure_daemon(spawn=not a.no_spawn)
+    opts = json.loads(a.opts)
+    stream = f"try-{os.getpid()}"
+    out = sys.stdout
+    cols = lambda: shutil.get_terminal_size().columns
+    fd = sys.stdin.fileno()
+    old = termios.tcgetattr(fd)
+    dec = codecs.getincrementaldecoder("utf-8")("ignore")
+    session = Round(0)
+    session.t0 = time.monotonic()
+    log = open(a.log, "a") if a.log else None
+    nxt = [0]                                # request counter
+
+    st = {"text": "", "ghost": "", "cur": None, "last_key": time.monotonic(), "due": None, "latest": None, "status": "type something…", "round": None}
+    reqs = {}                                # id -> {"text", "t_key", "t_sent", "prefetch"}
+    memo = collections.OrderedDict()         # text -> suggestion the daemon gave for exactly that text ("" = none)
+    ghost_file = os.environ.get("PRED_GHOST_FILE")
+
+    def remember(text, sug):
+        memo[text] = sug
+        memo.move_to_end(text)
+        while len(memo) > 500:
+            memo.popitem(last=False)
+
+    def ends_sentence(t):
+        return t.rstrip().endswith((".", "!", "?", "…", "。", "！", "？"))
+
+    def prefetch():
+        """While the user reads or types along the ghost, ask for what comes after it, so the next ghost is instant."""
+        full = st["text"] + st["ghost"]
+        if not st["ghost"].strip() or ends_sentence(full) or full in memo or any(q["text"] == full for q in reqs.values()):
+            return
+        nxt[0] += 1
+        rid = f"{stream}-{nxt[0]}"
+        reqs[rid] = {"app": a.app if a.app != "auto" else guess_app(full), "text": full, "t_key": time.monotonic(),
+                     "t_sent": time.monotonic(), "round": st["round"], "prefetch": True}
+        st["round"].prefetched += 1
+        try:
+            link.send(op="predict", id=rid, app=reqs[rid]["app"], text=full, stream=stream, opts=opts)
+        except OSError:
+            pass
+
+    def cap_words(text, g, n):
+        """Keep at most n words of ghost g; the end of a word the user is still typing does not count."""
+        out, words, i = "", 0, 0
+        if g and not g[0].isspace() and text and not text[-1].isspace():
+            while i < len(g) and not g[i].isspace():
+                i += 1
+            out, g = g[:i], g[i:]
+        for piece in re.findall(r"\s+\S+|\S+", g):
+            if words >= n:
+                break
+            out += piece
+            words += 1
+        return out
+
+    def instant():
+        """Extend or replace the ghost from memory (earlier answers, prefetches) without asking the model."""
+        g = st["ghost"]
+        tail = memo.get(st["text"] + g)
+        if tail is None or not tail.strip() or ends_sentence(st["text"] + g):
+            return False
+        if len(g.split()) >= a.words:
+            return False
+        st["ghost"] = cap_words(st["text"], g + tail, a.words)
+        if st["ghost"] == g:
+            return False
+        st["latest"], st["due"] = None, None
+        r = st["round"]
+        r.instant += 1
+        if not g:                                    # a new ghost (not an extension): it counts as a shown suggestion
+            k2g = (time.monotonic() - st["last_key"]) * 1000
+            r.key_to_ghost.append(k2g)
+            finish_cur()
+            st["cur"] = {"orig": st["ghost"], "at": st["text"], "accepted": 0, "followed": 0, "ms": k2g, "instant": True}
+            st["status"] = f"✓ instant ghost from memory ({k2g:.1f} ms)"
+        else:
+            st["status"] = "ghost extended from the prefetched continuation"
+        prefetch()
+        return True
+
+    def new_round():
+        st["round"] = Round(len(rounds) + 1)
+        rounds.append(st["round"])
+        st.update(text="", ghost="", cur=None, due=None, latest=None, status="type something…")
+        render()
+
+    def finish_cur():
+        if st["cur"]:
+            st["round"].sugs.append(st["cur"])
+            st["cur"] = None
+
+    def render(final=False):
+        if ghost_file:
+            with open(ghost_file, "w") as gf:
+                json.dump({"text": st["text"], "ghost": st["ghost"]}, gf)
+        pre = f"[{st['round'].n}] › "
+        room = cols() - width(pre) - 2
+        text = fit(st["text"], max(room - 1, 1), tail=True)
+        ghost = "" if final else fit(st["ghost"], max(room - width(text), 0))
+        s = "\r\x1b[K" + pre + text + (DIM + ghost + RST if ghost else "")
+        if final:
+            out.write(s + "\n\r\x1b[K")
+        else:
+            col = width(pre) + width(text)
+            s += "\n\r\x1b[K" + DIM + fit(st["status"], cols() - 1) + RST + "\x1b[A\r" + (f"\x1b[{col}C" if col else "")
+            out.write(s)
+        out.flush()
+
+    def changed(typed=None):
+        """The text changed: keep a ghost that the typed character follows, otherwise drop it and schedule a request."""
+        st["last_key"] = time.monotonic()
+        g = st["ghost"]
+        if typed is not None and g and g[0] == typed:
+            st["ghost"] = g[1:]
+            if st["cur"]:
+                st["cur"]["followed"] += 1
+            st["round"].followed += 1
+        else:
+            finish_cur()
+            st["ghost"] = ""
+        st["latest"] = None
+        enough = len(st["text"].strip()) >= a.min_chars
+        if enough and instant():
+            render()
+            return
+        if st["ghost"].strip() and len(st["ghost"].split()) >= 2:      # still a useful ghost left: no new request needed yet
+            st["due"], st["status"] = None, f"following the suggestion ({len(st['ghost'].split())} words left)"
+        elif enough:
+            st["due"], st["status"] = st["last_key"] + a.debounce / 1000, f"waiting {a.debounce} ms for a pause…"
+        else:
+            st["due"], st["status"] = None, "type something…"
+        render()
+
+    def fire():
+        for rid, q in reqs.items():
+            if q["text"] == st["text"] and q["round"] is st["round"]:
+                q.update(prefetch=False, t_key=st["last_key"])
+                st["latest"], st["due"], st["status"] = rid, None, "waiting for the prefetch already running for this text…"
+                render()
+                return
+        nxt[0] += 1
+        rid = f"{stream}-{nxt[0]}"
+        reqs[rid] = {"app": a.app if a.app != "auto" else guess_app(st["text"]), "text": st["text"], "t_key": st["last_key"], "t_sent": time.monotonic(), "round": st["round"]}
+        st["latest"], st["due"] = rid, None
+        st["round"].sent += 1
+        st["status"] = "predicting…"
+        try:
+            link.send(op="predict", id=rid, app=reqs[rid]["app"], text=st["text"], stream=stream, opts=opts)
+        except OSError:
+            st["status"] = "daemon connection lost (restart pred try)"
+        render()
+
+    def on_reply(m):
+        r = st["round"]
+        info = reqs.pop(m.get("id"), None)
+        if info is None or info["round"] is not r:      # unknown, or answered after its round had ended
+            return
+        now = time.monotonic()
+        if m.get("error") == "cancelled":
+            return
+        r.answered += 1
+        if not m.get("ok"):
+            r.errors += 1
+            st["status"] = "error: " + str(m.get("error"))[:60]
+            return
+        t = m.get("timing", {})
+        toks = m.get("tokens") or {}
+        if "model_ms" in t:
+            r.model_ms.append(t["model_ms"])
+            r.queue_ms.append(max(0.0, (now - info["t_sent"]) * 1000 - t.get("total_ms", 0)))
+        if toks.get("in"):
+            r.cached.append(toks["cached"] / toks["in"])
+        r.sessions[t.get("session", "?")] += 1
+        if m.get("suppressed") == "guardrail":
+            r.guard += 1
+        sug = m.get("suggestion") or ""
+        if m.get("sentence_end") and not ends_sentence(info["text"] + sug):
+            sug = sug.rstrip()
+        remember(info["text"], sug)
+        if info.get("prefetch"):
+            if st["text"] == info["text"] and not st["ghost"]:
+                instant()
+            elif st["text"] + st["ghost"] == info["text"]:
+                instant()                                # extends the ghost the user is following
+            return
+        fresh = m["id"] == st["latest"] and info["text"] == st["text"]
+        if not fresh:
+            r.stale += 1                      # the user typed on before this answer arrived
+            return
+        k2g = (now - info["t_key"]) * 1000
+        if not sug.strip():
+            r.empty += 1
+            st["status"] = f"no suggestion ({m.get('suppressed') or 'empty'}) · key→answer {k2g:.0f} ms"
+            return
+        r.key_to_ghost.append(k2g)
+        r.shown_parts.append({"wait": (info["t_sent"] - info["t_key"]) * 1000, "model": t.get("model_ms", 0),
+                              "daemon_other": t.get("total_ms", 0) - t.get("model_ms", 0),
+                              "transport": max(0.0, (now - info["t_sent"]) * 1000 - t.get("total_ms", 0)),
+                              "session": t.get("session"), "cached": (toks.get("cached", 0) / toks["in"]) if toks.get("in") else 0.0})
+        finish_cur()
+        st["ghost"] = sug
+        st["cur"] = {"orig": sug, "at": info["text"], "accepted": 0, "followed": 0, "ms": k2g}
+        ends = " · ends the sentence" if m.get("sentence_end") else ""
+        prefetch()
+        st["status"] = f"✓ key→ghost {k2g:.0f} ms (debounce {a.debounce} + model {t.get('model_ms', 0):.0f}) · app {info['app']}{ends} · session {t.get('session')} · {toks.get('cached', 0)}/{toks.get('in', 0)} tokens cached"
+
+    def accept(word_only):
+        g = st["ghost"]
+        if not g:
+            return
+        piece = first_word(g) if word_only else g
+        st["text"] += piece
+        st["ghost"] = g[len(piece):]
+        r = st["round"]
+        r.acc_chars += len(piece)
+        if word_only and st["ghost"].strip():
+            r.acc_word += 1
+        else:
+            r.acc_all += 1
+        if st["cur"]:
+            st["cur"]["accepted"] += len(piece)
+        if not st["ghost"].strip():
+            finish_cur()
+            st["ghost"] = ""
+        st["last_key"] = time.monotonic()
+        if instant():
+            render()
+            return
+        if len(st["ghost"].split()) >= 2:
+            st["due"] = None
+            st["status"] = "accepted; the rest of the suggestion is still shown"
+        elif st["text"].rstrip().endswith((".", "!", "?", "…", "。", "！", "？")):
+            st["due"], st["latest"] = None, None
+            st["status"] = "end of sentence; keep typing for the next prediction"
+        else:
+            st["due"], st["status"] = st["last_key"] + a.debounce / 1000, f"accepted; waiting {a.debounce} ms for the next prediction…"
+            st["latest"] = None
+        render()
+
+    def end_round(quit_=False):
+        finish_cur()
+        r = st["round"]
+        r.final = st["text"]
+        st["ghost"] = ""
+        render(final=True)
+        for line in r.lines(f"round {r.n}"):
+            out.write(line + "\n")
+        out.write("\n")
+        session.merge(r)
+        if log:
+            log.write(json.dumps({"t": datetime.datetime.now().isoformat(timespec="seconds"), "app": a.app, "round": r.n, "line": r.final,
+                                  "keys": r.keys, "sent": r.sent, "stale": r.stale, "accepted_chars": r.acc_chars, "followed": r.followed,
+                                  "key_to_ghost_ms": r.key_to_ghost, "parts": r.shown_parts, "sugs": r.sugs}, ensure_ascii=False) + "\n")
+            log.flush()
+        out.flush()
+        if not quit_:
+            new_round()
+
+    def handle_key(k):
+        r = st["round"]
+        if k in ("\r", "\n"):
+            if st["text"].strip() or r.keys:
+                end_round()
+            else:
+                render()
+            return
+        if k in ("\t", "\x06"):                      # Tab or Ctrl-F: one word
+            accept(True)
+            return
+        if k in ("\x7f", "\x08"):
+            if st["text"]:
+                r.keys += 1
+                st["text"] = st["text"][:-1]
+                changed()
+            return
+        if k == "\x17":                              # Ctrl-W
+            t = st["text"].rstrip()
+            t = t[: len(t) - len(t.split(" ")[-1])] if t else ""
+            r.keys += 1
+            st["text"] = t
+            changed()
+            return
+        if k == "\x15":                              # Ctrl-U
+            r.keys += 1
+            st["text"] = ""
+            changed()
+            return
+        if k == "\x04":
+            raise EOFError
+        if k == "ESC":
+            finish_cur()
+            st["ghost"], st["status"] = "", "dismissed"
+            render()
+            return
+        if k in ("RIGHT", "END"):
+            accept(False)
+            return
+        if k == "WORD_RIGHT":
+            accept(True)
+            return
+        if len(k) == 1 and k >= " " and k != "\x7f":
+            r.keys += 1
+            st["text"] += k
+            changed(typed=k)
+
+    def parse_keys(kb):
+        """Split buffered input into keys; returns (keys, rest)."""
+        keys = []
+        while kb:
+            c = kb[0]
+            if c != "\x1b":
+                keys.append(c)
+                kb = kb[1:]
+                continue
+            if len(kb) == 1:
+                break
+            if kb[1] == "[":
+                i = 2
+                while i < len(kb) and not ("@" <= kb[i] <= "~"):
+                    i += 1
+                if i >= len(kb):
+                    break
+                seq = kb[2:i + 1]
+                keys.append({"C": "RIGHT", "F": "END", "4~": "END", "1;3C": "WORD_RIGHT", "1;5C": "WORD_RIGHT", "1;2C": "WORD_RIGHT"}.get(seq, "IGNORE"))
+                kb = kb[i + 1:]
+            elif kb[1] == "O":
+                if len(kb) < 3:
+                    break
+                keys.append({"C": "RIGHT", "F": "END"}.get(kb[2], "IGNORE"))
+                kb = kb[3:]
+            else:
+                keys.append("WORD_RIGHT" if kb[1] == "f" else "IGNORE")
+                kb = kb[2:]
+        return keys, kb
+
+    rounds = []
+    kb, esc_at = "", None
+    print(f"{BOLD}pred try{RST}  app={a.app} · debounce {a.debounce} ms · {DIM}Tab accept a word · → accept all · Esc dismiss · Enter = new round (with stats) · Ctrl-C quit{RST}\n")
+    tty.setcbreak(fd)
+    try:
+        new_round()
+        while True:
+            now = time.monotonic()
+            timeout = 0.25
+            if st["due"] is not None:
+                timeout = max(0.0, min(timeout, st["due"] - now))
+            if esc_at is not None:
+                timeout = max(0.0, min(timeout, esc_at + 0.05 - now))
+            rl, _, _ = select.select([fd, link.s], [], [], timeout)
+            try:
+                if link.s in rl:
+                    for m in link.read():
+                        on_reply(m)
+                    render()
+            except ConnectionError:
+                st["status"] = "daemon went away; restarting it…"
+                render()
+                link = ensure_daemon(quiet=True)
+            if fd in rl:
+                data = os.read(fd, 4096)
+                if not data:
+                    raise EOFError
+                kb += dec.decode(data)
+                keys, kb = parse_keys(kb)
+                esc_at = time.monotonic() if kb == "\x1b" else None
+                for k in keys:
+                    handle_key(k)
+            elif esc_at is not None and time.monotonic() - esc_at >= 0.05 and kb == "\x1b":
+                kb, esc_at = "", None
+                handle_key("ESC")
+            if st["due"] is not None and time.monotonic() >= st["due"] and st["text"].strip():
+                fire()
+    except (KeyboardInterrupt, EOFError):
+        pass
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, old)
+        finish_cur()
+        out.write("\x1b[K\n")
+        r = st["round"]
+        if r is not None and (r.keys or st["text"]):
+            r.final = st["text"]
+            session.merge(r)
+            rounds_done = len(rounds)
+        else:
+            rounds_done = len(rounds) - 1
+        for line in session.lines(f"session: {rounds_done} rounds", with_line=False):
+            out.write(line + "\n")
+        out.flush()
+
+
+# ---------------------------------------------------------------- other commands
+
+def cmd_ask(a):
+    link = ensure_daemon()
+    t = time.perf_counter()
+    r = link.call(op="predict", id="ask", app=a.app if a.app != "auto" else guess_app(a.text), text=a.text, opts=json.loads(a.opts))
+    e2e = (time.perf_counter() - t) * 1000
+    if not r.get("ok"):
+        sys.exit("error: " + str(r.get("error")))
+    tm, tk = r.get("timing", {}), r.get("tokens", {})
+    print(repr(a.text + (r.get("suggestion") or "")) if r.get("suggestion") else f"(no suggestion: {r.get('suppressed') or 'empty'})")
+    print(f"{DIM}{e2e:.0f} ms end to end · model {tm.get('model_ms', 0):.0f} ms · session {tm.get('session')} · tokens in {tk.get('in')} cached {tk.get('cached')} out {tk.get('out')}"
+          f" · raw {r.get('model_completion')!r}{RST}")
+
+
+def cmd_status(a):
+    try:
+        link = connect()
+    except OSError:
+        print("predictd: not running")
+        return
+    s = link.call(op="stats", id="s")
+    print(f"predictd: running, up {s['uptime_s']:.0f}s · {s['requests']} requests ({s['cold']} cold, {s['cancelled']} superseded, {s['errors']} errors, {s.get('guardrail', 0)} guardrail) · "
+          f"{s['keepalives']} keep-alive prewarms · prefix {s['prefix_tokens']} tokens\n  config {s['config']}\n  socket {SOCK} · log {DAEMON_LOG}")
+
+
+def cmd_stop(a):
+    try:
+        connect().call(op="shutdown", id="x", timeout=3)
+    except (OSError, TimeoutError, ConnectionError):
+        pass
+    time.sleep(0.3)
+    print("predictd: stopped")
+
+
+def main():
+    ap = argparse.ArgumentParser(prog="pred", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    sub = ap.add_subparsers(dest="cmd")
+    t = sub.add_parser("try", help="interactive: type and watch predictions")
+    t.add_argument("--app", default="auto", help="app label sent to the model: auto (terminal for shell-like lines, else notes), or terminal, mail, chat, notes, code, review, essay")
+    t.add_argument("--debounce", type=int, default=0, help="ms without typing before a request is sent (0: on every keystroke; the daemon cancels the stale one)")
+    t.add_argument("--min-chars", type=int, default=2)
+    t.add_argument("--words", type=int, default=5, help="extend the ghost from prefetched continuations up to this many words")
+    t.add_argument("--opts", default="{}", help='per-request overrides, e.g. \'{"textBudget":300,"words":8}\'')
+    t.add_argument("--log", help="append one JSON line per round (your typed text!) to this file")
+    t.add_argument("--no-spawn", action="store_true")
+    k = sub.add_parser("ask", help="one prediction")
+    k.add_argument("text")
+    k.add_argument("--app", default="auto")
+    k.add_argument("--opts", default="{}")
+    sub.add_parser("status")
+    sub.add_parser("start")
+    sub.add_parser("stop")
+    a = ap.parse_args()
+    if a.cmd in (None, "try"):
+        if a.cmd is None:
+            a = ap.parse_args(["try"])
+        run_try(a)
+    elif a.cmd == "ask":
+        cmd_ask(a)
+    elif a.cmd == "status":
+        cmd_status(a)
+    elif a.cmd == "start":
+        ensure_daemon()
+        cmd_status(a)
+    elif a.cmd == "stop":
+        cmd_stop(a)
+
+
+if __name__ == "__main__":
+    main()

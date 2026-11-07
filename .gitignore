@@ -1,0 +1,16 @@
+# build output (./build.sh)
+/predictd
+*.dSYM/
+
+# benchmark runs: machine-local timings and model outputs (bench/run.py writes them)
+/bench/results/
+
+# python
+__pycache__/
+*.pyc
+.venv/
+
+# logs (pred try --log, daemon logs) and macOS clutter
+*.log
+*.jsonl
+.DS_Store
