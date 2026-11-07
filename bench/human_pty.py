@@ -1,7 +1,9 @@
 """Drive `pred try` through a pty with human-like typing (jittered key intervals, pauses at word ends), never accepting.
 Prints pred's session stats. Usage: python3 -I human_pty.py [extra pred try args...]   e.g. --debounce 100
 Timing model: ~5.5 keys/s (lognormal around 170 ms), 25% of word ends get a 250-700 ms pause, sentence ends 800 ms."""
-import os, pty, random, re, select, sys, time, pathlib, fcntl, termios, struct, json, tempfile
+import os, pty, random, re, select, sys, time, pathlib, fcntl, termios, struct, json, tempfile, datetime
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+from machine import machine_info, describe
 root = pathlib.Path(__file__).resolve().parent.parent
 LINES = [
     "Hi Sarah, thanks for the update on the budget. I will review the numbers and get back to you tomorrow.",
@@ -74,3 +76,16 @@ def pct(x, p):
 inst = [k for k in k2g if k <= 5]
 print(f"\nSUMMARY tabs {tabs} · instant ghosts {len(inst)}/{len(k2g)} · key→ghost p50 {pct(k2g,50):.0f} p90 {pct(k2g,90):.0f} | wait p50 {pct([p['wait'] for p in parts],50):.0f} | model p50 {pct([p['model'] for p in parts],50):.0f} "
       f"p90 {pct([p['model'] for p in parts],90):.0f} | cache misses {sum(p['cached']<0.5 for p in parts)}/{len(parts)} | sessions {dict((s, sum(p['session']==s for p in parts)) for s in set(p['session'] for p in parts))}")
+
+mach = machine_info()
+import hashlib
+fp = hashlib.md5("|".join(str(p.get("raw")) for p in parts[:10]).encode()).hexdigest()[:8]
+print("machine:", describe(mach), "| model mode fingerprint (first 10 raw outputs):", fp)
+res = pathlib.Path(__file__).resolve().parent / "results"; res.mkdir(exist_ok=True)
+out = res / f"{datetime.datetime.now():%Y%m%d-%H%M%S}-typing-sim{'-accept' if ACCEPT else ''}-seed{os.environ.get('SEED', '1')}.json"
+json.dump({"label": out.stem[16:], "scenario": "typing-sim", "machine": mach, "args": sys.argv[1:], "accept": ACCEPT, "tabs": tabs,
+           "key_to_ghost_ms": k2g, "parts": parts,
+           "summary": {"key_to_ghost_p50": pct(k2g, 50), "key_to_ghost_p90": pct(k2g, 90), "model_p50": pct([p["model"] for p in parts], 50),
+                       "cache_misses": sum(p["cached"] < 0.5 for p in parts), "shown": len(parts), "mode_fingerprint": fp},
+           "pred_stats": text[i:].strip()}, open(out, "w"), indent=1)
+print("saved", out)

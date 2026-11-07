@@ -8,6 +8,7 @@ Results: bench/results/<timestamp>-<label>.json (rows + summary). Compare: pytho
 import argparse, hashlib, json, os, re, subprocess, sys, tempfile, threading, time, datetime, pathlib
 sys.path.insert(0, str(pathlib.Path(__file__).parent))
 from client import Client
+from machine import machine_info, describe
 
 HERE = pathlib.Path(__file__).parent
 PUNCT = " .,;:!?\"'()[]{}"
@@ -242,7 +243,9 @@ def main():
     res = HERE / "results"
     res.mkdir(exist_ok=True)
     path = res / f"{datetime.datetime.now():%Y%m%d-%H%M%S}-{a.label}.json"
-    json.dump({"label": a.label, "scenario": a.scenario, "opts": opts, "daemon": stats, "summary": S, "rows": rows}, open(path, "w"), indent=1, default=str)
+    mach = machine_info()
+    print("machine:", describe(mach))
+    json.dump({"label": a.label, "scenario": a.scenario, "machine": mach, "opts": opts, "daemon": stats, "summary": S, "rows": rows}, open(path, "w"), indent=1, default=str)
     print("\nsaved", path)
     if proc:
         try:

@@ -29,6 +29,8 @@ keystrokes saved, last-key-to-ghost latency p50/p90/max with the model share, pr
 context; Ctrl-C quits with session totals. `--log file` appends one JSON line per round (your typed text, so keep it private).
 The daemon exits by itself after 30 idle minutes (`idleExitSec`). `bench/try_pty_test.py` drives the tool through a pty as a smoke test.
 
+Project context for agents and contributors: [AGENTS.md](AGENTS.md).
+
 Files: `bin/pred` (CLI) · `predictd.swift` (service) · `config.json` (tunables) · `prompt.json` (system prompt + few-shot examples) ·
 `bench/cases.json` (80 cases, from `bench/gen_cases.py`) · `bench/run.py` · `bench/compare.py` · `bench/client.py` ·
 `bench/human_pty.py` (drives `pred try` with human-like typing; `ACCEPT=1` presses Tab when the ghost is right) · `bench/try_pty_test.py`.
@@ -56,12 +58,13 @@ measured worse (final answer 1.4 s, prefix cache lost). Other ops: `ping`, `stat
 model loaded), `typing` (a request per keystroke on one stream, time from the last keystroke to its answer). Metrics: client-side
 end-to-end time (p50/p90/max, by context size), model time, prefix-cache hit rate, and quality against what the user really typed
 next: suggestion shown, first word right, completed-word exact match for mid-word cuts, leading words right, word overlap, echo,
-misspelled words. Each run is saved to `bench/results/` with its rows, so two runs can be compared.
+misspelled words. Each run is saved to `bench/results/` (git-ignored) with its rows, machine spec and a model-mode fingerprint, so two
+runs can be compared; shared runs live in `bench/baselines/`, summarised in [bench/RESULTS.md](bench/RESULTS.md).
 Quality is exact word match against one real continuation, so it is harsh on the next-word part; the mid-word completion number is
 the most objective. Hand-written cases (52: mail, chat, notes, review, terminal, code) are short; the 30 generated ones are cut from `bench/corpus.md`
 (a frozen copy of this README: technical English, hard to predict) at 4 context sizes. Re-generate with `python3 -I bench/gen_cases.py`.
 
-## Latency: where the time goes and what was tried (M4 Pro, macOS 27.2)
+## Latency: where the time goes and what was tried (Apple M4 Pro, 16-core GPU, 48 GB RAM, macOS 27.2)
 
 Key → ghost in `pred try` = wait before sending (debounce) + model call (socket and JSON < 1 ms). Measured with `bench/human_pty.py`:
 

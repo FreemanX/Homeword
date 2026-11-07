@@ -391,7 +391,9 @@ def run_try(a):
         r.shown_parts.append({"wait": (info["t_sent"] - info["t_key"]) * 1000, "model": t.get("model_ms", 0),
                               "daemon_other": t.get("total_ms", 0) - t.get("model_ms", 0),
                               "transport": max(0.0, (now - info["t_sent"]) * 1000 - t.get("total_ms", 0)),
-                              "session": t.get("session"), "cached": (toks.get("cached", 0) / toks["in"]) if toks.get("in") else 0.0})
+                              "session": t.get("session"), "cached": (toks.get("cached", 0) / toks["in"]) if toks.get("in") else 0.0,
+                              "tok_in": toks.get("in"), "tok_cached": toks.get("cached"), "tok_out": toks.get("out"),
+                              "text": info["text"][-30:], "ghost": sug, "raw": m.get("model_completion")})
         finish_cur()
         st["ghost"] = sug
         st["cur"] = {"orig": sug, "at": info["text"], "accepted": 0, "followed": 0, "ms": k2g}
