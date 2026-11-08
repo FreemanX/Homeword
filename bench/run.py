@@ -200,6 +200,7 @@ def main():
     proc, sock = None, a.socket
     if a.spawn:
         cfg = json.load(open(HERE.parent / "config.json"))
+        cfg["httpPort"] = 0                                 # private daemon: leave the shared HTTP port to the main one
         cfg.update(json.loads(a.config))
         tmp = tempfile.mkdtemp()
         cfgp, sock, logp = os.path.join(tmp, "config.json"), os.path.join(tmp, "p.sock"), os.path.join(tmp, "log")

@@ -7,13 +7,19 @@ protocol and CLI; [bench/RESULTS.md](bench/RESULTS.md) the current numbers. Read
 
 A research prototype of a typing predictor on Apple's on-device language model (FoundationModels framework, macOS 27): given the app
 and the text typed so far, show a gray "ghost" with the rest of the unfinished word plus up to 5 more words, within one sentence. The
-owner works experiment-first: measure, then decide. The product surface (zsh widget, system-wide input) is not designed yet.
+owner works experiment-first: measure, then decide. It runs in `pred try` and in two coding agents (pi, Claude Code); a system-wide
+surface is not designed yet.
 
-- `predictd.swift` → `./predictd`: long-lived daemon, newline-delimited JSON over a unix socket (`/tmp/predictd-<uid>.sock`).
+- `predictd.swift` → `./predictd`: long-lived daemon, newline-delimited JSON over a unix socket (`/tmp/predictd-<uid>.sock`), and
+  the same requests over HTTP on `127.0.0.1:47321` (`POST /predict`, `GET /health`) for the integrations.
 - `bin/pred`: CLI. `pred try` (interactive line editor, Enter = new round with stats), `pred ask`, `pred status|start|stop`.
 - `prompt.json` (instructions + few-shot examples), `config.json` (tunables, also overridable per request with `opts`).
 - `bench/`: `run.py` (fixed 80-case benchmark), `human_pty.py` (drives `pred try` like a typist), `compare.py`, `gen_cases.py` +
-  `corpus.md` → `cases.json`, `machine.py`, `try_pty_test.py` (smoke test), `baselines/` (shared results), `RESULTS.md`.
+  `corpus.md` → `cases.json`, `machine.py`, `try_pty_test.py` (smoke test), `integration_latency.py` (keystroke → ghost in a real
+  terminal app via tmux), `baselines/` (shared results), `RESULTS.md`.
+- `integrations/pi/ghost-editor.ts`: pi extension (a `CustomEditor` subclass drawing the ghost in the fake cursor and padding).
+- `integrations/claude-code/`: Claude Code mod (`prompt.edit` hook + `$.prompt.fill` decorations; Tab/→ through two commands bound in
+  `keybindings.json`, since keys that do nothing at the end of the draft never reach the hook). Validate with `claude plugin validate`.
 
 ## Build and run
 
@@ -78,6 +84,13 @@ no venv). Run Python with `-I`.
   the owner, and set it from `git log --format='%an <%ae>' | sort -u` after confirming.
 - Don't commit `predictd` or `bench/results/` (ignored). Keep README and this file in sync with pipeline changes.
 
+## Testing the integrations
+
+Drive the real apps in tmux (they render to a terminal; nothing else shows the ghost). Clear a Claude Code draft with `C-e` then `C-u`
+(`C-u` only kills before the cursor). Test Claude Code with a throwaway `CLAUDE_CONFIG_DIR` holding the keybindings, never by editing
+`~/.claude/keybindings.json`: that binds Tab and → in every session, including ones without the mod. Agent sandboxes may block
+`claude`/`pi` (they use `sandbox-exec` themselves); run them in a tmux session the agent owns.
+
 ## Pitfalls
 
 - zsh: never name a loop variable `path` (it is tied to `PATH`).
@@ -86,7 +99,8 @@ no venv). Run Python with `-I`.
 
 ## Open questions and future work
 
-- Product surface: zsh ZLE widget or system-wide input method; key bindings (Tab = one word, → = all) need user testing.
+- Product surface: pi and Claude Code integrations exist; a system-wide input method is undecided (Apple Intelligence is MDM-restricted
+  on managed Macs: check policy first). Key bindings (Tab = one word, → = all) need user testing.
 - Energy cost of a model request on almost every keystroke (needs `powermetrics`, i.e. sudo: ask the owner).
 - Quality on the owner's real typing (keep that data local and out of git); the 80 cases are a small proxy.
 - Known misses: an abbreviation the spell checker accepts ("fri") gets split from the model's next word when the model ignores it;

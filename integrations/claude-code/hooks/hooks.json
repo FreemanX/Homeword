@@ -1,0 +1,4 @@
+{
+  "description": "input-predictor: ghost text in the prompt box",
+  "modules": ["./register.ts"]
+}

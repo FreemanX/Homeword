@@ -11,7 +11,7 @@ func log(_ s: String) { FileHandle.standardError.write(Data((s + "\n").utf8)) }
 // MARK: config
 
 struct Config {
-    var socketPath = "/tmp/predictd-\(getuid()).sock"
+    var socketPath = "/tmp/predictd-\(getuid()).sock", httpPort = 0
     var shots = 99, words = 5, maxTokens = 14, textBudget = 200, hardCap = 4000, margin = 60
     var settleMs = 800.0, keepAliveSec = 6.0, keepAliveMaxIdleSec = 300.0, idleExitSec = 0.0
     var waitSettle = false, includeSchema = false, exactTrim = false
@@ -30,7 +30,7 @@ struct Config {
         waitSettle = b("waitSettle") ?? waitSettle; oneSentence = b("oneSentence") ?? oneSentence; instructionsVariant = s("instructions") ?? instructionsVariant; sessionMode = s("sessionMode") ?? sessionMode; includeSchema = b("includeSchema") ?? includeSchema; exactTrim = b("exactTrim") ?? exactTrim
         guardrails = s("guardrails") ?? guardrails; format = s("format") ?? format; output = s("output") ?? output; invalidPolicy = s("invalidPolicy") ?? invalidPolicy
         if let a = d["lenientApps"] as? [String] { lenientApps = Set(a) }
-        socketPath = s("socketPath") ?? socketPath
+        socketPath = s("socketPath") ?? socketPath; httpPort = i("httpPort") ?? httpPort
     }
 }
 
@@ -207,7 +207,8 @@ func sentenceEnd(_ s: String) -> String.Index? {
         let short = word.count < 3   // "to", "a", "I": only when the typed part is itself a finished word ("have" + "to")
         if !separate && !a.valid && !word.isEmpty && word.allSatisfy({ $0.isLetter }) && checkWord(word)
             && checkWord(partial)   // an unfinished typed word ("fri") must not be split off from the model's next word
-            && (!short || word.count == 2 || ["a", "i"].contains(word.lowercased())) { separate = true }
+            // a 2-letter piece only after a typed word of 3+ letters ("have" + "to"), not after "ru" + "un" (which wanted "run")
+            && (!short || ((word.count == 2 || ["a", "i"].contains(word.lowercased())) && partial.count >= 3)) { separate = true }
         if separate {
             a.glued = false; a.valid = true; a.respaced = true; comp = " " + comp; a.firstWord = String(piece)
         }
@@ -224,12 +225,22 @@ func sentenceEnd(_ s: String) -> String.Index? {
 // MARK: connection + engine
 
 final class Conn: @unchecked Sendable {
-    let fd: Int32; let lock = NSLock()
-    init(_ fd: Int32) { self.fd = fd }
+    let fd: Int32; let lock = NSLock(); let http: Bool
+    init(_ fd: Int32, http: Bool = false) { self.fd = fd; self.http = http }
     func send(_ obj: [String: Any]) {
         guard var d = try? JSONSerialization.data(withJSONObject: obj) else { return }
         d.append(10)
         lock.lock(); defer { lock.unlock() }
+        if http {   // one request, one response, then close
+            var out = Data("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: \(d.count)\r\nConnection: close\r\n\r\n".utf8)
+            out.append(d)
+            out.withUnsafeBytes { p in
+                var off = 0
+                while off < out.count { let n = write(fd, p.baseAddress! + off, out.count - off); if n <= 0 { break }; off += n }
+            }
+            close(fd)
+            return
+        }
         d.withUnsafeBytes { p in
             var off = 0
             while off < d.count { let n = write(fd, p.baseAddress! + off, d.count - off); if n <= 0 { return }; off += n }
@@ -559,11 +570,57 @@ func serve(path: String, engine: Engine) {
     }.start()
 }
 
+// MARK: HTTP (127.0.0.1 only): POST /predict with the same JSON as the socket protocol, GET /health.
+// For integrations that can make HTTP calls but not unix-socket calls (pi extension, Claude Code mod).
+
+func serveHTTP(port: Int, engine: Engine) {
+    let fd = socket(AF_INET, SOCK_STREAM, 0)
+    var yes: Int32 = 1; setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &yes, socklen_t(MemoryLayout<Int32>.size))
+    var addr = sockaddr_in(); addr.sin_family = sa_family_t(AF_INET); addr.sin_port = in_port_t(UInt16(port).bigEndian)
+    addr.sin_addr.s_addr = inet_addr("127.0.0.1")
+    let rc = withUnsafePointer(to: &addr) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { bind(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) } }
+    guard rc == 0, listen(fd, 32) == 0 else { log("http: cannot listen on 127.0.0.1:\(port) (errno \(errno)), HTTP disabled"); return }
+    log("http on 127.0.0.1:\(port)")
+    Thread {
+        while true {
+            let cfd = accept(fd, nil, nil)
+            if cfd < 0 { continue }
+            Thread { handleHTTP(cfd, engine) }.start()
+        }
+    }.start()
+}
+
+func handleHTTP(_ cfd: Int32, _ engine: Engine) {
+    var buf = Data(); var chunk = [UInt8](repeating: 0, count: 65536)
+    var headerEnd: Range<Data.Index>? = nil
+    while headerEnd == nil {
+        let n = read(cfd, &chunk, chunk.count); if n <= 0 { close(cfd); return }
+        buf.append(chunk, count: n); headerEnd = buf.range(of: Data("\r\n\r\n".utf8))
+        if buf.count > 1 << 20 { close(cfd); return }
+    }
+    let head = String(decoding: buf[buf.startIndex..<headerEnd!.lowerBound], as: UTF8.self)
+    let requestLine = head.split(separator: "\r\n").first.map(String.init) ?? ""
+    var length = 0
+    for line in head.split(separator: "\r\n").dropFirst() {
+        let kv = line.split(separator: ":", maxSplits: 1)
+        if kv.count == 2, kv[0].lowercased() == "content-length" { length = Int(kv[1].trimmingCharacters(in: .whitespaces)) ?? 0 }
+    }
+    var body = Data(buf[headerEnd!.upperBound...])
+    while body.count < length { let n = read(cfd, &chunk, chunk.count); if n <= 0 { break }; body.append(chunk, count: n) }
+    let conn = Conn(cfd, http: true)
+    if requestLine.hasPrefix("GET /health") { conn.send(["ok": true]); return }
+    guard requestLine.hasPrefix("POST /predict") || requestLine.hasPrefix("POST /"),
+          var req = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any] else { conn.send(["ok": false, "error": "POST /predict with a JSON body"]); return }
+    if req["op"] == nil { req["op"] = "predict" }
+    if req["id"] == nil { req["id"] = UUID().uuidString }
+    Task { await engine.handle(conn, req) }
+}
+
 @main struct Predictd {
     static func main() async {
         var configPath = CommandLine.arguments.first.map { URL(fileURLWithPath: $0).deletingLastPathComponent().appendingPathComponent("config.json").path } ?? "config.json"
         var promptPath = URL(fileURLWithPath: configPath).deletingLastPathComponent().appendingPathComponent("prompt.json").path
-        var socket: String? = nil
+        var socket: String? = nil, httpPortArg: Int? = nil
         var args = Array(CommandLine.arguments.dropFirst())
         while !args.isEmpty {
             let a = args.removeFirst()
@@ -571,6 +628,7 @@ func serve(path: String, engine: Engine) {
             case "--config": configPath = args.removeFirst()
             case "--prompt": promptPath = args.removeFirst()
             case "--socket": socket = args.removeFirst()
+            case "--http-port": httpPortArg = Int(args.removeFirst())
             case "--version": print("predictd 0.1"); return
             default: log("unknown argument \(a)"); exit(1)
             }
@@ -578,7 +636,9 @@ func serve(path: String, engine: Engine) {
         var cfg = Config(); cfg.apply(loadJSON(configPath)); if let s = socket { cfg.socketPath = s }
         let engine = Engine(cfg: cfg, prompt: loadPrompt(promptPath), configPath: configPath, promptPath: promptPath)
         await engine.startup()
+        if let hp = httpPortArg { cfg.httpPort = hp }
         serve(path: cfg.socketPath, engine: engine)
+        if cfg.httpPort > 0 { serveHTTP(port: cfg.httpPort, engine: engine) }
         log("ready on \(cfg.socketPath)")
         while true { try? await Task.sleep(for: .seconds(3600)) }
     }

@@ -20,5 +20,6 @@
   "idleExitSec": 1800,
   "output": "plain",
   "sessionMode": "reuse",
-  "instructions": "short"
+  "instructions": "short",
+  "httpPort": 47321
 }

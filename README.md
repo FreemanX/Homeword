@@ -29,6 +29,17 @@ keystrokes saved, last-key-to-ghost latency p50/p90/max with the model share, pr
 context; Ctrl-C quits with session totals. `--log file` appends one JSON line per round (your typed text, so keep it private).
 The daemon exits by itself after 30 idle minutes (`idleExitSec`). `bench/try_pty_test.py` drives the tool through a pty as a smoke test.
 
+## In coding agents (pi, Claude Code)
+
+Ghost text inside an agent's prompt box, with the same keys (Tab one word, → all), talking to the daemon over HTTP:
+
+- **pi**: an editor extension, [integrations/pi](integrations/pi/README.md). `pi -e integrations/pi/ghost-editor.ts`
+- **Claude Code**: a mod (plugin hooks module) painting dim virtual text, [integrations/claude-code](integrations/claude-code/README.md).
+  Accepting needs two keybindings, which are global: read its README before installing.
+
+Measured in tmux with human-like typing, last keystroke → ghost on screen: pi 139 ms p50, Claude Code 157 ms p50
+(`bench/integration_latency.py`). Codex has no extension point for the prompt box.
+
 Project context for agents and contributors: [AGENTS.md](AGENTS.md).
 
 Files: `bin/pred` (CLI) · `predictd.swift` (service) · `config.json` (tunables) · `prompt.json` (system prompt + few-shot examples) ·
@@ -51,6 +62,10 @@ Newline-delimited JSON on the unix socket. `{"op":"predict","id":"1","app":"mail
 assemble, total ms, session state), `tokens` (in, cached, out). In `schema` mode the model runs one generation at a time (single flight): a request that arrives
 meanwhile waits, and a newer one on the same `stream` replaces it (in `plain` mode a newer request on the stream aborts the running one) (`{"ok":false,"error":"cancelled"}`). Aborting a running generation was tried and
 measured worse (final answer 1.4 s, prefix cache lost). Other ops: `ping`, `stats`, `reload` (re-reads config and prompt), `cancel` (drops a waiting request), `settle_probe`, `shutdown`.
+
+The same requests over HTTP on `127.0.0.1:httpPort` (47321; `--http-port`, 0 = off), for clients that cannot open a unix socket:
+`POST /predict` with the JSON object as body (`op` defaults to `predict`, `id` to a fresh one), one JSON answer per connection;
+`GET /health` answers `ping`. Loopback only, no authentication: any local process can ask for predictions, as with the socket.
 
 ## Benchmark
 
