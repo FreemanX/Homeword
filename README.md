@@ -117,7 +117,7 @@ prompts small. Setup for the `openai` SDK, pi and others: [docs/OPENAI.md](docs/
 
 ## Status
 
-A research prototype, measured on one machine (Apple M4 Pro, 48 GB). Known limits: English only so far (prompt, examples and spell
+A research prototype, measured on an Apple M4 Pro (48 GB, macOS 27.2) and an Apple M4 Max (36 GB, macOS 27.0.1). Numbers are in [bench/RESULTS.md](bench/RESULTS.md). Known limits: English only so far (prompt, examples and spell
 check), one warm prefix cache for the whole system (switching profiles costs an uncached prefix), guesses from a one-letter prefix are
-often wrong, and predictd reads one non-public field (`finishReason`, via reflection). On a managed Mac, check whether Apple
+often wrong, and predictd reads one non-public field (`finishReason`, via reflection). On macOS 27.0.1 that property is absent, so a word cut by the token cap is kept. On a managed Mac, check whether Apple
 Intelligence features may be used before relying on it.

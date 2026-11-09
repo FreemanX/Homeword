@@ -1,6 +1,7 @@
 # Performance: benchmarks and latency
 
-Current numbers: [bench/RESULTS.md](../bench/RESULTS.md). Machine: Apple M4 Pro, 16-core GPU, 48 GB RAM, macOS 27.2.
+Current numbers: [bench/RESULTS.md](../bench/RESULTS.md). The history below is an Apple M4 Pro (16-core GPU, 48 GB, macOS 27.2).
+The same policy on an Apple M4 Max (32-core GPU, 36 GB, macOS 27.0.1) measured 295 ms steady p50 and 255-258 ms key → ghost.
 
 ## What the user feels
 
@@ -12,7 +13,7 @@ Current numbers: [bench/RESULTS.md](../bench/RESULTS.md). Machine: Apple M4 Pro,
 
 The rows are not directly comparable: different phrases, and in the integration runs the ghost from an earlier keystroke often
 still fits, so it is shown again without a new request (follow-the-ghost); a fresh model call never takes under ~250 ms. End to end on
-the fixed benchmark (unrelated texts, nothing but the prefix cached): ~330 ms p50.
+the fixed benchmark (unrelated texts, nothing but the prefix cached): ~330 ms p50 on the M4 Pro, 295 ms p50 on the M4 Max.
 
 ```mermaid
 flowchart LR
