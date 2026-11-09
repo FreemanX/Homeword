@@ -1,5 +1,5 @@
 {
   "name": "input-predictor",
   "version": "0.1.0",
-  "description": "Inline ghost-text continuation of the prompt you are typing, from Apple's on-device model via the local predictd daemon"
+  "description": "Inline ghost-text continuation of the prompt you are typing, from Apple's on-device model via the local ghost policy server"
 }

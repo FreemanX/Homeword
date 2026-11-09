@@ -1,14 +1,17 @@
-"""Mini benchmark for predictd. Run it after every pipeline/parameter change and compare result files.
+"""Mini benchmark for the typing-ghost policy (ghost/) on predictd. Run it after every change and compare result files.
 
-  python3 -I run.py --label baseline                       # steady scenario against a running daemon
-  python3 -I run.py --spawn --label t200 --config '{"textBudget":200}'   # start a private daemon with config overrides
+  python3 -I run.py --spawn --label baseline                # private daemon, policy from ghost/config.json
+  python3 -I run.py --spawn --label t200 --config '{"textBudget":200}'      # policy overrides (ghost/config.json keys)
+  python3 -I run.py --spawn --daemon-config '{"keepAliveSec":0}' ...        # daemon overrides (predictd.json keys)
   python3 -I run.py --scenario burst|idle|typing ...        # other scenarios
 Results: bench/results/<timestamp>-<label>.json (rows + summary). Compare: python3 -I compare.py a.json b.json
 """
 import argparse, hashlib, json, os, re, subprocess, sys, tempfile, threading, time, datetime, pathlib
 sys.path.insert(0, str(pathlib.Path(__file__).parent))
-from client import Client
+sys.path.insert(0, str(pathlib.Path(__file__).parent.parent))
 from machine import machine_info, describe
+from ghost import predictd
+from ghost.policy import Ghost
 
 HERE = pathlib.Path(__file__).parent
 PUNCT = " .,;:!?\"'()[]{}"
@@ -126,13 +129,15 @@ def samples(rows, n=14):
         print(f"  [{r['case']['id']:>4} {r['e2e_ms']:5.0f}ms] …{t!r:38} | {r['score']['pred'][:44]!r:48} | {r['score']['truth'][:44]!r}")
 
 
-def run_cases(c, cases, gap, opts, scenario, idle_n=8):
+def run_cases(c, ghost, cases, gap, opts, scenario, idle_n=8):
     rows = []
     if scenario == "idle":
         cases = [x for x in cases if x["bucket"] in ("xs", "s")][:idle_n]
     for i, case in enumerate(cases):
         time.sleep(gap)
-        r, e2e = c.call(op="predict", app=case["app"], text=case["text"], opts=opts)
+        t = time.perf_counter()
+        r = ghost.predict(c, case["app"], case["text"], opts)
+        e2e = (time.perf_counter() - t) * 1000
         row = {"case": case, "e2e_ms": e2e, "resp": r}
         if r.get("ok"):
             row["score"] = score(case, r)
@@ -142,7 +147,7 @@ def run_cases(c, cases, gap, opts, scenario, idle_n=8):
     return rows
 
 
-def run_typing(c, cases, key_ms, nkeys=12, ncases=8):
+def run_typing(c, aux, ghost, cases, key_ms, nkeys=12, ncases=8):
     """Simulate typing: after every keystroke send the text so far on one stream (a new request supersedes the old one)
     and time how long the answer to the LAST keystroke takes. No client-side debounce, so this is the worst case."""
     got = {}
@@ -150,19 +155,23 @@ def run_typing(c, cases, key_ms, nkeys=12, ncases=8):
     def reader():
         while True:
             try:
-                r = c.recv()
+                ms_ = c.read(0.05)
             except Exception:
                 return
-            got[r["id"]] = (r, time.perf_counter())
+            for r in ms_:
+                got[r["id"]] = (r, time.perf_counter())
     threading.Thread(target=reader, daemon=True).start()
     rows, sent_n, superseded = [], 0, 0
     for case in [x for x in cases if x["bucket"] in ("xs", "s")][:ncases]:
         time.sleep(1.5)
         end = len(case["text"])
-        ids, t_last = [], time.perf_counter()
+        ids, ctxs, t_last = [], {}, time.perf_counter()
         for k in range(nkeys):
             text = case["text"][: end - (nkeys - 1 - k)]
-            ids.append(c.send(op="predict", app=case["app"], text=text, stream="typing", opts={}))
+            gen, ctx = ghost.request(case["app"], text)
+            rid = c.send(stream="typing", **gen)
+            ids.append(rid)
+            ctxs[rid] = ctx
             t_last = time.perf_counter()
             sent_n += 1
             if k < nkeys - 1:
@@ -171,17 +180,15 @@ def run_typing(c, cases, key_ms, nkeys=12, ncases=8):
             time.sleep(0.005)
         time.sleep(0.2)
         r, t_resp = got.get(ids[-1], ({"ok": False, "error": "timeout"}, time.perf_counter()))
+        t_fin = time.perf_counter()
+        r = ghost.finish(ctxs[ids[-1]], r, lambda ws, lang: aux.call(op="spell", words=ws, language=lang)["valid"])
+        t_resp += time.perf_counter() - t_fin
         superseded += sum(1 for i in ids[:-1] if got.get(i, ({},))[0].get("error") == "cancelled")
         row = {"case": case, "e2e_ms": (t_resp - t_last) * 1000, "resp": r}
         if r.get("ok"):
             row["score"] = score(case, r)
         rows.append(row)
-    sid = c.send(op="stats")
-    for _ in range(400):
-        if sid in got:
-            break
-        time.sleep(0.01)
-    return rows, sent_n, superseded, got[sid][0]
+    return rows, sent_n, superseded, aux.call(op="stats")
 
 
 def main():
@@ -189,8 +196,9 @@ def main():
     ap.add_argument("--label", default="run")
     ap.add_argument("--socket", default=f"/tmp/predictd-{os.getuid()}.sock")
     ap.add_argument("--spawn", action="store_true", help="start a private daemon for this run")
-    ap.add_argument("--config", default="{}", help="JSON config overrides for the spawned daemon")
-    ap.add_argument("--opts", default="{}", help="JSON per-request overrides (words, maxTokens, textBudget, exactTrim, ...)")
+    ap.add_argument("--config", default="{}", help="JSON policy overrides (ghost/config.json keys)")
+    ap.add_argument("--daemon-config", default="{}", help="JSON overrides for the spawned daemon (predictd.json keys)")
+    ap.add_argument("--opts", default="{}", help="JSON per-request policy overrides (words, maxTokens, textBudget, ...)")
     ap.add_argument("--scenario", default="steady", choices=["steady", "burst", "idle", "typing"])
     ap.add_argument("--gap-ms", type=float, default=None)
     ap.add_argument("--key-ms", type=float, default=150)
@@ -199,13 +207,13 @@ def main():
     a = ap.parse_args()
     proc, sock = None, a.socket
     if a.spawn:
-        cfg = json.load(open(HERE.parent / "config.json"))
+        cfg = json.load(open(HERE.parent / "predictd.json"))
         cfg["httpPort"] = 0                                 # private daemon: leave the shared HTTP port to the main one
-        cfg.update(json.loads(a.config))
+        cfg.update(json.loads(a.daemon_config))
         tmp = tempfile.mkdtemp()
-        cfgp, sock, logp = os.path.join(tmp, "config.json"), os.path.join(tmp, "p.sock"), os.path.join(tmp, "log")
+        cfgp, sock, logp = os.path.join(tmp, "predictd.json"), os.path.join(tmp, "p.sock"), os.path.join(tmp, "log")
         json.dump(cfg, open(cfgp, "w"))
-        proc = subprocess.Popen([str(HERE.parent / "predictd"), "--config", cfgp, "--prompt", str(HERE.parent / "prompt.json"), "--socket", sock],
+        proc = subprocess.Popen([str(HERE.parent / "predictd"), "--config", cfgp, "--socket", sock],
                                 stderr=open(logp, "w"), stdout=subprocess.DEVNULL)
         for _ in range(300):
             if "ready on" in open(logp).read():
@@ -213,22 +221,25 @@ def main():
             time.sleep(0.1)
         else:
             sys.exit("daemon did not start: " + open(logp).read())
-    c = Client(sock)
+    c, aux = predictd.Link(sock), predictd.Link(sock)
+    ghost = Ghost(overrides=json.loads(a.config))
+    ghost.ensure_profile(aux, pin=True)
     cases = json.load(open(a.cases))
     if a.limit:
         cases = cases[: a.limit]
     opts = json.loads(a.opts)
     gap = (a.gap_ms if a.gap_ms is not None else {"steady": 1200, "burst": 0, "idle": 15000, "typing": 0}[a.scenario]) / 1000
     for w in cases[:3]:                                   # warm-up, discarded
-        c.call(op="predict", app=w["app"], text=w["text"], opts=opts)
+        ghost.predict(c, w["app"], w["text"], opts)
         time.sleep(1.0)
     extra = {}
     if a.scenario == "typing":
-        rows, sent, sup, stats = run_typing(c, cases, a.key_ms)
+        rows, sent, sup, stats = run_typing(c, aux, ghost, cases, a.key_ms)
         extra = {"keystrokes_sent": sent, "superseded": sup, "key_ms": a.key_ms}
     else:
-        rows = run_cases(c, cases, gap, opts, a.scenario)
-        stats = c.call(op="stats")[0]
+        rows = run_cases(c, ghost, cases, gap, opts, a.scenario)
+        stats = aux.call(op="stats")
+    stats.get("config", {}).pop("socketPath", None)       # a temp path on this machine: keep it out of shared results
     S = summarize(rows)
     S.update(extra)
     # The system runs the model in (at least) two modes that give different but deterministic greedy outputs and different speed
@@ -237,7 +248,9 @@ def main():
     raw = "|".join(str(r["resp"].get("model_completion")) for r in rows[:20])
     S["mode_fingerprint"] = hashlib.md5(raw.encode()).hexdigest()[:8]
     print(f"model mode fingerprint (raw outputs of the first 20 cases): {S['mode_fingerprint']}")
-    print(f"\ndaemon stats: requests {stats['requests']} cold {stats['cold']} settling {stats['settling']} ready {stats['ready']} cancelled {stats['cancelled']} errors {stats['errors']} keepalives {stats['keepalives']}; prefix {stats['prefix_tokens']} tokens; config {stats['config']}")
+    prefix = {p["name"]: p["prefix_tokens"] for p in stats["profiles"]}
+    print(f"\ndaemon stats: generations {stats['requests']} new sessions {stats['cold']} cancelled {stats['cancelled']} errors {stats['errors']} keepalives {stats['keepalives']}; profile prefix tokens {prefix}")
+    print(f"policy: {json.dumps(ghost.cfg, sort_keys=True)}")
     title = a.scenario + (f" (key every {a.key_ms:.0f} ms, {extra['superseded']}/{extra['keystrokes_sent']} requests superseded; e2e = last keystroke to answer)" if extra else f" (gap {gap*1000:.0f} ms)")
     report(S, title)
     samples(rows)
@@ -246,11 +259,11 @@ def main():
     path = res / f"{datetime.datetime.now():%Y%m%d-%H%M%S}-{a.label}.json"
     mach = machine_info()
     print("machine:", describe(mach))
-    json.dump({"label": a.label, "scenario": a.scenario, "machine": mach, "opts": opts, "daemon": stats, "summary": S, "rows": rows}, open(path, "w"), indent=1, default=str)
+    json.dump({"label": a.label, "scenario": a.scenario, "machine": mach, "opts": opts, "policy": ghost.cfg, "daemon": stats, "summary": S, "rows": rows}, open(path, "w"), indent=1, default=str)
     print("\nsaved", path)
     if proc:
         try:
-            c.call(op="shutdown")
+            aux.call(op="shutdown", timeout=3)
         except Exception:
             pass
         proc.terminate()

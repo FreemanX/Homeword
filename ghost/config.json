@@ -1,0 +1,22 @@
+{
+  "words": 5,
+  "maxTokens": 6,
+  "textBudget": 100,
+  "oneSentence": true,
+  "invalidPolicy": "drop",
+  "lenientApps": ["terminal", "code"],
+  "spellCheck": true,
+  "spellLanguage": "en",
+  "sampling": "greedy",
+  "topK": 40,
+  "topP": 0.9,
+  "temperature": -1,
+  "seed": -1,
+  "shots": 6,
+  "instructions": "short",
+  "format": "suffix",
+  "output": "plain",
+  "guardrails": "permissive",
+  "serverPort": 47321,
+  "serverIdleExitSec": 1800
+}

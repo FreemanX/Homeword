@@ -1,7 +1,8 @@
 # pi integration: ghost text in pi's prompt editor
 
 `ghost-editor.ts` replaces pi's prompt editor with a subclass (pi's public `CustomEditor` / `ctx.ui.setEditorComponent` API) that
-asks predictd for a continuation of the prompt as you type and draws it dim after the cursor, fish-style.
+asks the ghost policy server (`pred serve`, on top of predictd) for a continuation of the prompt as you type and draws it dim
+after the cursor, fish-style. The extension is only UI: what to ask and what to show is decided by the policy.
 
 | Key | Effect |
 |---|---|
@@ -9,9 +10,31 @@ asks predictd for a continuation of the prompt as you type and draws it dim afte
 | → / Ctrl+F | accept the whole ghost (only at the end of the text, where these keys do nothing in pi) |
 | typing | a character that matches the ghost keeps the rest of it; anything else asks again |
 
+```mermaid
+sequenceDiagram
+    participant U as User
+    participant E as GhostEditor in pi
+    participant D as ghost server
+    U->>E: key
+    alt Tab or Right while a ghost is shown
+        E->>E: insert one word or all, keep the rest as the ghost
+    else anything else
+        E->>E: pi's own editing (super.handleInput)
+        alt typed the next ghost character
+            E->>E: shorten the ghost, no request
+        else any other edit
+            E->>D: POST /predict, aborting the previous fetch
+            D-->>E: suggestion
+            E->>E: keep it if the text is unchanged, requestRender
+        end
+    end
+    E-->>U: render: ghost dimmed in the cursor cell and the padding after it
+```
+
 The ghost appears only with the cursor at the end of the text, and not for `/commands` or `!shell` lines. It talks to
-`http://127.0.0.1:$PREDICTD_PORT` (default 47321, `httpPort` in `config.json`) and runs `bin/pred start` if the daemon is not up.
-Optional environment: `PREDICTD_PORT`, `PREDICTD_APP` (the app label sent to the model, default `coding agent prompt`), `PRED_CLI`.
+`http://127.0.0.1:$GHOST_PORT` (default 47321, `serverPort` in `ghost/config.json`) and runs `bin/pred start` (predictd + the ghost
+server) if nothing answers. Optional environment: `GHOST_PORT`, `GHOST_APP` (the app label sent to the policy, default
+`coding agent prompt`), `PRED_CLI`.
 
 ## Try it
 

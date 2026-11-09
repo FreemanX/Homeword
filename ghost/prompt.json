@@ -53,5 +53,6 @@
     }
   ],
   "instructions_fullword": "You are a typing assistant. You are given the app the user is typing in and the text typed so far. Predict how the text continues. If the text does not end with a space, start your answer by re-writing its last word in full (completed, if it is unfinished), then continue for {words} more words with correct grammar. If the text ends with a space, start directly with the next word. Stop at the end of the sentence. Never repeat earlier text.",
-  "instructions_short": "Continue the user's text: if the last word is unfinished, give its remaining letters first, then about {words} more words. One sentence at most, correct grammar, never repeat the text."
+  "instructions_short": "Continue the user's text: if the last word is unfinished, give its remaining letters first, then about {words} more words. One sentence at most, correct grammar, never repeat the text.",
+  "template": "App: {app}\nText: {text}"
 }

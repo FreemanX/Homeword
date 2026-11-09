@@ -1,5 +1,7 @@
-// predictd: a long-lived input-prediction service on top of Apple's on-device model (FoundationModels).
-// Newline-delimited JSON over a unix socket. See README.md for the protocol and the pipeline.
+// predictd: a model host for Apple's on-device language model (FoundationModels). Mechanism only: it holds named system-prompt
+// profiles, keeps one of them warm, and generates plain text or structured output on request. It assumes nothing about what the
+// text is for: policies (what to ask, how to use the answer) live in its clients, such as the typing predictor in ghost/.
+// Protocol: newline-delimited JSON over a unix socket, the same requests over HTTP on 127.0.0.1. See docs/ARCHITECTURE.md.
 import Foundation
 import FoundationModels
 import AppKit
@@ -7,96 +9,70 @@ import AppKit
 let clock = ContinuousClock()
 func ms(_ d: Duration) -> Double { Double(d.components.seconds) * 1000 + Double(d.components.attoseconds) / 1e15 }
 func log(_ s: String) { FileHandle.standardError.write(Data((s + "\n").utf8)) }
+func num(_ x: Any?) -> NSNumber? { x as? NSNumber }
 
-// MARK: config
+// MARK: config (daemon-wide knobs; everything about a generation comes with the profile or the request)
 
 struct Config {
-    var socketPath = "/tmp/predictd-\(getuid()).sock", httpPort = 0
-    var shots = 99, words = 5, maxTokens = 14, textBudget = 200, hardCap = 4000, margin = 60
-    var settleMs = 800.0, keepAliveSec = 6.0, keepAliveMaxIdleSec = 300.0, idleExitSec = 0.0
-    var waitSettle = false, includeSchema = false, exactTrim = false
-    var oneSentence = true, instructionsVariant = "long", sessionMode = "reuse", guardrails = "permissive", invalidPolicy = "drop", format = "suffix", output = "schema"
-    var lenientApps: Set<String> = ["terminal", "code"]
+    var socketPath = "/tmp/predictd-\(getuid()).sock", httpPort = 47320
+    var keepAliveSec = 3.0, keepAliveMaxIdleSec = 300.0, idleExitSec = 1800.0, cacheTTLSec = 5.5, maxSessions = 32
 
     mutating func apply(_ d: [String: Any]) {
-        func i(_ k: String) -> Int? { (d[k] as? NSNumber)?.intValue }
-        func f(_ k: String) -> Double? { (d[k] as? NSNumber)?.doubleValue }
-        func b(_ k: String) -> Bool? { d[k] as? Bool }
-        func s(_ k: String) -> String? { d[k] as? String }
-        shots = i("shots") ?? shots; words = i("words") ?? words; maxTokens = i("maxTokens") ?? maxTokens; textBudget = i("textBudget") ?? textBudget
-        hardCap = i("hardCap") ?? hardCap; margin = i("margin") ?? margin
-        settleMs = f("settleMs") ?? settleMs; keepAliveSec = f("keepAliveSec") ?? keepAliveSec
-        keepAliveMaxIdleSec = f("keepAliveMaxIdleSec") ?? keepAliveMaxIdleSec; idleExitSec = f("idleExitSec") ?? idleExitSec
-        waitSettle = b("waitSettle") ?? waitSettle; oneSentence = b("oneSentence") ?? oneSentence; instructionsVariant = s("instructions") ?? instructionsVariant; sessionMode = s("sessionMode") ?? sessionMode; includeSchema = b("includeSchema") ?? includeSchema; exactTrim = b("exactTrim") ?? exactTrim
-        guardrails = s("guardrails") ?? guardrails; format = s("format") ?? format; output = s("output") ?? output; invalidPolicy = s("invalidPolicy") ?? invalidPolicy
-        if let a = d["lenientApps"] as? [String] { lenientApps = Set(a) }
-        socketPath = s("socketPath") ?? socketPath; httpPort = i("httpPort") ?? httpPort
+        socketPath = d["socketPath"] as? String ?? socketPath; httpPort = num(d["httpPort"])?.intValue ?? httpPort
+        keepAliveSec = num(d["keepAliveSec"])?.doubleValue ?? keepAliveSec
+        keepAliveMaxIdleSec = num(d["keepAliveMaxIdleSec"])?.doubleValue ?? keepAliveMaxIdleSec
+        idleExitSec = num(d["idleExitSec"])?.doubleValue ?? idleExitSec
+        cacheTTLSec = num(d["cacheTTLSec"])?.doubleValue ?? cacheTTLSec
+        maxSessions = num(d["maxSessions"])?.intValue ?? maxSessions
+    }
+    func dict() -> [String: Any] {
+        ["socketPath": socketPath, "httpPort": httpPort, "keepAliveSec": keepAliveSec, "keepAliveMaxIdleSec": keepAliveMaxIdleSec,
+         "idleExitSec": idleExitSec, "cacheTTLSec": cacheTTLSec, "maxSessions": maxSessions]
     }
 }
-
-struct Shot { var app: String, text: String, completion: String }
-struct Prompt { var instructions: String; var instructionsShort: String; var instructionsFullword: String; var shots: [Shot] }
 
 func loadJSON(_ path: String) -> [String: Any] {
     guard let d = FileManager.default.contents(atPath: path), let o = try? JSONSerialization.jsonObject(with: d) as? [String: Any] else { return [:] }
     return o
 }
-func loadPrompt(_ path: String) -> Prompt {
-    let o = loadJSON(path)
-    let shots = (o["shots"] as? [[String: String]] ?? []).map { Shot(app: $0["app"] ?? "", text: $0["text"] ?? "", completion: $0["completion"] ?? "") }
-    return Prompt(instructions: o["instructions"] as? String ?? "Predict how the text continues.", instructionsShort: o["instructions_short"] as? String ?? o["instructions"] as? String ?? "", instructionsFullword: o["instructions_fullword"] as? String ?? o["instructions"] as? String ?? "", shots: shots)
+func jsonText(_ o: Any) -> String {
+    guard JSONSerialization.isValidJSONObject(o), let d = try? JSONSerialization.data(withJSONObject: o, options: [.sortedKeys]) else { return "\(o)" }
+    return String(decoding: d, as: UTF8.self)
 }
 
-func userPrompt(_ app: String, _ text: String) -> String { "App: \(app)\nText: \(text)" }
-func makeSchema() -> GenerationSchema {
-    GenerationSchema(type: GeneratedContent.self, description: "Prediction", properties: [
-        GenerationSchema.Property(name: "completion", description: "how the text continues", type: String.self)])
-}
+// MARK: schemas: a JSON Schema subset -> GenerationSchema
 
-// MARK: text helpers (trim, token estimate, assemble)
-
-func isCJK(_ u: Unicode.Scalar) -> Bool {
-    (0x3040...0x30FF).contains(u.value) || (0x3400...0x9FFF).contains(u.value) || (0xAC00...0xD7AF).contains(u.value)
-}
-
-/// Keep the tail of `text` that fits `budget` estimated tokens, cut on a word boundary.
-/// chars/token measured on this model: prose 5.1, code 2.9, shell 2.6, Chinese 1.6.
-func trimTail(_ text: String, budget: Int, charsPerToken override: Double? = nil) -> (String, Double, Bool) {
-    let window = Array(text.suffix(max(budget, 1) * 8))
-    let sym = window.filter { !$0.isLetter && !$0.isWhitespace }.count
-    let ratio = override ?? (Double(sym) / Double(max(window.count, 1)) > 0.08 ? 2.9 : 4.8)
-    var cost = 0.0, cut = window.count
-    while cut > 0 {
-        let ch = window[cut - 1]
-        let c = ch.unicodeScalars.contains(where: isCJK) ? 1 / 1.6 : 1 / ratio
-        if cost + c > Double(budget) { break }
-        cost += c; cut -= 1
+/// Supported: object (properties, required, propertyOrder), array (items, minItems, maxItems), string (enum), integer, number, boolean.
+/// JSON objects carry no key order, so properties are generated in `propertyOrder`, else `required`, else alphabetical order.
+func dynamicSchema(_ s: [String: Any], name: String) throws -> DynamicGenerationSchema {
+    let desc = s["description"] as? String
+    if let choices = s["enum"] as? [String] { return DynamicGenerationSchema(name: name, description: desc, anyOf: choices) }
+    switch s["type"] as? String ?? "string" {
+    case "object":
+        let props = s["properties"] as? [String: Any] ?? [:]
+        let required = s["required"] as? [String]
+        let order = (s["propertyOrder"] as? [String]) ?? required.map { r in r + props.keys.filter { !r.contains($0) }.sorted() } ?? props.keys.sorted()
+        var out: [DynamicGenerationSchema.Property] = []
+        for k in order {
+            guard let p = props[k] as? [String: Any] else { continue }
+            out.append(.init(name: k, description: p["description"] as? String, schema: try dynamicSchema(p, name: "\(name)_\(k)"),
+                             isOptional: !(required ?? Array(props.keys)).contains(k)))
+        }
+        return DynamicGenerationSchema(name: s["title"] as? String ?? name, description: desc, properties: out)
+    case "array":
+        let items = s["items"] as? [String: Any] ?? ["type": "string"]
+        return DynamicGenerationSchema(arrayOf: try dynamicSchema(items, name: "\(name)_item"),
+                                       minimumElements: num(s["minItems"])?.intValue, maximumElements: num(s["maxItems"])?.intValue)
+    case "integer": return DynamicGenerationSchema(type: Int.self)
+    case "number": return DynamicGenerationSchema(type: Double.self)
+    case "boolean": return DynamicGenerationSchema(type: Bool.self)
+    case "string": return DynamicGenerationSchema(type: String.self)
+    case let t: throw NSError(domain: "predictd", code: 1, userInfo: [NSLocalizedDescriptionKey: "unsupported schema type \(t)"])
     }
-    let whole = cut == 0 && window.count == text.count
-    if !whole && cut < window.count {
-        // do not start mid-word
-        while cut < window.count && !window[cut - 1].isWhitespace && !window[cut].isWhitespace { cut += 1 }
-        if cut < window.count && window[cut - 1].isWhitespace == false { cut += 1 }
-    }
-    let out = String(window[cut...])
-    return (out, cost, !whole)
 }
-
-struct Assembly {
-    var shown = "", raw = "", partial = "", firstWord = ""
-    var droppedPartial = false, sentenceEnd = false, glued = false, respaced = false, valid = true, suppressed: String? = nil
-    var words = 0, misspelled = 0
+func makeSchema(_ s: [String: Any]) throws -> GenerationSchema {
+    try GenerationSchema(root: dynamicSchema(s, name: s["title"] as? String ?? "Output"), dependencies: [])
 }
-
-@MainActor func checkWord(_ w: String) -> Bool {
-    guard !w.isEmpty, w.allSatisfy({ $0.isLetter || $0 == "'" || $0 == "’" }), !w.unicodeScalars.contains(where: isCJK) else { return true }
-    func ok(_ x: String) -> Bool { NSSpellChecker.shared.checkSpelling(of: x, startingAt: 0, language: "en", wrap: false, inSpellDocumentWithTag: 0, wordCount: nil).location == NSNotFound }
-    // "friday" is only a word as "Friday"; but don't accept every name ("justine" is not "just in"), only days and months
-    let capitalOK: Set<String> = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday", "january", "february",
-                                  "march", "april", "may", "june", "july", "august", "september", "october", "november", "december"]
-    return ok(w) || (capitalOK.contains(w.lowercased()) && ok(w.capitalized))
-}
-
 
 /// Whether the last response in the transcript stopped at maximumResponseTokens. The finish reason is not public API, but it is
 /// a stored property of the transcript entry, so reflection can read it (Transcript.Response.finishReason, macOS 27).
@@ -113,116 +89,74 @@ func hitTokenCap(_ t: Transcript) -> Bool {
     return walk(last, 0)
 }
 
-/// Index just after the end of the first sentence in `s` (a . ! ? … followed by whitespace or the end, not an abbreviation or initial), or nil.
-func sentenceEnd(_ s: String) -> String.Index? {
-    let abbr: Set<String> = ["mr", "mrs", "ms", "dr", "prof", "vs", "etc", "e.g", "i.e", "st", "no", "inc", "jr", "sr", "approx", "fig"]
-    var i = s.startIndex
-    while i < s.endIndex {
-        let ch = s[i]
-        if "。！？".contains(ch) {
-            var j = s.index(after: i); while j < s.endIndex, "」』）”".contains(s[j]) { j = s.index(after: j) }
-            return j
-        }
-        if ".!?…".contains(ch) {
-            var j = s.index(after: i)
-            while j < s.endIndex, ".!?…".contains(s[j]) { j = s.index(after: j) }          // "?!" "..."
-            var k = j; while k < s.endIndex, "\"')]”’".contains(s[k]) { k = s.index(after: k) }  // closing quote or bracket
-            if k == s.endIndex || s[k].isWhitespace {
-                if ch == "." {
-                    let before = s[s.startIndex..<i].reversed().prefix(while: { !$0.isWhitespace })
-                    let tok = String(before.reversed()).lowercased().trimmingCharacters(in: CharacterSet(charactersIn: "\"'([“"))
-                    if abbr.contains(tok) || (tok.count == 1 && tok.first!.isLetter) || (!tok.isEmpty && tok.allSatisfy({ $0.isNumber })) { i = j; continue }
-                }
-                return k
+// MARK: profiles and sessions
+
+/// A named system prompt: instructions, example turns (the cached prefix of every request), an optional schema for structured
+/// answers, guardrails and default generation options.
+struct Profile {
+    let name: String, fingerprint: String
+    let instructions: String
+    let examples: [[String: Any]]
+    let schemaJSON: [String: Any]?, schema: GenerationSchema?
+    let guardrails: String
+    let defaults: [String: Any]
+    let model: SystemLanguageModel
+    var prefixTokens = -1
+
+    init(_ d: [String: Any]) throws {
+        name = d["name"] as? String ?? ""
+        guard !name.isEmpty else { throw NSError(domain: "predictd", code: 2, userInfo: [NSLocalizedDescriptionKey: "profile needs a name"]) }
+        instructions = d["instructions"] as? String ?? ""
+        examples = d["examples"] as? [[String: Any]] ?? []
+        schemaJSON = d["schema"] as? [String: Any]
+        schema = try schemaJSON.map(makeSchema)
+        guardrails = d["guardrails"] as? String ?? "default"
+        defaults = d["defaults"] as? [String: Any] ?? [:]
+        model = guardrails == "permissive" ? SystemLanguageModel(useCase: .general, guardrails: .permissiveContentTransformations) : SystemLanguageModel.default
+        var def = d; def["pin"] = nil; def["op"] = nil; def["id"] = nil
+        fingerprint = jsonText(def)
+    }
+
+    func transcript() throws -> Transcript {
+        var e: [Transcript.Entry] = [.instructions(Transcript.Instructions(segments: [.text(Transcript.TextSegment(content: instructions))], toolDefinitions: []))]
+        for x in examples {
+            let prompt = x["prompt"] as? String ?? ""
+            if let schema, let resp = x["response"], !(resp is String) {   // a structured example answer
+                e.append(.prompt(Transcript.Prompt(segments: [.text(Transcript.TextSegment(content: prompt))], responseFormat: Transcript.ResponseFormat(schema: schema))))
+                let content = try GeneratedContent(json: jsonText(resp))
+                e.append(.response(Transcript.Response(assetIDs: [], segments: [.structure(Transcript.StructuredSegment(schemaName: schemaJSON?["title"] as? String ?? "Output", content: content))])))
+            } else {
+                e.append(.prompt(Transcript.Prompt(segments: [.text(Transcript.TextSegment(content: prompt))])))
+                e.append(.response(Transcript.Response(assetIDs: [], segments: [.text(Transcript.TextSegment(content: x["response"] as? String ?? ""))])))
             }
-            i = j; continue
         }
-        i = s.index(after: i)
+        return Transcript(entries: e)
     }
-    return nil
+
+    func summary(pinned: Bool, sessions: [String]) -> [String: Any] {
+        ["name": name, "pinned": pinned, "examples": examples.count, "structured": schema != nil, "guardrails": guardrails,
+         "defaults": defaults, "prefix_tokens": prefixTokens, "sessions": sessions]
+    }
 }
 
-@MainActor func assemble(text: String, completion: String, app: String, cfg: Config, truncated: Bool = false) -> Assembly {
-    var a = Assembly()
-    var comp = completion.replacingOccurrences(of: "\n", with: " ")
-    let partial = String(String(text.reversed().prefix(while: { ($0.isLetter && !$0.unicodeScalars.contains(where: isCJK)) || $0 == "'" || $0 == "’" })).reversed())
-    a.partial = partial
-    if cfg.format == "fullword", !partial.isEmpty {   // the model re-wrote the last word in full: cut the typed part off
-        comp = String(comp.drop(while: { $0.isWhitespace }))
-        guard comp.lowercased().hasPrefix(partial.lowercased()) else { a.suppressed = "prefix_mismatch"; a.valid = false; return a }
-        comp = String(comp.dropFirst(partial.count))
+/// One LanguageModelSession of a profile. The default session ("") is stateless: its transcript goes back to `base` after every
+/// answer, so every request hits the cached prefix. A named session can keep its turns (`keep: true`) for a conversation.
+final class Slot: @unchecked Sendable {
+    let key: String, profile: String, name: String
+    let session: LanguageModelSession
+    let base: Transcript
+    var usedAt = clock.now
+    var fresh = true, conversation = false
+    var tail: Task<Void, Never>? = nil     // the last generation queued on this session: generations on one session run in order
+    init(profile: Profile, name: String) throws {
+        self.profile = profile.name; self.name = name; key = profile.name + "/" + name
+        let t = try profile.transcript()
+        session = LanguageModelSession(model: profile.model, transcript: t)
+        base = session.transcript
     }
-    if let last = text.last, last.isWhitespace {
-        comp = String(comp.drop(while: { $0.isWhitespace }))
-    } else if partial.isEmpty, let f = comp.first, !f.isWhitespace, let last = text.last, ",.;:!?)".contains(last) {
-        comp = " " + comp
-    } else if !partial.isEmpty, let f = comp.first, !f.isWhitespace {
-        a.glued = true
-    }
-    // cut by the token cap: the last word may be unfinished ("for so" of "for some"), drop it unless it is the only one
-    if truncated {
-        let trimmed = comp.trimmingCharacters(in: .whitespaces)
-        if let sp = trimmed.lastIndex(where: { $0.isWhitespace }) {
-            let lead = comp.prefix(while: { $0.isWhitespace })
-            comp = String(lead) + String(trimmed[trimmed.startIndex..<sp])
-            a.droppedPartial = true
-        }
-    }
-    // one sentence only: stop at the first sentence end (not for shell lines or code, where . ! ? are syntax)
-    if cfg.oneSentence && !cfg.lenientApps.contains(app), let e = sentenceEnd(comp) {
-        comp = String(comp[comp.startIndex..<e]); a.sentenceEnd = true
-    }
-    // cap the number of words: the unfinished word counts as one, then `words` more
-    let limit = cfg.words + (a.glued ? 1 : 0)
-    var count = 0, end = comp.startIndex, i = comp.startIndex, inWord = false
-    while i < comp.endIndex {
-        let ch = comp[i]
-        if ch.isWhitespace { if inWord { count += 1; end = i; inWord = false; if count == limit { break } } }
-        else { inWord = true }
-        i = comp.index(after: i)
-    }
-    if inWord && count < limit { count += 1; end = comp.endIndex }
-    comp = String(comp[comp.startIndex..<end])
-    while let l = comp.last, l.isWhitespace { comp.removeLast() }
-    a.raw = comp; a.words = count
-    if a.glued {
-        let piece = comp.prefix(while: { !$0.isWhitespace })
-        let strip = CharacterSet(charactersIn: ",.;:!?\"')]}")
-        let core = String(partial + piece).trimmingCharacters(in: strip)
-        a.firstWord = core
-        a.valid = checkWord(core)
-        // The model cannot reliably write the leading space after a word that is already finished ("git" + "commit -m",
-        // "with the" + "project"), so decide here whether the piece is the end of the typed word or a new word:
-        //  - it starts with something that cannot continue a word (a flag, path, operator, an opening quote): new word
-        //  - the glued word is not a word but the piece alone is (3+ letters): new word
-        let attach: Set<Character> = [",", ".", ";", ":", "!", "?", ")", "]", "}", "'", "’"]
-        let f = piece.first!
-        var separate = false
-        if !f.isLetter && !f.isNumber && !attach.contains(f) {
-            separate = f == "\"" ? text.filter({ $0 == "\"" }).count % 2 == 0 : true   // a quote closes a word only inside an open quote
-        }
-        let word = String(piece).trimmingCharacters(in: strip)
-        // a capital right after lowercase letters is a new sentence/word in prose ("out" + "I would"), camelCase only in code
-        if !separate && f.isUppercase && (partial.last?.isLowercase ?? false) && !cfg.lenientApps.contains(app) { separate = true }
-        let short = word.count < 3   // "to", "a", "I": only when the typed part is itself a finished word ("have" + "to")
-        if !separate && !a.valid && !word.isEmpty && word.allSatisfy({ $0.isLetter }) && checkWord(word)
-            && checkWord(partial)   // an unfinished typed word ("fri") must not be split off from the model's next word
-            // a 2-letter piece only after a typed word of 3+ letters ("have" + "to"), not after "ru" + "un" (which wanted "run")
-            && (!short || ((word.count == 2 || ["a", "i"].contains(word.lowercased())) && partial.count >= 3)) { separate = true }
-        if separate {
-            a.glued = false; a.valid = true; a.respaced = true; comp = " " + comp; a.firstWord = String(piece)
-        }
-    } else {
-        a.firstWord = String(comp.drop(while: { $0.isWhitespace }).prefix(while: { !$0.isWhitespace }))
-    }
-    let all = (partial + comp).split(whereSeparator: { $0.isWhitespace }).map { $0.trimmingCharacters(in: CharacterSet(charactersIn: ",.;:!?\"'()[]{}")) }
-    a.misspelled = all.filter { !checkWord($0) }.count
-    a.shown = comp
-    if a.glued && !a.valid && cfg.invalidPolicy == "drop" && !cfg.lenientApps.contains(app) { a.shown = ""; a.suppressed = "invalid_word" }
-    return a
 }
 
-// MARK: connection + engine
+// MARK: connection
 
 final class Conn: @unchecked Sendable {
     let fd: Int32; let lock = NSLock(); let http: Bool
@@ -248,278 +182,221 @@ final class Conn: @unchecked Sendable {
     }
 }
 
-struct Stats { var reused = 0, guardrail = 0, requests = 0, cold = 0, settling = 0, ready = 0, cancelled = 0, errors = 0, keepAlives = 0 }
+// MARK: engine
+
+struct Stats { var requests = 0, cold = 0, cancelled = 0, errors = 0, guardrail = 0, keepAlives = 0 }
 
 actor Engine {
-    var cfg: Config; var prompt: Prompt; var model: SystemLanguageModel
-    let schema = makeSchema()
-    var spare: (s: LanguageModelSession, at: ContinuousClock.Instant)?
+    var cfg: Config
+    let configPath: String
+    var profiles: [String: Profile] = [:]
+    var slots: [String: Slot] = [:]
+    var pinned: String? = nil              // the profile kept warm; nil = the most recently used session
+    var cacheOwner: String? = nil          // the session that prewarmed or generated last: the only one with a warm prefix cache
+    var lastUsed: String? = nil
+    var streams: [String: (id: String, task: Task<Void, Never>)] = [:]
+    var inflight = 0, busy = 0
     var lastActivity = clock.now
-    var stats = Stats(); var prefixTokens = 0; var busy = 0
-    var generating = false
-    var pendingTakeover = 0
-    var sessionOf: [String: LanguageModelSession] = [:]
-    var main: LanguageModelSession? = nil
-    var mainBase: Transcript? = nil
-    var mainUsedAt = clock.now
-    var inflight: [String: (id: String, task: Task<[String: Any], Never>)] = [:]
-    var pending: [String: (req: [String: Any], conn: Conn)] = [:]
+    var stats = Stats()
     let started = clock.now
-    let configPath: String, promptPath: String
 
-    init(cfg: Config, prompt: Prompt, configPath: String, promptPath: String) {
-        self.cfg = cfg; self.prompt = prompt; self.configPath = configPath; self.promptPath = promptPath
-        self.model = Engine.makeModel(cfg)
-    }
-    static func makeModel(_ c: Config) -> SystemLanguageModel {
-        c.guardrails == "permissive" ? SystemLanguageModel(useCase: .general, guardrails: .permissiveContentTransformations) : SystemLanguageModel.default
-    }
+    init(cfg: Config, configPath: String) { self.cfg = cfg; self.configPath = configPath }
 
-    // -- step 0: sessions. A session carries instructions + few-shot turns; prewarm() caches that prefix inside it.
-    func makeTranscript() -> Transcript {
-        let full = cfg.format == "fullword"
-        let ins = (full ? prompt.instructionsFullword : cfg.instructionsVariant == "short" ? prompt.instructionsShort : prompt.instructions).replacingOccurrences(of: "{words}", with: String(cfg.words))
-        var e: [Transcript.Entry] = [.instructions(Transcript.Instructions(segments: [.text(Transcript.TextSegment(content: ins))], toolDefinitions: []))]
-        for var s in prompt.shots.prefix(cfg.shots) {
-            if full, let last = s.text.last, !last.isWhitespace {   // fullword format: the answer re-writes the last word, completed
-                let partial = String(String(s.text.reversed().prefix(while: { $0.isLetter || $0 == "'" })).reversed())
-                if !partial.isEmpty { s.completion = partial + s.completion }
-            }
-            if cfg.output == "plain" {   // unstructured: the answer is just the text
-                e.append(.prompt(Transcript.Prompt(segments: [.text(Transcript.TextSegment(content: userPrompt(s.app, s.text)))])))
-                e.append(.response(Transcript.Response(assetIDs: [], segments: [.text(Transcript.TextSegment(content: s.completion))])))
-                continue
-            }
-            e.append(.prompt(Transcript.Prompt(segments: [.text(Transcript.TextSegment(content: userPrompt(s.app, s.text)))], responseFormat: Transcript.ResponseFormat(schema: schema))))
-            e.append(.response(Transcript.Response(assetIDs: [], segments: [.structure(Transcript.StructuredSegment(schemaName: "Prediction", content: GeneratedContent(properties: ["completion": s.completion])))])))
-        }
-        return Transcript(entries: e)
-    }
-    func newSession() -> LanguageModelSession { LanguageModelSession(model: model, transcript: makeTranscript()) }
-    /// Prewarm a fresh spare unless another request is generating. `after` = generations of the caller still counted in `busy`.
-    func refillIfIdle(after: Int = 1) { if busy <= after && pendingTakeover == 0 { refillSpare() } else { spare = nil } }
-    func refillSpare() { let s = newSession(); s.prewarm(); spare = (s, clock.now) }
-
-    func startup() async {
-        log("availability: \(model.availability)")
-        let s = newSession(); s.prewarm()
-        let o = GenerationOptions(samplingMode: .greedy, maximumResponseTokens: cfg.maxTokens)
-        var probeIn = 0
-        if cfg.output == "plain" { probeIn = (try? await s.respond(to: userPrompt("mail", "Hello"), options: o))?.usage.input.totalTokenCount ?? 0 }
-        else { probeIn = (try? await s.respond(to: userPrompt("mail", "Hello"), schema: schema, includeSchemaInPrompt: false, options: o))?.usage.input.totalTokenCount ?? 0 }
-        prefixTokens = max(0, probeIn - 12)
-        log("prefix (instructions + \(prompt.shots.count) shots) ≈ \(prefixTokens) tokens")
-        if cfg.sessionMode == "reuse" && cfg.output == "plain" { let m = newSession(); main = m; mainBase = m.transcript; m.prewarm(); mainUsedAt = clock.now }
-        else { refillSpare() }
+    func startup() {
+        log("availability: \(SystemLanguageModel.default.availability)")
         Task { await self.keepAliveLoop() }
     }
 
+    func slot(_ profile: Profile, _ name: String) throws -> Slot {
+        let key = profile.name + "/" + name
+        if let s = slots[key] { return s }
+        let s = try Slot(profile: profile, name: name)
+        slots[key] = s
+        stats.cold += 1
+        if slots.count > cfg.maxSessions {   // forget the least recently used idle session (never the pinned one)
+            let keepKey = pinned.map { $0 + "/" }
+            let victim = slots.values.filter { $0.key != key && $0.tail == nil && $0.key != keepKey }.min { $0.usedAt < $1.usedAt }
+            if let v = victim { slots[v.key] = nil }
+        }
+        return s
+    }
+
+    // -- the cache: only one session in the whole system keeps a warm prefix. Keep the pinned profile (or the last used session)
+    // warm while idle: prewarm it again when another session took the cache, or before the cache expires.
     func keepAliveLoop() async {
         while true {
             try? await Task.sleep(for: .milliseconds(500))
             let idle = ms(clock.now - lastActivity) / 1000
-            if cfg.idleExitSec > 0 && idle > cfg.idleExitSec && busy == 0 { log("idle for \(Int(idle)) s, exiting"); unlink(cfg.socketPath); exit(0) }
-            guard cfg.keepAliveSec > 0 else { continue }
-            if idle > cfg.keepAliveMaxIdleSec { continue }
-            // never prewarm while a request is generating: the two would compete for the GPU
-            if cfg.sessionMode == "reuse" && cfg.output == "plain" {
-                if busy == 0 && pendingTakeover == 0, let m = main, ms(clock.now - mainUsedAt) / 1000 >= cfg.keepAliveSec {
-                    if let b = mainBase { m.transcript = b }
-                    m.prewarm(); mainUsedAt = clock.now; stats.keepAlives += 1
-                }
-                continue
+            if cfg.idleExitSec > 0 && idle > cfg.idleExitSec && inflight == 0 { log("idle for \(Int(idle)) s, exiting"); unlink(cfg.socketPath); exit(0) }
+            guard cfg.keepAliveSec > 0, idle <= cfg.keepAliveMaxIdleSec, inflight == 0 else { continue }
+            var target: Slot? = nil
+            if let p = pinned, let prof = profiles[p] { target = try? slot(prof, "") }
+            else if let k = lastUsed { target = slots[k] }
+            guard let s = target else { continue }
+            if cacheOwner != s.key || ms(clock.now - s.usedAt) / 1000 >= cfg.keepAliveSec {
+                if !s.conversation { s.session.transcript = s.base }
+                s.session.prewarm(); s.usedAt = clock.now; cacheOwner = s.key; stats.keepAlives += 1
             }
-            if busy == 0 && pendingTakeover == 0 && (spare == nil || ms(clock.now - spare!.at) / 1000 >= cfg.keepAliveSec) { refillSpare(); stats.keepAlives += 1 }
         }
     }
 
-    // -- the pipeline
-    func predict(_ req: [String: Any], reuse: LanguageModelSession? = nil) async -> [String: Any] {
+    func options(_ r: [String: Any]) -> GenerationOptions {
+        let seed: UInt64? = num(r["seed"]).flatMap { $0.int64Value >= 0 ? UInt64($0.int64Value) : nil }
+        let sampling = r["sampling"] as? String ?? "greedy"
+        let mode: GenerationOptions.SamplingMode = sampling == "topK" ? .random(top: num(r["topK"])?.intValue ?? 40, seed: seed)
+            : sampling == "topP" ? .random(probabilityThreshold: num(r["topP"])?.doubleValue ?? 0.9, seed: seed) : .greedy
+        let t = num(r["temperature"])?.doubleValue
+        return GenerationOptions(samplingMode: mode, temperature: t.flatMap { $0 >= 0 ? $0 : nil }, maximumResponseTokens: num(r["maxTokens"])?.intValue)
+    }
+
+    // -- one generation on a session (runs after the session's previous generation)
+    func generate(_ req: [String: Any], _ s: Slot, _ prof: Profile, queuedAt: ContinuousClock.Instant) async -> [String: Any] {
+        let id = req["id"] ?? ""
+        if Task.isCancelled { stats.cancelled += 1; return ["id": id, "ok": false, "error": "cancelled"] }
         let t0 = clock.now
-        var c = cfg; c.apply(req["opts"] as? [String: Any] ?? [:])
-        let app = req["app"] as? String ?? "", text = req["text"] as? String ?? ""
-        stats.requests += 1; lastActivity = t0
-        busy += 1; defer { busy -= 1 }
-        var resp: [String: Any] = ["id": req["id"] ?? "", "ok": true]
-
-        // 1. trim: keep the tail that fits the text budget (never above hardCap minus prefix, template, output cap, margin)
-        let budget = max(16, min(c.textBudget, c.hardCap - prefixTokens - 25 - c.maxTokens - c.margin))
-        var (tail, est, trimmed) = trimTail(text, budget: budget)
-        var exactTok = -1, exactCalls = 0
-        if c.exactTrim {   // refine with the real tokenizer (about 25 ms per call), only ever shrinks the tail
-            var b = budget
-            while exactCalls < 3, let n = try? await model.tokenCount(for: tail) {
-                exactTok = n; exactCalls += 1
-                if n <= budget { break }
-                b = Int(Double(b) * Double(budget) / Double(n) * 0.97)
-                (tail, est, trimmed) = trimTail(text, budget: b)
-            }
+        stats.requests += 1; lastActivity = t0; busy += 1
+        defer { busy -= 1; lastActivity = clock.now }
+        var r = prof.defaults; for (k, v) in req { r[k] = v }   // request fields override the profile's defaults
+        let keep = r["keep"] as? Bool ?? false
+        let state = s.fresh ? "cold" : cacheOwner != s.key ? "evicted" : ms(t0 - s.usedAt) / 1000 > cfg.cacheTTLSec ? "expired" : "warm"
+        s.fresh = false; cacheOwner = s.key; lastUsed = s.key
+        if keep { s.conversation = true }
+        let before = s.session.transcript
+        var schema: GenerationSchema? = nil
+        if let sd = r["schema"] as? [String: Any] {
+            do { schema = try makeSchema(sd) } catch { return ["id": id, "ok": false, "error": "schema: \(error.localizedDescription)"] }
+        } else if r["schema"] as? Bool == true {
+            guard let ps = prof.schema else { return ["id": id, "ok": false, "error": "profile \(prof.name) has no schema"] }
+            schema = ps
         }
-        let tTrim = ms(clock.now - t0)
-        if tail.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { resp["suggestion"] = ""; resp["timing"] = ["total_ms": ms(clock.now - t0)]; return resp }
-
-        // 2. session: take the prewarmed spare (or build one cold)
-        let t1 = clock.now
-        var state = "cold", age = -1.0, settleWait = 0.0
-        let session: LanguageModelSession
-        if c.sessionMode == "reuse" && c.output == "plain" {
-            // one session for everything: the model has a single prefix cache, and the session that generated last owns it.
-            // Its transcript is restored after each answer, so the next request matches the cache: instructions, examples
-            // and, while typing, most of the previous request's text too.
-            if main == nil { let m = newSession(); main = m; mainBase = m.transcript; m.prewarm(); state = "cold"; stats.cold += 1 }
-            else { state = ms(t1 - mainUsedAt) > 5500 ? "expired" : "reused"; stats.reused += 1 }
-            session = main!
-        } else if let r = reuse {
-            // the session of the request this one cancelled: its transcript is unchanged and it owns the prefix cache
-            session = r; state = "reused"; stats.reused += 1
-        } else if let sp = spare {
-            spare = nil; age = ms(t1 - sp.at); session = sp.s
-            if age >= c.settleMs { state = "ready"; stats.ready += 1 }
-            else {
-                state = "settling"; stats.settling += 1
-                if c.waitSettle { settleWait = c.settleMs - age; try? await Task.sleep(for: .milliseconds(settleWait)); state = "settled_wait" }
-            }
-        } else { session = newSession(); session.prewarm(); stats.cold += 1 }
-        let tAcq = ms(clock.now - t1)
-        if let rid = req["id"] as? String { sessionOf[rid] = session }
-        defer { if let rid = req["id"] as? String { sessionOf[rid] = nil } }
-
-        // 3. model: guided generation with the schema as the only format control
-        let t2 = clock.now
-        var completion = "", truncated = false
-        var tokIn = 0, tokCached = 0, tokOut = 0
+        var resp: [String: Any] = ["id": id, "ok": true]
+        var usage: (Int, Int, Int) = (0, 0, 0)
         do {
-            let go = GenerationOptions(samplingMode: .greedy, maximumResponseTokens: c.maxTokens)
-            if c.output == "plain" {
-                let r = try await session.respond(to: userPrompt(app, tail), options: go)
-                completion = r.content
-                truncated = hitTokenCap(session.transcript)
-                tokIn = r.usage.input.totalTokenCount; tokCached = r.usage.input.cachedTokenCount; tokOut = r.usage.output.totalTokenCount
+            let o = options(r), prompt = r["prompt"] as? String ?? ""
+            if let schema {
+                let out = try await s.session.respond(to: prompt, schema: schema, includeSchemaInPrompt: r["schemaInPrompt"] as? Bool ?? false, options: o)
+                let json = out.content.jsonString
+                resp["content"] = (try? JSONSerialization.jsonObject(with: Data(json.utf8), options: [.fragmentsAllowed])) ?? json
+                usage = (out.usage.input.totalTokenCount, out.usage.input.cachedTokenCount, out.usage.output.totalTokenCount)
             } else {
-                let r = try await session.respond(to: userPrompt(app, tail), schema: schema, includeSchemaInPrompt: c.includeSchema, options: go)
-                completion = (try? r.content.value(String.self, forProperty: "completion")) ?? ""
-                tokIn = r.usage.input.totalTokenCount; tokCached = r.usage.input.cachedTokenCount; tokOut = r.usage.output.totalTokenCount
+                let out = try await s.session.respond(to: prompt, options: o)
+                resp["text"] = out.content
+                usage = (out.usage.input.totalTokenCount, out.usage.input.cachedTokenCount, out.usage.output.totalTokenCount)
             }
+            resp["finish"] = hitTokenCap(s.session.transcript) ? "length" : "stop"
         } catch {
-            if c.sessionMode == "reuse", session === main, let b = mainBase { session.transcript = b; mainUsedAt = clock.now }
-            if Task.isCancelled || error is CancellationError { stats.cancelled += 1; return ["id": req["id"] ?? "", "ok": false, "error": "cancelled", "session": session] }
-            refillIfIdle()
+            s.session.transcript = keep ? before : s.base; s.usedAt = clock.now
+            if Task.isCancelled || error is CancellationError { stats.cancelled += 1; return ["id": id, "ok": false, "error": "cancelled"] }
             let msg = "\(error)"
-            if msg.contains("sensitive or unsafe") || msg.lowercased().contains("guardrail") {   // false positive even when permissive: just show nothing
+            if msg.contains("sensitive or unsafe") || msg.lowercased().contains("guardrail") {
                 stats.guardrail += 1
-                resp["suggestion"] = ""; resp["suppressed"] = "guardrail"; resp["partial"] = ""; resp["timing"] = ["total_ms": ms(clock.now - t0), "model_ms": ms(clock.now - t2), "session": state]
-                return resp
+                return ["id": id, "ok": false, "error": "guardrail", "detail": String(msg.prefix(200))]
             }
             stats.errors += 1
-            return ["id": req["id"] ?? "", "ok": false, "error": msg.prefix(200).description]
+            return ["id": id, "ok": false, "error": String(msg.prefix(200))]
         }
-        let tModel = ms(clock.now - t2)
-        if c.sessionMode == "reuse", session === main, let b = mainBase { session.transcript = b; mainUsedAt = clock.now }
-
-        // 4. assemble: glue the unfinished word, validate it, cap the word count
-        let t3 = clock.now
-        let (cmp, cc) = (completion, c)
-        let tr = truncated
-        let a = await MainActor.run { assemble(text: text, completion: cmp, app: app, cfg: cc, truncated: tr) }
-        let tAsm = ms(clock.now - t3)
-
-        // 5. next spare. The model keeps one prefix cache, owned by whichever session prewarmed or generated last, so this
-        // generation has evicted any existing spare: always prewarm a new one, but only when nothing else is generating
-        // (a prewarm during a generation would evict that generation's cache). The used session's transcript has grown,
-        // so it is not reused.
-        lastActivity = clock.now
-        if !(c.sessionMode == "reuse" && c.output == "plain") { refillIfIdle(after: 1) }
-
-        resp["suggestion"] = a.shown; resp["raw_suggestion"] = a.raw; resp["model_completion"] = completion
-        resp["partial"] = a.partial; resp["first_word"] = a.firstWord; resp["sentence_end"] = a.sentenceEnd; resp["truncated"] = truncated; resp["dropped_partial"] = a.droppedPartial; resp["glued"] = a.glued; resp["respaced"] = a.respaced; resp["valid"] = a.valid
-        resp["suppressed"] = a.suppressed ?? NSNull(); resp["words"] = a.words; resp["misspelled"] = a.misspelled
-        resp["timing"] = ["total_ms": ms(clock.now - t0), "trim_ms": tTrim, "acquire_ms": tAcq, "settle_wait_ms": settleWait,
-                          "model_ms": tModel, "assemble_ms": tAsm, "spare_age_ms": age, "session": state]
-        resp["tokens"] = ["in": tokIn, "cached": tokCached, "out": tokOut, "text_est": est, "text_exact": exactTok,
-                          "budget": budget, "trimmed": trimmed, "text_chars_in": text.count, "text_chars_used": tail.count]
+        let modelMs = ms(clock.now - t0)
+        if !keep { s.session.transcript = s.base }
+        s.usedAt = clock.now
+        resp["tokens"] = ["in": usage.0, "cached": usage.1, "out": usage.2]
+        resp["timing"] = ["wait_ms": ms(t0 - queuedAt), "model_ms": modelMs, "total_ms": ms(clock.now - queuedAt)]
+        resp["state"] = state
         return resp
     }
 
-    func settleProbe() async -> [String: Any] {
-        var rows: [[String: Any]] = []
-        let sample = userPrompt("mail", "Please make sure that the final document incl")
-        for age in [-1, 0, 100, 200, 400, 800, 1500] {
-            try? await Task.sleep(for: .milliseconds(1500))
-            let s = newSession()
-            if age >= 0 { s.prewarm(); try? await Task.sleep(for: .milliseconds(age)) }
-            let t = clock.now
-            let r = try? await s.respond(to: sample, schema: schema, includeSchemaInPrompt: false, options: GenerationOptions(samplingMode: .greedy, maximumResponseTokens: cfg.maxTokens))
-            rows.append(["wait_after_prewarm_ms": age, "model_ms": ms(clock.now - t), "cached": r?.usage.input.cachedTokenCount ?? -1, "in": r?.usage.input.totalTokenCount ?? -1])
-        }
-        return ["ok": true, "rows": rows]
+    func finished(_ stream: String?, _ id: String, _ s: Slot, _ task: Task<Void, Never>) {
+        inflight -= 1
+        if let st = stream, streams[st]?.id == id { streams[st] = nil }
+        if s.tail == task { s.tail = nil }
     }
 
     // -- protocol
-    func handle(_ conn: Conn, _ req: [String: Any]) {
+    func handle(_ conn: Conn, _ req: [String: Any]) async {
         let id = req["id"] as? String ?? String(describing: req["id"] ?? "")
-        switch req["op"] as? String ?? "predict" {
+        func fail(_ e: String) { conn.send(["id": id, "ok": false, "error": e]) }
+        switch req["op"] as? String ?? "generate" {
         case "ping": conn.send(["id": id, "ok": true, "pong": true])
-        case "stats":
-            var o: [String: Any] = ["id": id, "ok": true, "uptime_s": ms(clock.now - started) / 1000, "prefix_tokens": prefixTokens,
-                "requests": stats.requests, "cold": stats.cold, "settling": stats.settling, "ready": stats.ready,
-                "reused": stats.reused, "cancelled": stats.cancelled, "errors": stats.errors, "keepalives": stats.keepAlives, "guardrail": stats.guardrail]
-            o["config"] = ["words": cfg.words, "maxTokens": cfg.maxTokens, "textBudget": cfg.textBudget, "settleMs": cfg.settleMs,
-                           "waitSettle": cfg.waitSettle, "keepAliveSec": cfg.keepAliveSec, "guardrails": cfg.guardrails, "exactTrim": cfg.exactTrim]
-            conn.send(o)
-        case "reload":
-            var c = Config(); c.apply(loadJSON(configPath)); c.socketPath = cfg.socketPath
-            c.apply(req["config"] as? [String: Any] ?? [:]); c.socketPath = cfg.socketPath
-            cfg = c; prompt = loadPrompt(promptPath); model = Engine.makeModel(c); main = nil; mainBase = nil; refillSpare()
-            conn.send(["id": id, "ok": true, "reloaded": true])
-        case "shutdown": conn.send(["id": id, "ok": true]); exit(0)
-        case "settle_probe": Task { var r = await self.settleProbe(); r["id"] = id; conn.send(r) }
-        case "cancel":
-            if let k = pending.first(where: { $0.value.req["id"] as? String == req["target"] as? String })?.key { pending[k] = nil }
-            conn.send(["id": id, "ok": true])
-        default:
-            // single flight: the model runs one generation at a time. A request that arrives meanwhile waits as the
-            // newest one of its stream (an older waiting one is dropped as superseded); aborting a running generation
-            // does not free the GPU in time and loses the prefix cache of the next session (measured).
-            let stream = cfg.sessionMode == "reuse" ? "main" : req["stream"] as? String ?? "conn\(conn.fd)"
-            if cfg.output == "plain" {
-                let prev = inflight[stream]
-                prev?.task.cancel()
-                if prev != nil { pendingTakeover += 1 }
-                let t = Task {
-                    var reuse: LanguageModelSession? = nil
-                    if let p = prev {
-                        // wait for the cancelled request to unwind (about 0-5 ms), then take over its session
-                        if let r = await p.task.value as [String: Any]?, let s = r["session"] as? LanguageModelSession { reuse = s }
-                        self.takeoverDone()
-                    }
-                    let r = await self.predict(req, reuse: reuse)
-                    var out = r; out["session"] = nil
-                    conn.send(out)
-                    self.clearInflight(stream, id)
-                    return r                      // keeps "session" for a request that takes over after a cancel
+
+        case "profile.set":
+            do {
+                var p = try Profile(req)
+                if let old = profiles[p.name], old.fingerprint == p.fingerprint {   // same definition: keep its warm sessions
+                    if req["pin"] as? Bool == true { pinned = old.name }
+                    conn.send(["id": id, "ok": true, "name": old.name, "changed": false, "prefix_tokens": old.prefixTokens]); return
                 }
-                inflight[stream] = (id, t)
-                return
+                p.prefixTokens = (try? await p.model.tokenCount(for: p.transcript())) ?? -1
+                for k in slots.keys where k.hasPrefix(p.name + "/") { slots[k] = nil }   // sessions of the old definition
+                profiles[p.name] = p
+                if req["pin"] as? Bool == true { pinned = p.name }
+                if pinned == p.name, let s = try? slot(p, "") { s.session.prewarm(); s.usedAt = clock.now; cacheOwner = s.key }
+                conn.send(["id": id, "ok": true, "name": p.name, "changed": true, "prefix_tokens": p.prefixTokens])
+            } catch { fail("profile: \(error.localizedDescription)") }
+
+        case "profile.pin":
+            if let n = req["name"] as? String { guard profiles[n] != nil else { return fail("unknown_profile") }; pinned = n } else { pinned = nil }
+            conn.send(["id": id, "ok": true, "pinned": pinned ?? NSNull()])
+
+        case "profile.drop":
+            let n = req["name"] as? String ?? ""
+            profiles[n] = nil; if pinned == n { pinned = nil }
+            for k in slots.keys where k.hasPrefix(n + "/") { slots[k] = nil }
+            conn.send(["id": id, "ok": true])
+
+        case "session.drop":
+            slots[(req["profile"] as? String ?? "") + "/" + (req["session"] as? String ?? "")] = nil
+            conn.send(["id": id, "ok": true])
+
+        case "generate":
+            guard let pn = req["profile"] as? String, let prof = profiles[pn] else { return fail("unknown_profile") }
+            let sname = req["session"] as? String ?? ""
+            if req["keep"] as? Bool == true && sname.isEmpty { return fail("keep needs a named session") }
+            let s: Slot
+            do { s = try slot(prof, sname) } catch { return fail("session: \(error.localizedDescription)") }
+            let stream = req["stream"] as? String
+            if let st = stream { streams[st]?.task.cancel() }   // the newest request on a stream replaces the older one
+            let prev = s.tail, queuedAt = clock.now
+            inflight += 1
+            let task = Task {
+                await prev?.value
+                let r = await self.generate(req, s, prof, queuedAt: queuedAt)
+                conn.send(r)
             }
-            if generating {
-                if let old = pending[stream] { stats.cancelled += 1; old.conn.send(["id": old.req["id"] ?? "", "ok": false, "error": "cancelled"]) }
-                pending[stream] = (req, conn)
-            } else { runPredict(req, conn) }
+            s.tail = task
+            if let st = stream { streams[st] = (id, task) }
+            Task { await task.value; self.finished(stream, id, s, task) }
+
+        case "cancel":
+            if let st = req["stream"] as? String { streams[st]?.task.cancel() }
+            conn.send(["id": id, "ok": true])
+
+        case "tokens":
+            let n = try? await SystemLanguageModel.default.tokenCount(for: req["text"] as? String ?? "")
+            conn.send(["id": id, "ok": n != nil, "count": n ?? -1])
+
+        case "spell":
+            let words = req["words"] as? [String] ?? [], lang = req["language"] as? String ?? "en"
+            let valid = await MainActor.run {
+                words.map { NSSpellChecker.shared.checkSpelling(of: $0, startingAt: 0, language: lang, wrap: false, inSpellDocumentWithTag: 0, wordCount: nil).location == NSNotFound }
+            }
+            conn.send(["id": id, "ok": true, "valid": valid])
+
+        case "stats":
+            let list = profiles.values.sorted { $0.name < $1.name }.map { p in
+                p.summary(pinned: pinned == p.name, sessions: slots.values.filter { $0.profile == p.name }.map(\.name).sorted())
+            }
+            conn.send(["id": id, "ok": true, "uptime_s": ms(clock.now - started) / 1000, "requests": stats.requests, "cold": stats.cold,
+                       "cancelled": stats.cancelled, "errors": stats.errors, "guardrail": stats.guardrail, "keepalives": stats.keepAlives,
+                       "profiles": list, "pinned": pinned ?? NSNull(), "warm": cacheOwner ?? NSNull(), "config": cfg.dict()])
+
+        case "reload":
+            var c = Config(); c.apply(loadJSON(configPath)); c.apply(req["config"] as? [String: Any] ?? [:])
+            c.socketPath = cfg.socketPath; c.httpPort = cfg.httpPort   // the listeners stay where they are
+            cfg = c
+            conn.send(["id": id, "ok": true, "config": cfg.dict()])
+
+        case "shutdown": conn.send(["id": id, "ok": true]); unlink(cfg.socketPath); exit(0)
+        case let op: fail("unknown op \(op)")
         }
-    }
-    func takeoverDone() { pendingTakeover -= 1 }
-    func clearInflight(_ stream: String, _ id: String) { if inflight[stream]?.id == id { inflight[stream] = nil } }
-    func runPredict(_ req: [String: Any], _ conn: Conn) {
-        generating = true
-        Task {
-            let r = await self.predict(req)
-            conn.send(r)
-            self.generationDone()
-        }
-    }
-    func generationDone() {
-        generating = false
-        if let k = pending.keys.first, let next = pending.removeValue(forKey: k) { runPredict(next.req, next.conn) }
     }
 }
 
@@ -570,8 +447,7 @@ func serve(path: String, engine: Engine) {
     }.start()
 }
 
-// MARK: HTTP (127.0.0.1 only): POST /predict with the same JSON as the socket protocol, GET /health.
-// For integrations that can make HTTP calls but not unix-socket calls (pi extension, Claude Code mod).
+// MARK: HTTP (127.0.0.1 only): POST with the same JSON object as the socket protocol (op defaults to generate), GET /health.
 
 func serveHTTP(port: Int, engine: Engine) {
     let fd = socket(AF_INET, SOCK_STREAM, 0)
@@ -609,34 +485,34 @@ func handleHTTP(_ cfd: Int32, _ engine: Engine) {
     while body.count < length { let n = read(cfd, &chunk, chunk.count); if n <= 0 { break }; body.append(chunk, count: n) }
     let conn = Conn(cfd, http: true)
     if requestLine.hasPrefix("GET /health") { conn.send(["ok": true]); return }
-    guard requestLine.hasPrefix("POST /predict") || requestLine.hasPrefix("POST /"),
-          var req = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any] else { conn.send(["ok": false, "error": "POST /predict with a JSON body"]); return }
-    if req["op"] == nil { req["op"] = "predict" }
+    guard requestLine.hasPrefix("POST /"), var req = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any] else {
+        conn.send(["ok": false, "error": "POST a JSON object (see docs/ARCHITECTURE.md)"]); return
+    }
+    if req["op"] == nil { req["op"] = "generate" }
     if req["id"] == nil { req["id"] = UUID().uuidString }
     Task { await engine.handle(conn, req) }
 }
 
 @main struct Predictd {
     static func main() async {
-        var configPath = CommandLine.arguments.first.map { URL(fileURLWithPath: $0).deletingLastPathComponent().appendingPathComponent("config.json").path } ?? "config.json"
-        var promptPath = URL(fileURLWithPath: configPath).deletingLastPathComponent().appendingPathComponent("prompt.json").path
+        var configPath = CommandLine.arguments.first.map { URL(fileURLWithPath: $0).deletingLastPathComponent().appendingPathComponent("predictd.json").path } ?? "predictd.json"
         var socket: String? = nil, httpPortArg: Int? = nil
         var args = Array(CommandLine.arguments.dropFirst())
         while !args.isEmpty {
             let a = args.removeFirst()
             switch a {
             case "--config": configPath = args.removeFirst()
-            case "--prompt": promptPath = args.removeFirst()
             case "--socket": socket = args.removeFirst()
             case "--http-port": httpPortArg = Int(args.removeFirst())
-            case "--version": print("predictd 0.1"); return
+            case "--version": print("predictd 0.2"); return
             default: log("unknown argument \(a)"); exit(1)
             }
         }
-        var cfg = Config(); cfg.apply(loadJSON(configPath)); if let s = socket { cfg.socketPath = s }
-        let engine = Engine(cfg: cfg, prompt: loadPrompt(promptPath), configPath: configPath, promptPath: promptPath)
-        await engine.startup()
+        var cfg = Config(); cfg.apply(loadJSON(configPath))
+        if let s = socket { cfg.socketPath = s }
         if let hp = httpPortArg { cfg.httpPort = hp }
+        let engine = Engine(cfg: cfg, configPath: configPath)
+        await engine.startup()
         serve(path: cfg.socketPath, engine: engine)
         if cfg.httpPort > 0 { serveHTTP(port: cfg.httpPort, engine: engine) }
         log("ready on \(cfg.socketPath)")

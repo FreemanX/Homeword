@@ -1,7 +1,7 @@
 // input-predictor ghost text for Claude Code's prompt box.
 //
-// While you type, asks the local predictd daemon (Apple's on-device model, http://127.0.0.1:47321) how the prompt continues and
-// paints the answer as dim virtual text after the cursor: drawn, never part of the draft.
+// While you type, asks the ghost policy server (`pred serve`, http://127.0.0.1:47321, on top of the predictd model host) how the
+// prompt continues and paints the answer as dim virtual text after the cursor: drawn, never part of the draft.
 //
 //   Tab         accept one word of the ghost     (keybinding "tab": "command:ghost-word" in the Chat context)
 //   →           accept the whole ghost; with no ghost it moves the cursor right as usual   ("right": "command:ghost-all")
@@ -10,7 +10,7 @@
 // Keys that do nothing at the end of the draft never reach a prompt.edit hook, so accepting goes through two slash commands
 // bound in ~/.claude/keybindings.json (see integrations/claude-code/README.md); the autocomplete menu keeps its own Tab.
 //
-// Shown only with the cursor at the end of the draft, and not for /commands or !shell lines. Start the daemon with `bin/pred start`.
+// Shown only with the cursor at the end of the draft, and not for /commands or !shell lines. Start the services with `bin/pred start`.
 import type { Register } from 'claude-code'
 
 const URL = 'http://127.0.0.1:47321/predict'
@@ -54,7 +54,7 @@ export const register: Register = on => {
           const body = JSON.parse(res.text)
           suggestion = body.ok ? (body.suggestion ?? '') : ''
         } catch {
-          return // daemon not running or request refused: no ghost
+          return // ghost server not running or request refused: no ghost
         }
         if (my !== seq || !suggestion.trim()) return
         const box = await $.prompt.read()
@@ -166,7 +166,7 @@ export const register: Register = on => {
           ghostFor = text
           await $.prompt.fill({ text, mode: 'replace', cursor: text.length, decorations: paint(text, suggestion) })
         } catch {
-          // daemon not running or request refused: no ghost
+          // ghost server not running or request refused: no ghost
         }
       })
     }

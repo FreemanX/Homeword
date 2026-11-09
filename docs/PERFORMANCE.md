@@ -1,0 +1,78 @@
+# Performance: benchmarks and latency
+
+Current numbers: [bench/RESULTS.md](../bench/RESULTS.md). Machine: Apple M4 Pro, 16-core GPU, 48 GB RAM, macOS 27.2.
+
+## What the user feels
+
+| Where | Last keystroke → ghost on screen, p50 | Measured with |
+|---|---|---|
+| `pred try` | ~250 ms | `bench/human_pty.py` (pty, human-like typing) |
+| pi extension | 117-139 ms | `bench/integration_latency.py` (real app in tmux) |
+| Claude Code mod | 157-161 ms | `bench/integration_latency.py` |
+
+The rows are not directly comparable: different phrases, and in the integration runs the ghost from an earlier keystroke often
+still fits, so it is shown again without a new request (follow-the-ghost); a fresh model call never takes under ~250 ms. Model time
+alone (fixed benchmark): ~330 ms p50.
+
+```mermaid
+flowchart LR
+    key["keystroke"] --> send["client sends<br/>under 1 ms"]
+    send --> model["model call<br/>~100 ms fixed<br/>+ 0.55 ms per cached token<br/>+ 2 ms per new token<br/>+ 16 ms per output token"]
+    model --> asm["assemble<br/>~1 ms"]
+    asm --> draw["client draws<br/>a few ms"]
+```
+
+## Benchmarks
+
+The benchmarks measure the ghost policy on predictd end to end: `run.py` imports `ghost.policy` and talks to a private predictd, so
+a run covers both layers (a change in either shows up). `bench/run.py` scenarios: `steady` (1.2 s between requests), `burst` (back to back), `idle` (15 s gaps: does the keep-alive keep the
+model loaded), `typing` (a request per keystroke on one stream, time from the last keystroke to its answer). Metrics: client-side
+end-to-end time (p50/p90/max, by context size), model time, prefix-cache hit rate, and quality against what the user really typed
+next: suggestion shown, first word right, completed-word exact match for mid-word cuts, leading words right, word overlap, echo,
+misspelled words. Each run is saved to `bench/results/` (git-ignored) with its rows, machine spec and a model-mode fingerprint, so two
+runs can be compared; shared runs live in `bench/baselines/`.
+
+Quality is exact word match against one real continuation, so it is harsh on the next-word part; the mid-word completion number is
+the most objective. Hand-written cases (52: mail, chat, notes, review, terminal, code) are short; the 30 generated ones are cut from
+`bench/corpus.md` (a frozen copy of an early README: technical English, hard to predict) at 4 context sizes. Re-generate with
+`python3 -I bench/gen_cases.py` (this breaks comparability: record a new baseline).
+
+```sh
+bin/pred stop                                              # nothing else may use the model during a run
+python3 -I bench/run.py --spawn --label mychange           # private predictd, policy from ghost/config.json
+python3 -I bench/run.py --spawn --config '{"shots":5}' --label shots5        # policy overrides
+python3 -I bench/run.py --spawn --daemon-config '{"keepAliveSec":0}' ...     # predictd overrides
+python3 -I bench/compare.py bench/baselines/2026-11-07-steady.json bench/results/<run>.json
+SEED=1 python3 -I bench/human_pty.py                       # typing simulation through pred try; ACCEPT=1 presses Tab
+python3 -I bench/integration_latency.py <tmux pane> <ghost escape> [clear keys]   # a real app, see its docstring
+```
+
+## Latency history
+
+Key → ghost in `pred try` = wait before sending (debounce) + model call (socket and JSON < 1 ms). Measured with `bench/human_pty.py`:
+
+| Change | key → ghost p50 / p90 |
+|---|---|
+| debounce 200 ms, fresh prewarmed session per request | 582 / 809 ms (7 of 16 ghosts missed the prefix cache) |
+| + a cancelled request's session is reused by the next one | 528 / 638 ms (0 misses) |
+| + debounce 0 | 290 / 361 ms |
+| + one reused session with transcript restore, short instructions, 100-token context | 263 / 326 ms |
+| + `maxTokens` 6 (drop a cut-off word), answer memory + prefetch | 250-252 / 284-291 ms (one run at 344 ms) |
+
+Splitting the daemon into mechanism (predictd) and policy (ghost, Python) changed nothing measurable: the steady benchmark gave the
+same raw outputs (same mode fingerprint), identical quality and p50 331 ms before and after. Assembly in Python plus one `spell`
+round trip cost ~1-2 ms.
+
+A short instruction (~45 tokens instead of ~140) was both faster and more accurate; fewer than 6 examples saved little and cost
+accuracy. A `GenerationSchema` cost ~200 ms. Not available: token streaming (`streamResponse` and `SystemLanguageModel.Executor`
+deliver a short answer in one piece), stop sequences, a smaller model, or turning guardrails off (permissive is the lightest).
+
+## Caveats when measuring
+
+- **One cache for the whole system.** Apple's docs ("Optimizing key-value caching in language model sessions") describe the KV cache
+  as per session, with the capacity left to the provider. On-device, only the session that prewarmed or generated last keeps it
+  (other sessions, in any process, evict it), and it expires after ~5-6 s idle. With a concurrent `pred try`, a run had 43 cache
+  misses and 9 of 20 raw outputs differed. Alone, outputs are deterministic (a rerun matched an hour-old run 20/20).
+- **Two model modes.** The system switches between a fast and a slow mode (~325 vs ~393 ms p50, different but deterministic
+  outputs) for unknown reasons. `run.py` records a `mode_fingerprint` and `compare.py` warns when two runs differ: re-run before
+  bisecting a "regression".

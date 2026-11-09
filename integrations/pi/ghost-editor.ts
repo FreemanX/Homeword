@@ -1,15 +1,15 @@
 /**
  * input-predictor ghost text for the pi coding agent.
  *
- * Replaces pi's prompt editor with a subclass that asks the local predictd daemon (Apple's on-device model) for a continuation
- * of what you are typing and draws it as dim "ghost" text after the cursor.
+ * Replaces pi's prompt editor with a subclass that asks the ghost policy server (`pred serve`, on top of the predictd model host)
+ * for a continuation of what you are typing and draws it as dim "ghost" text after the cursor.
  *
  *   Tab         accept one word of the ghost (pi's own Tab completion runs when no ghost is shown)
  *   → / Ctrl+F  accept the whole ghost (at the end of the text, where these keys do nothing in pi)
  *   typing      a character that matches the ghost keeps the rest of it; anything else asks again
  *
- * Install: see integrations/pi/README.md. Talks to http://127.0.0.1:$PREDICTD_PORT (default 47321) and starts the daemon with
- * bin/pred if it is not running. Ghost text is shown only when the cursor is at the end of the text, and not for /commands or
+ * Install: see integrations/pi/README.md. Talks to http://127.0.0.1:$GHOST_PORT (default 47321) and runs `bin/pred start`
+ * (predictd + the ghost server) if nothing answers. Ghost text is shown only when the cursor is at the end of the text, and not for /commands or
  * !shell lines.
  */
 import { spawn } from "node:child_process";
@@ -18,15 +18,15 @@ import { fileURLToPath } from "node:url";
 import { CustomEditor, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { CURSOR_MARKER, matchesKey, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 
-const PORT = Number(process.env.PREDICTD_PORT ?? 47321);
-const APP = process.env.PREDICTD_APP ?? "coding agent prompt";
+const PORT = Number(process.env.GHOST_PORT ?? 47321);
+const APP = process.env.GHOST_APP ?? "coding agent prompt";
 const FAKE_CURSOR_START = "\x1b_pi:fc\x07"; // pi-tui wraps the cursor cell in these markers (renderFakeCursor)
 const FAKE_CURSOR_END = "\x1b_pi:/fc\x07";
 const PRED_CLI = process.env.PRED_CLI ?? fileURLToPath(new URL("../../bin/pred", import.meta.url));
 
 let daemonStart: Promise<void> | undefined;
 
-/** Start predictd once (bin/pred start loads the model and returns when the daemon answers). */
+/** Start predictd and the ghost server once (bin/pred start returns when both answer). */
 function startDaemon(): Promise<void> {
 	daemonStart ??= new Promise((resolve) => {
 		if (!existsSync(PRED_CLI)) return resolve();

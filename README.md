@@ -1,103 +1,110 @@
 # input-predictor
 
-Prototype of an input predictor on Apple's on-device model (FoundationModels, macOS 26+/27): given the app and the text
-typed so far, predict the rest of the unfinished word plus the next ~5 words. `predictd` is a long-lived service that keeps
-the model and one cached session ready; `bench/` is a mini benchmark to re-measure after every change.
+Ghost-text typing prediction on Apple's on-device language model (FoundationModels, macOS 27). As you type, it suggests the rest
+of the unfinished word plus the next few words, within one sentence, in about a quarter of a second. Nothing leaves the machine.
 
-Requirements: macOS 27+ with Apple Intelligence enabled, the Xcode command line tools (`swiftc`), and `python3` (standard library
-only, so no virtualenv is needed).
+It is built in three layers, keeping **mechanism and policy apart**:
+
+- **predictd**: a model host, mechanism only. It keeps named system prompts ("profiles") with their prefix cache warm and
+  generates plain or structured output with the limits each caller asks for. It knows nothing about typing.
+- **ghost**: the typing-prediction policy (Python). It owns the prompt and examples, the context trimming and the rules that turn
+  the model's answer into a ghost (word glue, spelling, one sentence, five words).
+- **Applications**: `pred try` in a terminal, ghost text in the pi and Claude Code prompt boxes, later a shell completer or a
+  system-wide Mac app. Other policies (summarise, commit messages, triage) can share the same predictd.
+
+```mermaid
+flowchart TB
+    subgraph apps["Applications"]
+        direction LR
+        try["pred try"]
+        pi["pi extension"]
+        cc["Claude Code mod"]
+        next["shell, Mac app<br/>future"]:::future
+    end
+    subgraph policy["Policy"]
+        direction LR
+        ghost["ghost<br/>typing predictor<br/>HTTP :47321"]
+        other["other policies<br/>future"]:::future
+    end
+    subgraph mech["Mechanism"]
+        predictd["predictd<br/>profiles, warm sessions, generate<br/>socket, HTTP :47320"]
+    end
+    fm["Apple on-device model"]
+    try --> ghost
+    pi --> ghost
+    cc --> ghost
+    next -.-> ghost
+    ghost --> predictd
+    other -.-> predictd
+    predictd --> fm
+    classDef future stroke-dasharray: 5 5
+```
 
 ```
-./build.sh                       # swiftc -> ./predictd (and burns the slow first launch of a fresh binary)
-./predictd &                     # listens on /tmp/predictd-<uid>.sock (--socket, --config, --prompt to override)
-cd bench && python3 -I run.py --label mychange            # steady scenario against the running daemon
-python3 -I run.py --spawn --config '{"shots":5}' --label shots5   # private daemon with config overrides
-python3 -I compare.py results/<before>.json results/<after>.json
+› Could you explain why the test is fail|ing despite correct preparation      ← dim ghost, Tab takes one word, → all
 ```
 
-## Try it as you type
+## Quick start
 
+Requirements: macOS 27+ with Apple Intelligence enabled, the Xcode command line tools (`swiftc`), `python3` (standard library only,
+no virtualenv).
+
+```sh
+./build.sh                    # swiftc -> ./predictd
+bin/pred try                  # type and watch the ghost; Enter = new round with stats, Ctrl-C quits
+bin/pred ask "git sta"        # one prediction with timings
+bin/pred start                # predictd + the ghost HTTP server in the background (for pi, Claude Code)
+bin/pred status               # daemon, profiles, policy knobs;  bin/pred stop
+
+curl -s 127.0.0.1:47321/predict -d '{"app":"chat","text":"See you tomor"}'          # the typing policy
+curl -s 127.0.0.1:47320/ -d '{"op":"profile.set","name":"haiku","instructions":"Answer with a haiku."}'
+curl -s 127.0.0.1:47320/ -d '{"profile":"haiku","prompt":"Autumn in the city","maxTokens":40}'   # the raw mechanism
 ```
-bin/pred try                  # starts the daemon if needed; type, watch the gray ghost text
-bin/pred try --app mail --debounce 100
-bin/pred ask "git sta"        # one prediction with timings;  bin/pred status | stop
+
+predictd and the ghost server start on demand and exit after 30 idle minutes.
+
+## Sample applications
+
+### `pred try`: try it in a terminal
+
+An append-only line editor that asks for a ghost on every keystroke. **Tab** accepts one word, **→** all of it, **Esc** dismisses,
+and typing the ghost's next character follows it instead of re-asking. Answers are remembered by text and the continuation of a shown
+ghost is prefetched. **Enter** ends a round and prints its stats (keystrokes saved, suggestions shown and accepted, key → ghost
+latency, cache share). `--app mail|chat|terminal|...` picks the context, `--log file` keeps rounds as JSON (your typed text: keep it
+private).
+
+### pi: ghost text in pi's prompt editor
+
+A pi extension that replaces the prompt editor and draws the ghost after the cursor. Tab and → accept, as above.
+
+```sh
+pi -e integrations/pi/ghost-editor.ts
 ```
 
-`pred try` is an append-only line editor that asks for a ghost suggestion on every keystroke (`--debounce 0`; the daemon cancels the stale request at no cost). Answers are remembered by text, and while a ghost is shown the continuation after it is prefetched, so following or accepting a ghost extends it without a new wait. **Tab** accepts one word, **→** all of it, **Esc** dismisses, and typing the ghost's next character follows it instead of re-asking.
-**Enter ends the round and prints its stats** (keystrokes, requests sent/answered/stale, suggestions shown/useful/accepted,
-keystrokes saved, last-key-to-ghost latency p50/p90/max with the model share, prefix-cache share), then starts a fresh round with empty
-context; Ctrl-C quits with session totals. `--log file` appends one JSON line per round (your typed text, so keep it private).
-The daemon exits by itself after 30 idle minutes (`idleExitSec`). `bench/try_pty_test.py` drives the tool through a pty as a smoke test.
+Details and permanent install: [integrations/pi](integrations/pi/README.md).
 
-## In coding agents (pi, Claude Code)
+### Claude Code: ghost text in the prompt box
 
-Ghost text inside an agent's prompt box, with the same keys (Tab one word, → all), talking to the daemon over HTTP:
+A Claude Code mod (a plugin with a hooks module) that paints the ghost as dim virtual text after the cursor. Accepting with Tab and →
+needs two entries in `keybindings.json`, which apply to every session: read [integrations/claude-code](integrations/claude-code/README.md)
+before installing it.
 
-- **pi**: an editor extension, [integrations/pi](integrations/pi/README.md). `pi -e integrations/pi/ghost-editor.ts`
-- **Claude Code**: a mod (plugin hooks module) painting dim virtual text, [integrations/claude-code](integrations/claude-code/README.md).
-  Accepting needs two keybindings, which are global: read its README before installing.
+Measured in tmux with human-like typing, last keystroke → ghost on screen: pi 117-139 ms p50, Claude Code 157-161 ms p50.
 
-Measured in tmux with human-like typing, last keystroke → ghost on screen: pi 139 ms p50, Claude Code 157 ms p50
-(`bench/integration_latency.py`). Codex has no extension point for the prompt box.
+## Documentation
 
-Project context for agents and contributors: [AGENTS.md](AGENTS.md).
-
-Files: `bin/pred` (CLI) · `predictd.swift` (service) · `config.json` (tunables) · `prompt.json` (system prompt + few-shot examples) ·
-`bench/cases.json` (80 cases, from `bench/gen_cases.py`) · `bench/run.py` · `bench/compare.py` · `bench/client.py` ·
-`bench/human_pty.py` (drives `pred try` with human-like typing; `ACCEPT=1` presses Tab when the ghost is right) · `bench/try_pty_test.py`.
-
-## Pipeline (per request)
-
-| Step | What | Parameters (config.json, overridable per request with `opts`) |
-|---|---|---|
-| 0 session | One long-lived `LanguageModelSession` (system prompt + few-shot turns) for every request (`sessionMode: reuse`). The model keeps a single prefix cache, system-wide, owned by whichever session prewarmed or generated last, so after each answer the session's transcript is restored (`session.transcript = base`, settable in macOS 27) and the next request matches the cache: the prefix and, while typing, almost all of the previous keystroke's text. A newer request cancels the running one and takes the session over (a cancelled request leaves the transcript untouched; measured free). A keep-alive re-prewarms it every `keepAliveSec` while idle (the cache expires after ~5-6 s). Another process using the model (another daemon, Apple Intelligence features) evicts the cache. `sessionMode: spare` is the older design (a fresh prewarmed session per request). | `sessionMode` reuse, `keepAliveSec` 3, `keepAliveMaxIdleSec` 300, `instructions` short, `shots` 6 |
-| 1 trim | Keep the tail of the typed text that fits `textBudget` tokens, cut on a word boundary. Cheap char estimate (4.8 chars/token prose, 2.9 code/shell, 1.6 CJK); `exactTrim` refines with `tokenCount` (~25 ms per call). Hard ceiling: `hardCap` (4000) minus prefix, template, output cap, margin. | `textBudget` 100, `exactTrim` false, `hardCap` 4000, `margin` 60 |
-| 3 model | `respond(to: "App: <app>\nText: <tail>", options: greedy + maximumResponseTokens)`, plain text out (`output: plain`), few-shot examples as plain prior transcript turns. About 0.4 s, versus 0.6 s with a `GenerationSchema` (`output: schema`, one field `completion`): the structured wrapper costs ~200 ms and was slightly less accurate. Streaming gives nothing earlier: `streamResponse` snapshots and the lower-level `SystemLanguageModel.Executor` channel both deliver a short answer as one piece at the end. When the answer hits `maxTokens` (read from the transcript entry's `finishReason` by reflection, not public API) its possibly unfinished last word is dropped. | `maxTokens` 6, `output` plain, `guardrails` permissive |
-| 4 assemble | Suffix format: the model returns the remaining letters of the unfinished word, then the next words. The client glues `partial + piece`, spell-checks it (`NSSpellChecker`, also the capitalised form), re-spaces `the`+`project` when the model dropped the space, caps the word count, stops at the end of the first sentence (`oneSentence`; abbreviations, initials and numbers don't count, and it is off for terminal/code), and suppresses an invalid word (except in `lenientApps`: terminal, code). | `words` 5, `invalidPolicy` drop, `format` suffix |
-
-## Protocol
-
-Newline-delimited JSON on the unix socket. `{"op":"predict","id":"1","app":"mail","text":"…","stream":"k","opts":{…}}` returns
-`suggestion` (what to show, appended to the text), `partial`, `first_word`, `valid`, `suppressed`, `timing` (trim, acquire, model,
-assemble, total ms, session state), `tokens` (in, cached, out). In `schema` mode the model runs one generation at a time (single flight): a request that arrives
-meanwhile waits, and a newer one on the same `stream` replaces it (in `plain` mode a newer request on the stream aborts the running one) (`{"ok":false,"error":"cancelled"}`). Aborting a running generation was tried and
-measured worse (final answer 1.4 s, prefix cache lost). Other ops: `ping`, `stats`, `reload` (re-reads config and prompt), `cancel` (drops a waiting request), `settle_probe`, `shutdown`.
-
-The same requests over HTTP on `127.0.0.1:httpPort` (47321; `--http-port`, 0 = off), for clients that cannot open a unix socket:
-`POST /predict` with the JSON object as body (`op` defaults to `predict`, `id` to a fresh one), one JSON answer per connection;
-`GET /health` answers `ping`. Loopback only, no authentication: any local process can ask for predictions, as with the socket.
-
-## Benchmark
-
-`bench/run.py` scenarios: `steady` (1.2 s between requests), `burst` (back to back), `idle` (15 s gaps: does the keep-alive keep the
-model loaded), `typing` (a request per keystroke on one stream, time from the last keystroke to its answer). Metrics: client-side
-end-to-end time (p50/p90/max, by context size), model time, prefix-cache hit rate, and quality against what the user really typed
-next: suggestion shown, first word right, completed-word exact match for mid-word cuts, leading words right, word overlap, echo,
-misspelled words. Each run is saved to `bench/results/` (git-ignored) with its rows, machine spec and a model-mode fingerprint, so two
-runs can be compared; shared runs live in `bench/baselines/`, summarised in [bench/RESULTS.md](bench/RESULTS.md).
-Quality is exact word match against one real continuation, so it is harsh on the next-word part; the mid-word completion number is
-the most objective. Hand-written cases (52: mail, chat, notes, review, terminal, code) are short; the 30 generated ones are cut from `bench/corpus.md`
-(a frozen copy of this README: technical English, hard to predict) at 4 context sizes. Re-generate with `python3 -I bench/gen_cases.py`.
-
-## Latency: where the time goes and what was tried (Apple M4 Pro, 16-core GPU, 48 GB RAM, macOS 27.2)
-
-Key → ghost in `pred try` = wait before sending (debounce) + model call (socket and JSON < 1 ms). Measured with `bench/human_pty.py`:
-
-| Change | key → ghost p50 / p90 |
+| Document | For |
 |---|---|
-| debounce 200 ms, fresh prewarmed session per request | 582 / 809 ms (7 of 16 ghosts missed the prefix cache) |
-| + a cancelled request's session is reused by the next one | 528 / 638 ms (0 misses) |
-| + debounce 0 | 290 / 361 ms |
-| + one reused session with transcript restore, short instructions, 100-token context | 263 / 326 ms |
-| + `maxTokens` 6 (drop a cut-off word), answer memory + prefetch | 250-252 / 284-291 ms (one run at 344 ms) |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | the mechanism/policy split, how predictd works (profiles, sessions, cache, protocol), the ghost pipeline |
+| [docs/CONFIG.md](docs/CONFIG.md) | every knob: predictd.json, profile and generate fields, ghost/config.json, prompt.json, recipes |
+| [docs/DEVELOPING.md](docs/DEVELOPING.md) | a new application, a new policy, changing predictd, testing |
+| [docs/PERFORMANCE.md](docs/PERFORMANCE.md) | benchmarks, latency history, measuring pitfalls |
+| [bench/RESULTS.md](bench/RESULTS.md) | current benchmark numbers |
+| [AGENTS.md](AGENTS.md) | context and rules for AI agents and contributors |
 
-Model call anatomy (cached prefix): ~100 ms fixed per request, ~0.55 ms per input token even when cached (instructions and
-examples count), ~2 ms per uncached input token, ~16 ms per output token. So: the shorter the prompt and the answer, the faster. A short
-instruction (~45 tokens instead of ~140) was both faster and more accurate; fewer than 6 examples saved little and cost accuracy.
-Not available: token streaming, stop sequences, a smaller model or turning guardrails off (permissive is the lightest).
+## Status
 
-Apple's docs ("Optimizing key-value caching in language model sessions") describe the KV cache as per session, with the capacity left
-to the model provider. Measured behaviour of the on-device provider: only the session that prewarmed or generated last keeps its cache
-(other sessions, also in other processes, evict it), and it expires after ~5-6 s idle. Run benchmarks with no other model user
-(`bin/pred stop`; a running `pred try` restarts its daemon): with a concurrent `pred try`, a run had 43 cache misses and 9 of 20 raw
-outputs differed. Alone, outputs are deterministic (a rerun matched an hour-old run 20/20).
+A research prototype, measured on one machine (Apple M4 Pro, 48 GB). Known limits: English only so far (prompt, examples and spell
+check), one warm prefix cache for the whole system (switching profiles costs an uncached prefix), guesses from a one-letter prefix are
+often wrong, and predictd reads one non-public field (`finishReason`, via reflection). On a managed Mac, check whether Apple
+Intelligence features may be used before relying on it.

@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
-"""pred: command line front end for the predictd service.
+"""pred: the typing-ghost policy (ghost/) on the command line, on top of the predictd model host.
 
   pred try [--app auto] [--debounce 0]   type and watch predictions; Enter starts a new round and prints its stats
   pred ask "git sta" [--app terminal]          one prediction, printed with its timings
-  pred status | start | stop                   manage the background daemon (it also starts itself on first use)
+  pred serve                                   the ghost HTTP server for other apps (127.0.0.1:47321), in the foreground
+  pred start | stop | status                   predictd + the ghost server in the background (they also start on first use)
 
 In `try`:  Tab = accept one word   Right = accept all   Esc = dismiss   Enter = end round, start a new one
            Backspace / Ctrl-W / Ctrl-U edit (append-only editor, no cursor movement)   Ctrl-C or Ctrl-D = quit with session totals
 """
-import argparse, codecs, re, collections, datetime, json, os, select, shutil, signal, socket, subprocess, sys, termios, time, tty, unicodedata
+import argparse, codecs, re, collections, datetime, json, os, select, shutil, signal, socket, subprocess, sys, termios, textwrap, time, tty, unicodedata
 
 ROOT = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
 SOCK = f"/tmp/predictd-{os.getuid()}.sock"
@@ -18,74 +19,29 @@ DIM, RST, BOLD, CYAN, GREEN, YELLOW = "\x1b[90m", "\x1b[0m", "\x1b[1m", "\x1b[36
 
 # ---------------------------------------------------------------- daemon connection
 
-class Link:
-    """Newline-delimited JSON over the daemon's unix socket (non-blocking reads, buffered)."""
-    def __init__(self, s):
-        self.s, self.buf = s, b""
-        s.setblocking(False)
+sys.path.insert(0, ROOT)
+from ghost import predictd                     # noqa: E402  (generic predictd client)
+from ghost.policy import Ghost                 # noqa: E402  (the typing policy)
 
-    def send(self, **req):
-        self.s.setblocking(True)
-        try:
-            self.s.sendall((json.dumps(req) + "\n").encode())
-        finally:
-            self.s.setblocking(False)
-
-    def read(self):
-        """Return the complete messages that have arrived; raise ConnectionError if the daemon went away."""
-        try:
-            d = self.s.recv(65536)
-        except BlockingIOError:
-            d = None
-        if d == b"":
-            raise ConnectionError("daemon closed the connection")
-        if d:
-            self.buf += d
-        out = []
-        while b"\n" in self.buf:
-            line, self.buf = self.buf.split(b"\n", 1)
-            out.append(json.loads(line))
-        return out
-
-    def call(self, timeout=10, **req):
-        self.send(**req)
-        end = time.monotonic() + timeout
-        while time.monotonic() < end:
-            select.select([self.s], [], [], 0.05)
-            for m in self.read():
-                if m.get("id") == req["id"]:
-                    return m
-        raise TimeoutError("no answer from the daemon")
+SOCK, DAEMON_LOG = predictd.SOCK, predictd.LOG
+SERVE_LOG = f"/tmp/pred-serve-{os.getuid()}.log"
 
 
-def connect():
-    s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    s.connect(SOCK)
-    return Link(s)
-
-
-def ensure_daemon(spawn=True, quiet=False):
-    try:
-        return connect()
-    except OSError:
-        pass
-    binary = os.path.join(ROOT, "predictd")
+def daemon(spawn=True, quiet=False):
+    """A connection to predictd, starting it if needed."""
     if not spawn:
-        sys.exit("daemon is not running (pred start)")
-    if not os.path.exists(binary):
-        sys.exit(f"{binary} not found: run {ROOT}/build.sh first")
-    if not quiet:
-        print("starting predictd (loads the model, a few seconds)…", flush=True)
-    log = open(DAEMON_LOG, "ab")
-    subprocess.Popen([binary, "--socket", SOCK], stdin=subprocess.DEVNULL, stdout=log, stderr=log, start_new_session=True)
-    end = time.monotonic() + 40
-    while time.monotonic() < end:
-        time.sleep(0.25)
         try:
-            return connect()
+            return predictd.Link()
         except OSError:
-            continue
-    sys.exit(f"daemon did not come up, see {DAEMON_LOG}")
+            sys.exit("predictd is not running (pred start)")
+    try:
+        return predictd.start(on_spawn=None if quiet else lambda: print("starting predictd (loads the model, a few seconds)…", flush=True))
+    except (OSError, TimeoutError) as e:
+        sys.exit(str(e))
+
+
+def speller(link):
+    return lambda words, lang: link.call(op="spell", words=words, language=lang)["valid"]
 
 
 # ---------------------------------------------------------------- stats
@@ -192,7 +148,10 @@ def first_word(g):
 def run_try(a):
     if not sys.stdin.isatty():
         sys.exit("pred try needs a terminal")
-    link = ensure_daemon(spawn=not a.no_spawn)
+    link = daemon(spawn=not a.no_spawn)
+    aux = predictd.Link()                    # blocking calls (profile, spell) apart from the stream of answers on `link`
+    ghost = Ghost()
+    ghost.ensure_profile(aux, pin=True)
     opts = json.loads(a.opts)
     stream = f"try-{os.getpid()}"
     out = sys.stdout
@@ -229,10 +188,7 @@ def run_try(a):
         reqs[rid] = {"app": a.app if a.app != "auto" else guess_app(full), "text": full, "t_key": time.monotonic(),
                      "t_sent": time.monotonic(), "round": st["round"], "prefetch": True}
         st["round"].prefetched += 1
-        try:
-            link.send(op="predict", id=rid, app=reqs[rid]["app"], text=full, stream=stream, opts=opts)
-        except OSError:
-            pass
+        send(rid)
 
     def cap_words(text, g, n):
         """Keep at most n words of ghost g; the end of a word the user is still typing does not count."""
@@ -339,17 +295,33 @@ def run_try(a):
         st["latest"], st["due"] = rid, None
         st["round"].sent += 1
         st["status"] = "predicting…"
+        send(rid)
+        render()
+
+    def send(rid):
+        """Ask predictd through the policy: it builds the generate request; the answer goes through ghost.finish in on_reply."""
+        q = reqs[rid]
+        q["gen"], q["ctx"] = ghost.request(q["app"], q["text"], opts)
+        if q["gen"] is None:                         # nothing to ask (blank text): answer at once
+            pending.append(ghost.finish(q["ctx"], {"id": rid, "ok": True, "text": ""}, speller(aux)) | {"id": rid})
+            return
         try:
-            link.send(op="predict", id=rid, app=reqs[rid]["app"], text=st["text"], stream=stream, opts=opts)
+            link.send(id=rid, stream=stream, **q["gen"])
         except OSError:
             st["status"] = "daemon connection lost (restart pred try)"
-        render()
 
     def on_reply(m):
         r = st["round"]
         info = reqs.pop(m.get("id"), None)
         if info is None or info["round"] is not r:      # unknown, or answered after its round had ended
             return
+        if m.get("error") == "unknown_profile":         # predictd restarted and forgot the profile: register it again, re-ask
+            ghost.ensure_profile(aux, info["ctx"]["cfg"], pin=True, force=True)
+            reqs[m["id"]] = info
+            link.send(id=m["id"], stream=stream, **info["gen"])
+            return
+        if "ctx" in info and info["gen"] is not None:
+            m = ghost.finish(info["ctx"], m, speller(aux))
         now = time.monotonic()
         if m.get("error") == "cancelled":
             return
@@ -531,6 +503,7 @@ def run_try(a):
         return keys, kb
 
     rounds = []
+    pending = []                                 # answers produced without asking predictd
     kb, esc_at = "", None
     print(f"{BOLD}pred try{RST}  app={a.app} · debounce {a.debounce} ms · {DIM}Tab accept a word · → accept all · Esc dismiss · Enter = new round (with stats) · Ctrl-C quit{RST}\n")
     tty.setcbreak(fd)
@@ -543,8 +516,10 @@ def run_try(a):
                 timeout = max(0.0, min(timeout, st["due"] - now))
             if esc_at is not None:
                 timeout = max(0.0, min(timeout, esc_at + 0.05 - now))
-            rl, _, _ = select.select([fd, link.s], [], [], timeout)
+            rl, _, _ = select.select([fd, link.s], [], [], 0 if pending else timeout)
             try:
+                while pending:
+                    on_reply(pending.pop(0))
                 if link.s in rl:
                     for m in link.read():
                         on_reply(m)
@@ -552,7 +527,9 @@ def run_try(a):
             except ConnectionError:
                 st["status"] = "daemon went away; restarting it…"
                 render()
-                link = ensure_daemon(quiet=True)
+                link = daemon(quiet=True)
+                aux = predictd.Link()
+                ghost.ensure_profile(aux, pin=True, force=True)
             if fd in rl:
                 data = os.read(fd, 4096)
                 if not data:
@@ -588,9 +565,11 @@ def run_try(a):
 # ---------------------------------------------------------------- other commands
 
 def cmd_ask(a):
-    link = ensure_daemon()
+    link = daemon()
+    ghost = Ghost()
+    ghost.ensure_profile(link, pin=True)
     t = time.perf_counter()
-    r = link.call(op="predict", id="ask", app=a.app if a.app != "auto" else guess_app(a.text), text=a.text, opts=json.loads(a.opts))
+    r = ghost.predict(link, a.app if a.app != "auto" else guess_app(a.text), a.text, json.loads(a.opts))
     e2e = (time.perf_counter() - t) * 1000
     if not r.get("ok"):
         sys.exit("error: " + str(r.get("error")))
@@ -600,24 +579,70 @@ def cmd_ask(a):
           f" · raw {r.get('model_completion')!r}{RST}")
 
 
+def server_port():
+    return Ghost().cfg["serverPort"]
+
+
+def server_up(port=None):
+    import urllib.request
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{port or server_port()}/health", timeout=1) as f:
+            return json.load(f).get("ok", False)
+    except OSError:
+        return False
+
+
+def start_server():
+    if server_up():
+        return
+    with open(SERVE_LOG, "ab") as f:
+        subprocess.Popen([sys.executable, "-I", os.path.realpath(__file__), "serve"], stdin=subprocess.DEVNULL, stdout=f, stderr=f,
+                         start_new_session=True)
+    end = time.monotonic() + 40
+    while time.monotonic() < end and not server_up():
+        time.sleep(0.2)
+
+
+def wrap(label, d):
+    return textwrap.fill(" ".join(f"{k}={json.dumps(v)}" for k, v in sorted(d.items())), width=110,
+                         initial_indent=f"  {label} ", subsequent_indent=" " * (len(label) + 3), break_on_hyphens=False)
+
+
 def cmd_status(a):
     try:
-        link = connect()
+        link = predictd.Link()
     except OSError:
         print("predictd: not running")
-        return
-    s = link.call(op="stats", id="s")
-    print(f"predictd: running, up {s['uptime_s']:.0f}s · {s['requests']} requests ({s['cold']} cold, {s['cancelled']} superseded, {s['errors']} errors, {s.get('guardrail', 0)} guardrail) · "
-          f"{s['keepalives']} keep-alive prewarms · prefix {s['prefix_tokens']} tokens\n  config {s['config']}\n  socket {SOCK} · log {DAEMON_LOG}")
+    else:
+        s = link.call(op="stats")
+        print(f"predictd: running, up {s['uptime_s']:.0f}s · {s['requests']} generations ({s['cold']} new sessions, {s['cancelled']} cancelled, "
+              f"{s['errors']} errors, {s['guardrail']} guardrail) · {s['keepalives']} keep-alive prewarms · warm: {s['warm']}")
+        for p in s["profiles"]:
+            print(f"  profile {p['name']}{' (pinned)' if p['pinned'] else ''}: {p['examples']} examples, prefix {p['prefix_tokens']} tokens, "
+                  f"sessions {p['sessions'] or '-'}, guardrails {p['guardrails']}")
+        print(wrap("config", s["config"]) + f"\n  socket {SOCK} · log {DAEMON_LOG}")
+    port = server_port()
+    print(f"ghost server: {'running' if server_up(port) else 'not running'} on 127.0.0.1:{port} · log {SERVE_LOG}")
+    print(wrap("policy", Ghost().cfg))
 
 
 def cmd_stop(a):
+    import urllib.request
     try:
-        connect().call(op="shutdown", id="x", timeout=3)
+        urllib.request.urlopen(urllib.request.Request(f"http://127.0.0.1:{server_port()}/shutdown", data=b"{}"), timeout=2).read()
+    except OSError:
+        pass
+    try:
+        predictd.Link().call(op="shutdown", timeout=3)
     except (OSError, TimeoutError, ConnectionError):
         pass
     time.sleep(0.3)
-    print("predictd: stopped")
+    print("predictd and the ghost server: stopped")
+
+
+def cmd_serve(a):
+    from ghost.server import serve
+    serve(port=a.port)
 
 
 def main():
@@ -628,13 +653,15 @@ def main():
     t.add_argument("--debounce", type=int, default=0, help="ms without typing before a request is sent (0: on every keystroke; the daemon cancels the stale one)")
     t.add_argument("--min-chars", type=int, default=2)
     t.add_argument("--words", type=int, default=5, help="extend the ghost from prefetched continuations up to this many words")
-    t.add_argument("--opts", default="{}", help='per-request overrides, e.g. \'{"textBudget":300,"words":8}\'')
+    t.add_argument("--opts", default="{}", help='policy overrides per request (ghost/config.json keys), e.g. \'{"textBudget":300,"words":8}\'')
     t.add_argument("--log", help="append one JSON line per round (your typed text!) to this file")
     t.add_argument("--no-spawn", action="store_true")
     k = sub.add_parser("ask", help="one prediction")
     k.add_argument("text")
     k.add_argument("--app", default="auto")
     k.add_argument("--opts", default="{}")
+    v = sub.add_parser("serve", help="run the ghost HTTP server in the foreground")
+    v.add_argument("--port", type=int, default=None)
     sub.add_parser("status")
     sub.add_parser("start")
     sub.add_parser("stop")
@@ -648,8 +675,11 @@ def main():
     elif a.cmd == "status":
         cmd_status(a)
     elif a.cmd == "start":
-        ensure_daemon()
+        daemon().close()
+        start_server()
         cmd_status(a)
+    elif a.cmd == "serve":
+        cmd_serve(a)
     elif a.cmd == "stop":
         cmd_stop(a)
 
