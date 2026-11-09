@@ -22,7 +22,7 @@ cached too, which is why key → ghost is lower than the steady latency.
 ## Model modes
 
 The system switches on its own between (at least) two ways of running the model: same assets, AC power, no other model user. Within
-one mode greedy outputs are deterministic (82/82 identical between runs); across modes only ~25% match and latency differs:
+one mode greedy outputs are deterministic (82/82 identical between runs, on an earlier 82-case set); across modes only ~25% match and latency differs:
 
 | Mode | steady p50 | typing-sim key → ghost p50 | steady fingerprint |
 |---|---|---|---|

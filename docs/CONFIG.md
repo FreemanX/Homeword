@@ -27,7 +27,7 @@ flowchart LR
 
 ## predictd.json (mechanism)
 
-| Knob | Shipped | What it does |
+| Knob | Default | What it does |
 |---|---|---|
 | `keepAliveSec` | 3 | prewarm the pinned (or last used) session this often while idle; the cache expires after ~5-6 s. 0 = never |
 | `keepAliveMaxIdleSec` | 300 | stop prewarming after this long without requests |
@@ -36,7 +36,7 @@ flowchart LR
 | `maxSessions` | 32 | sessions kept before the least recently used idle one is forgotten (never the pinned profile's) |
 | `followRecentSec` | 30 | keep the session that generated last warm this long (an agent loop between turns), then the pinned profile |
 | `httpPort` | 47320 | HTTP on 127.0.0.1; 0 = off. Restart to change |
-| `socketPath` | /tmp/predictd-UID.sock | the unix socket. Restart to change |
+| `socketPath` | /tmp/predictd-UID.sock | the unix socket (built-in default, not in predictd.json). Restart to change |
 
 `reload` re-reads it without a restart (except the two listeners). Flags: `./predictd [--config path] [--socket path]
 [--http-port n] [--version]`; the default config is predictd.json next to the binary. A private daemon for experiments:
@@ -79,7 +79,8 @@ greedy, `top_p`/`seed` → `topP`/`seed`, `response_format` → `schema`, `tool_
 | `guardrails` | permissive | the profile's guardrails | |
 | `serverPort`, `serverIdleExitSec` | 47321, 1800 | the ghost HTTP server's port and idle exit | |
 
-Every knob also works per request: `pred ask "text" --opts '{"words":8}'`, `pred try --opts ...`, or `opts` in a ghost HTTP request.
+Every knob except `serverPort` and `serverIdleExitSec` (read when the server starts) also works per request:
+`pred ask "text" --opts '{"words":8}'`, `pred try --opts ...`, or `opts` in a ghost HTTP request.
 Knobs that change the prompt (`shots`, `instructions`, `format`, `output`, `guardrails`, `words`) make a different profile
 (named by the hash of its content), registered on first use: the first request with them is uncached.
 
@@ -93,8 +94,9 @@ Knobs that change the prompt (`shots`, `instructions`, `format`, `output`, `guar
 | `shots` | examples `{app, text, completion}`; the first `shots` of them are used, in order, so put the best first |
 
 A `completion` follows the suffix format: for `"text": "I will send you the docu"` it is `"ment by the end of the day"`. The
-example `app` labels are the vocabulary clients should send (`terminal`, `mail`, `chat`, `notes`, `code`, `review`, `essay`); add
-examples when you add a new kind of client. The prefix is ~280 tokens with 6 examples, paid on every request. After editing,
+`app` labels of the examples in the profile (the first `shots`: `mail`, `chat`, `notes`, `terminal`, `essay`) are the vocabulary
+the model knows best; any other label works too (the integrations send `coding agent prompt`). Add examples when you add a new kind
+of client. The prefix is ~280 tokens with 6 examples, paid on every request. After editing,
 restart `pred` clients (the profile name changes with the content) and re-run the benchmark ([PERFORMANCE.md](PERFORMANCE.md)).
 
 ## pred CLI
@@ -124,5 +126,5 @@ Both send at most the last 2000 characters; the policy trims further to `textBud
 | Multi-sentence | `oneSentence: false` |
 | Variety instead of the single best guess | `sampling: "topP", topP: 0.9, temperature: 0.7` |
 | Another language | translate `instructions_short` and the examples, set `spellLanguage`, or `spellCheck: false` |
-| A code-like client | send `app: "code"` (or add your label to `lenientApps` and a few examples) |
+| A code-like client | send `app: "code"` (in `lenientApps`: no dictionary or sentence rules; there is no `code` example yet, add some) |
 | Keep the cache warm longer | predictd.json `keepAliveMaxIdleSec` |

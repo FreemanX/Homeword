@@ -125,9 +125,10 @@ Tool parameter schemas may use objects, arrays, enums, `anyOf`/`oneOf` and nulla
 | `n` | 1 only |
 | images, audio, `logprobs`, the Responses API (`/v1/responses`), embeddings | not supported |
 
-Errors use OpenAI's shape (`{"error": {"message", "type", "code"}}`): 404 `model_not_found`, 400 `context_length_exceeded`,
-400 for invalid requests, 429 when the system is busy, 500 otherwise. Content blocked by Apple's guardrails returns
-`finish_reason: "content_filter"` with empty content.
+Errors use OpenAI's shape (`{"error": {"message", "type", "code"}}`): 404 `model_not_found`, 404 `not_found` for other paths,
+400 `context_length_exceeded`, 400 for invalid requests, 429 when the system is busy, 500 otherwise. With `stream: true`, an error
+during generation arrives as a `data: {"error": ...}` event in the (already started, status 200) stream. Content blocked by Apple's
+guardrails returns `finish_reason: "content_filter"` with empty content. `GET /v1/models/{id}` describes one model.
 
 ## Limits and performance (M4 Pro, macOS 27.2)
 
@@ -138,6 +139,6 @@ Errors use OpenAI's shape (`{"error": {"message", "type", "code"}}`): 404 `model
   well under a second.
 - **One model for the whole machine.** The typing predictor, other policies and API calls share it. predictd keeps the most recent
   session warm for `followRecentSec` (30 s) so an agent loop keeps its cache between turns, then returns to the pinned profile.
-- Usage of a turn that ends in tool calls reports the prompt tokens only (the framework does not report usage for an interrupted
-  generation).
+- Usage of a turn that ends in tool calls is approximate: `prompt_tokens` counts the transcript without the last prompt, cached and
+  completion tokens are 0 (the framework does not report usage for an interrupted generation).
 - No authentication: like the socket, the port is for the local user's processes. It listens on 127.0.0.1 only.

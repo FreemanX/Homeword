@@ -653,7 +653,8 @@ extension Engine {
         if let st = b["stop"] as? String { r.stop = [st] } else { r.stop = b["stop"] as? [String] ?? [] }
         r.stream = b["stream"] as? Bool ?? false
         r.includeUsage = (b["stream_options"] as? [String: Any])?["include_usage"] as? Bool ?? false
-        r.key = "openai/\(r.model)/\(jsonText((b["tools"] ?? []) as Any).hashValue)/\(forced ?? "")"
+        // one session per model (and profile definition: its guardrails fix the session's model) and tool set
+        r.key = "openai/\(r.model)/\(prof?.fingerprint.hashValue ?? 0)/\(jsonText((b["tools"] ?? []) as Any).hashValue)/\(forced ?? "")"
         return r
     }
 

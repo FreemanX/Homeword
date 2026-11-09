@@ -1,4 +1,5 @@
-"""Drive `pred try` through a pty with human-like typing (jittered key intervals, pauses at word ends), never accepting.
+"""Drive `pred try` through a pty with human-like typing (jittered key intervals, pauses at word ends); ACCEPT=1 presses Tab when
+the ghost's next word is right (otherwise it never accepts).
 Prints pred's session stats. Usage: python3 -I human_pty.py [extra pred try args...]   e.g. --debounce 100
 Timing model: ~5.5 keys/s (lognormal around 170 ms), 25% of word ends get a 250-700 ms pause, sentence ends 800 ms."""
 import os, pty, random, re, select, sys, time, pathlib, fcntl, termios, struct, json, tempfile, datetime

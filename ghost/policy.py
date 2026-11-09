@@ -315,7 +315,7 @@ class Ghost:
             return {"ok": True, "suggestion": "", "partial": "", "timing": {"total_ms": ctx["trim_ms"]}}
         if stream:
             req["stream"] = stream
-        self.ensure_profile(link, ctx["cfg"])
+        self.ensure_profile(link, ctx["cfg"], pin=not opts)      # the base profile is pinned, per-request variants are not
         resp = link.call(**req)
         if resp.get("error") == "unknown_profile":
             self.registered.discard(ctx["profile"])

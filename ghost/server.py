@@ -27,6 +27,13 @@ def serve(port=None, socket_path=predictd.SOCK, quiet=False):
         except queue.Empty:
             return predictd.start(socket_path)
 
+    def drain():
+        while True:
+            try:
+                pool.get_nowait().close()
+            except queue.Empty:
+                return
+
     class Handler(BaseHTTPRequestHandler):
         def reply(self, obj, code=200):
             body = json.dumps(obj).encode()
@@ -52,16 +59,25 @@ def serve(port=None, socket_path=predictd.SOCK, quiet=False):
                 req = json.loads(body or b"{}")
             except ValueError:
                 return self.reply({"ok": False, "error": "body is not JSON"}, 400)
+            r = {"ok": False, "error": "predictd unavailable"}
             for attempt in (0, 1):
-                ln = link()
+                try:
+                    ln = link()
+                except (OSError, TimeoutError) as e:          # cannot start predictd
+                    r = {"ok": False, "error": f"predictd unavailable: {e}"}
+                    break
                 try:
                     r = ghost.predict(ln, req.get("app", ""), req.get("text", ""), req.get("opts"), stream=req.get("stream", "ghost-http"))
                     pool.put(ln)
                     break
                 except (OSError, ConnectionError):           # predictd went away (idle exit): reconnect, it restarts on demand
                     ln.close()
+                    drain()                                  # the other pooled connections are dead too
                     ghost.registered.clear()
-                    r = {"ok": False, "error": "predictd unavailable"}
+                except Exception as e:                       # a timeout or a refused profile: answer, and drop the connection
+                    ln.close()
+                    r = {"ok": False, "error": f"{type(e).__name__}: {e}"}
+                    break
             self.reply(r)
 
         def log_message(self, *a):

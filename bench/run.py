@@ -243,7 +243,7 @@ def main():
     S = summarize(rows)
     S.update(extra)
     # The system runs the model in (at least) two modes that give different but deterministic greedy outputs and different speed
-    # (seen: ~325 vs ~393 ms p50, 21/82 identical outputs between modes, 82/82 within one). Fingerprint the raw outputs so runs
+    # (seen: ~325 vs ~393 ms p50, 21/82 identical outputs between modes, 82/82 within one, on an earlier 82-case set). Fingerprint the raw outputs so runs
     # from different modes are not compared as if a code change caused the difference.
     raw = "|".join(str(r["resp"].get("model_completion")) for r in rows[:20])
     S["mode_fingerprint"] = hashlib.md5(raw.encode()).hexdigest()[:8]

@@ -51,7 +51,8 @@ Mechanism (predictd):
 1. **Profile → session**: a profile's instructions + examples become a `LanguageModelSession` transcript, the cached prefix. The
    default session is stateless: after every answer `session.transcript = base`, so the next request hits the prefix cache,
    including most of the previous keystroke's text. A newer request on the same `stream` cancels the running one and takes over
-   (free). The keep-alive prewarms the pinned profile while idle (at once after another session took the cache, else every 3 s).
+   (free). While idle the keep-alive keeps the session that generated last warm for `followRecentSec` (30 s, e.g. an agent loop),
+   then the pinned profile (at once after another session took the cache, else every 3 s).
 2. **Generate**: `respond(to: prompt)` with the caller's `maxTokens` and sampling, plain or with a schema. The finish reason is read by
    reflection (`hitTokenCap`) and reported as `finish: length|stop`.
 
@@ -70,8 +71,10 @@ Policy (ghost, typing):
 - **One cached session at a time.** Apple's docs ("Optimizing key-value caching in language model sessions") leave cache management to
   the provider. On-device, only the session that prewarmed or generated last keeps its KV cache; any other session, in any process,
   evicts it. It expires after ~5-6 s idle. Never run two daemons; another app using the model (Apple Intelligence) can evict ours.
-- **Cost model**: ~100 ms fixed per request, ~0.55 ms per cached input token (instructions and examples count), ~2 ms per uncached input
-  token, ~16 ms per output token. Shorter prompt and answer = faster. Short instructions were also more accurate.
+- **Cost model** (short typing prompts, ~300 tokens): ~100 ms fixed per request, ~0.55 ms per cached input token (instructions and
+  examples count), ~2 ms per uncached input token, ~16 ms per output token. Shorter prompt and answer = faster. Short instructions were
+  also more accurate. Long prompts (~4k tokens, agents) cost ~0.75 ms per token even when cached and ~20 ms per output token.
+- **Context window**: 8192 tokens.
 - **No early words**: `streamResponse` snapshots and the public `SystemLanguageModel.Executor` channel both deliver a short answer in
   one piece. No stop sequences, no smaller model, guardrails at most `permissiveContentTransformations` (skips the checks). The model
   already uses a draft model (speculative decoding).

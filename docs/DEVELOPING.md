@@ -8,7 +8,7 @@ per layer:
 | put ghost text into another app | an **application** on the ghost policy | a zsh widget, a Mac app, another agent's prompt box |
 | run an agent or tool on the on-device model | nothing to build: point it at the **OpenAI-compatible API** | pi, the `openai` SDK, LangChain ([OPENAI.md](OPENAI.md)) |
 | use the model for something other than typing prediction | a new **policy** on predictd | summarise a selection, write a commit message, triage |
-| change what the model host can do | the **mechanism**, predictd | a new op, streaming, tool calling |
+| change what the model host can do | the **mechanism**, predictd | a new op, image input, tool calling in the native protocol |
 
 Keep the rule: predictd never learns what its text is for. If a change needs predictd to know about words, keystrokes or apps, it
 belongs in a policy; if every policy would need it (warm caches, cancelling, token limits), it belongs in predictd.
@@ -94,7 +94,7 @@ Both send `app: "coding agent prompt"`, which is not an example label: the model
 ### Ideas for the next applications
 
 - **Shell (zsh)**: a ZLE widget on `self-insert` showing the answer as `POSTDISPLAY` (fish-style). Shells already complete commands,
-  so the value is in commit messages, quoted strings and comments; send `app: "terminal"` and add `terminal` examples.
+  so the value is in commit messages, quoted strings and comments; send `app: "terminal"` (the prompt has a few `terminal` examples; add more).
 - **Other terminal agents**: anything with a prompt-editor hook works like the samples. Codex has no extension point for its prompt
   box today (it would need a patch).
 - **System-wide Mac app**: a menu bar app reads the focused text field and caret through the Accessibility API, draws the ghost in a

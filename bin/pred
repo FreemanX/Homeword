@@ -4,9 +4,9 @@
   pred try [--app auto] [--debounce 0]   type and watch predictions; Enter starts a new round and prints its stats
   pred ask "git sta" [--app terminal]          one prediction, printed with its timings
   pred serve                                   the ghost HTTP server for other apps (127.0.0.1:47321), in the foreground
-  pred start | stop | status                   predictd + the ghost server in the background (they also start on first use)
+  pred start | stop | status                   predictd + the ghost server in the background (predictd also starts on first use)
 
-In `try`:  Tab = accept one word   Right = accept all   Esc = dismiss   Enter = end round, start a new one
+In `try`:  Tab or Ctrl-F or Alt/Ctrl-Right = accept one word   Right or End = accept all   Esc = dismiss   Enter = end round
            Backspace / Ctrl-W / Ctrl-U edit (append-only editor, no cursor movement)   Ctrl-C or Ctrl-D = quit with session totals
 """
 import argparse, codecs, re, collections, datetime, json, os, select, shutil, signal, socket, subprocess, sys, termios, textwrap, time, tty, unicodedata
@@ -649,7 +649,7 @@ def main():
     ap = argparse.ArgumentParser(prog="pred", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd")
     t = sub.add_parser("try", help="interactive: type and watch predictions")
-    t.add_argument("--app", default="auto", help="app label sent to the model: auto (terminal for shell-like lines, else notes), or terminal, mail, chat, notes, code, review, essay")
+    t.add_argument("--app", default="auto", help="app label sent to the model: auto (terminal for shell-like lines, else notes), or a label of the prompt's examples (mail, chat, notes, terminal, essay) or any other")
     t.add_argument("--debounce", type=int, default=0, help="ms without typing before a request is sent (0: on every keystroke; the daemon cancels the stale one)")
     t.add_argument("--min-chars", type=int, default=2)
     t.add_argument("--words", type=int, default=5, help="extend the ghost from prefetched continuations up to this many words")

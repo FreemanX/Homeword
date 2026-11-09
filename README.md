@@ -65,7 +65,8 @@ curl -s 127.0.0.1:47320/ -d '{"profile":"haiku","prompt":"Autumn in the city","m
 curl -s 127.0.0.1:47320/v1/chat/completions -d '{"model":"apple-on-device","messages":[{"role":"user","content":"Hi!"}]}'
 ```
 
-predictd and the ghost server start on demand and exit after 30 idle minutes.
+predictd starts on demand (any `pred` command or ghost request starts it); the ghost server starts with `pred start` or `pred serve`,
+and the pi extension runs `pred start` itself. Both exit after 30 idle minutes.
 
 ## Sample applications
 

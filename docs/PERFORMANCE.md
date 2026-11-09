@@ -11,13 +11,13 @@ Current numbers: [bench/RESULTS.md](../bench/RESULTS.md). Machine: Apple M4 Pro,
 | Claude Code mod | 157-161 ms | `bench/integration_latency.py` |
 
 The rows are not directly comparable: different phrases, and in the integration runs the ghost from an earlier keystroke often
-still fits, so it is shown again without a new request (follow-the-ghost); a fresh model call never takes under ~250 ms. Model time
-alone (fixed benchmark): ~330 ms p50.
+still fits, so it is shown again without a new request (follow-the-ghost); a fresh model call never takes under ~250 ms. End to end on
+the fixed benchmark (unrelated texts, nothing but the prefix cached): ~330 ms p50.
 
 ```mermaid
 flowchart LR
     key["keystroke"] --> send["client sends<br/>under 1 ms"]
-    send --> model["model call<br/>~100 ms fixed<br/>+ 0.55 ms per cached token<br/>+ 2 ms per new token<br/>+ 16 ms per output token"]
+    send --> model["model call, short prompt<br/>~100 ms fixed<br/>+ 0.55 ms per cached token<br/>+ 2 ms per new token<br/>+ 16 ms per output token"]
     model --> asm["assemble<br/>~1 ms"]
     asm --> draw["client draws<br/>a few ms"]
 ```
@@ -33,7 +33,7 @@ misspelled words. Each run is saved to `bench/results/` (git-ignored) with its r
 runs can be compared; shared runs live in `bench/baselines/`.
 
 Quality is exact word match against one real continuation, so it is harsh on the next-word part; the mid-word completion number is
-the most objective. Hand-written cases (52: mail, chat, notes, review, terminal, code) are short; the 30 generated ones are cut from
+the most objective. Hand-written cases (52: mail, chat, notes, review, terminal, code, editor) are short; the 28 generated ones are cut from
 `bench/corpus.md` (a frozen copy of an early README: technical English, hard to predict) at 4 context sizes. Re-generate with
 `python3 -I bench/gen_cases.py` (this breaks comparability: record a new baseline).
 

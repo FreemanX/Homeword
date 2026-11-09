@@ -4,5 +4,6 @@
   "idleExitSec": 1800,
   "cacheTTLSec": 5.5,
   "maxSessions": 32,
+  "followRecentSec": 30,
   "httpPort": 47320
 }

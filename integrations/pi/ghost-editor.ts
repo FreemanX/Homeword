@@ -25,16 +25,23 @@ const FAKE_CURSOR_END = "\x1b_pi:/fc\x07";
 const PRED_CLI = process.env.PRED_CLI ?? fileURLToPath(new URL("../../bin/pred", import.meta.url));
 
 let daemonStart: Promise<void> | undefined;
+let lastStart = 0;
 
-/** Start predictd and the ghost server once (bin/pred start returns when both answer). */
+/** Start predictd and the ghost server (bin/pred start returns when both answer). One start at a time, and at most one every
+ * 10 s: the services exit after 30 idle minutes, so a long pi session may need to start them again. */
 function startDaemon(): Promise<void> {
-	daemonStart ??= new Promise((resolve) => {
-		if (!existsSync(PRED_CLI)) return resolve();
-		const p = spawn(PRED_CLI, ["start"], { stdio: "ignore", detached: true });
-		p.on("exit", () => resolve());
-		p.on("error", () => resolve());
-	});
-	return daemonStart;
+	if (!daemonStart && Date.now() - lastStart > 10_000) {
+		lastStart = Date.now();
+		daemonStart = new Promise<void>((resolve) => {
+			if (!existsSync(PRED_CLI)) return resolve();
+			const p = spawn(PRED_CLI, ["start"], { stdio: "ignore", detached: true });
+			p.on("exit", () => resolve());
+			p.on("error", () => resolve());
+		}).finally(() => {
+			daemonStart = undefined;
+		});
+	}
+	return daemonStart ?? Promise.resolve();
 }
 
 async function predict(text: string, signal: AbortSignal): Promise<string> {

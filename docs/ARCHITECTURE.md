@@ -66,7 +66,7 @@ flowchart LR
         profiles["profiles<br/>by name"]
         slots["sessions<br/>profile/name, each with a queue"]
         streams["streams<br/>newest request wins"]
-        ka["keep-alive, 500 ms tick<br/>prewarm the pinned profile, idle exit"]
+        ka["keep-alive, 500 ms tick<br/>prewarm the recent or pinned session, idle exit"]
     end
     spell["NSSpellChecker<br/>main actor"]
     s1 --> handle
@@ -87,7 +87,8 @@ Measured facts that shape the design (M4 Pro, macOS 27.2):
 
 - The on-device model keeps **one prefix KV cache for the whole system**: only the session that prewarmed or generated last keeps
   it. Any other session, in any process, evicts it, and it expires after ~5-6 s idle.
-- Cost of a request: ~100 ms fixed, ~0.55 ms per cached input token, ~2 ms per uncached input token, ~16 ms per output token.
+- Cost of a short request (~300 tokens): ~100 ms fixed, ~0.55 ms per cached input token, ~2 ms per uncached input token, ~16 ms per
+  output token. Long prompts (~4k tokens) cost ~0.75 ms per token even when cached. The context window is 8192 tokens.
 - No token streaming for short answers, no stop sequences; cancelling a running generation is free.
 
 So a **profile** (instructions + example turns) becomes a session whose transcript is the cached prefix, and every request on the
@@ -135,9 +136,10 @@ Newline-delimited JSON on the unix socket `/tmp/predictd-UID.sock` (mode 0600), 
 | `ping`, `shutdown` | | |
 
 Errors: `{"ok":false,"error":...}` with `cancelled`, `unknown_profile` (register it, then retry: a restarted daemon has none),
-`guardrail`, or a message. Schemas are a JSON Schema subset: `object` (`properties`, `required`, `propertyOrder`), `array`
-(`items`, `minItems`, `maxItems`), `string` (with `enum`), `integer`, `number`, `boolean`. Example responses of a structured
-profile are JSON objects.
+`guardrail`, `context_length_exceeded`, or a message (`keep needs a named session`, `profile X has no schema`, `unknown op X`, ...).
+Schemas are a JSON Schema subset: `object` (`properties`, `required`, `propertyOrder`), `array` (`items`, `minItems`, `maxItems`),
+`string` (with `enum`), `integer`, `number`, `boolean`, `anyOf`/`oneOf` and nullable types (`["string", "null"]`); anything else
+(refs, formats) is generated as a string. Example responses of a structured profile are JSON objects.
 
 ```sh
 # a structured profile and a request, over HTTP
@@ -225,7 +227,7 @@ sequenceDiagram
     D-->>G: valid
     G-->>A: suggestion "ng despite correct preparation"
     A-->>U: dim ghost after the cursor
-    Note over D,M: transcript restored, keep-alive keeps the pinned profile warm
+    Note over D,M: transcript restored, keep-alive keeps the session warm
 ```
 
 ### The ghost answer
