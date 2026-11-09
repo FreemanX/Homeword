@@ -94,7 +94,7 @@ A Claude Code mod (a plugin with a hooks module) that paints the ghost as dim vi
 needs two entries in `keybindings.json`, which apply to every session: read [integrations/claude-code](integrations/claude-code/README.md)
 before installing it.
 
-Measured in tmux with human-like typing, last keystroke → ghost on screen: pi 117-139 ms p50, Claude Code 157-161 ms p50.
+Last keystroke → ghost on screen, human-like typing in tmux (Apple M4 Pro, macOS 27.2): pi 117-156 ms p50, Claude Code 157-161 ms p50.
 
 ## Use the on-device model from any agent harness
 
@@ -117,7 +117,16 @@ prompts small. Setup for the `openai` SDK, pi and others: [docs/OPENAI.md](docs/
 
 ## Status
 
-A research prototype, measured on an Apple M4 Pro (48 GB, macOS 27.2) and an Apple M4 Max (36 GB, macOS 27.0.1). Numbers are in [bench/RESULTS.md](bench/RESULTS.md). Known limits: English only so far (prompt, examples and spell
-check), one warm prefix cache for the whole system (switching profiles costs an uncached prefix), guesses from a one-letter prefix are
-often wrong, and predictd reads one non-public field (`finishReason`, via reflection). On macOS 27.0.1 that property is absent, so a word cut by the token cap is kept. On a managed Mac, check whether Apple
+A research prototype. Benchmark results:
+
+| Machine | Steady p50 | Typing key → ghost p50 |
+|---|---|---|
+| Apple M4 Pro, 16-core GPU, 48 GB, macOS 27.2 | 329-331 ms | 259 ms |
+| Apple M4 Max, 32-core GPU, 36 GB, macOS 27.0.1 | 295 ms | 258 ms |
+
+Details and raw data: [bench/RESULTS.md](bench/RESULTS.md).
+
+Known limits: English only so far (prompt, examples and spell check); one warm prefix cache for the whole system (switching profiles
+costs an uncached prefix); guesses from a one-letter prefix are often wrong; predictd reads one non-public field (`finishReason`, via
+reflection), which macOS 27.0.1 does not have, so there a word cut by the token cap is kept. On a managed Mac, check whether Apple
 Intelligence features may be used before relying on it.

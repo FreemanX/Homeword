@@ -83,7 +83,7 @@ hand requests to `Engine.handle`; answers go back on the connection (a JSON line
 
 ### Profiles, sessions and the cache
 
-Measured facts that shape the design (M4 Pro, macOS 27.2):
+Measured facts that shape the design (Apple M4 Pro, macOS 27.2):
 
 - The on-device model keeps **one prefix KV cache for the whole system**: only the session that prewarmed or generated last keeps
   it. Any other session, in any process, evicts it, and it expires after ~5-6 s idle.
@@ -165,8 +165,8 @@ parameters and harness setup: [OPENAI.md](OPENAI.md).
 - **One per user**: a new daemon that finds a live one on the socket exits; a daemon whose socket file is removed or replaced exits.
 - **Idle**: keep-alive for `keepAliveMaxIdleSec` (5 min) after the last request, exit after `idleExitSec` (30 min).
 - **Logs**: stderr, `/tmp/predictd-UID.log` when started by `pred`.
-- **Non-public bits**: the finish reason is read from the transcript through `Mirror` (`Transcript.Response.finishReason`); if an
-  OS update breaks it, every answer reports `stop`. Settable `session.transcript` is macOS 27 API.
+- **Non-public bits**: the finish reason is read from the transcript through `Mirror` (`Transcript.Response.finishReason`). macOS
+  27.0.1 does not have it: there every answer reports `stop`. Settable `session.transcript` is macOS 27 API.
 
 ## ghost: the typing policy
 

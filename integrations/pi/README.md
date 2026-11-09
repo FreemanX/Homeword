@@ -53,4 +53,4 @@ echo "export { default } from \"$PWD/integrations/pi/ghost-editor.ts\";" > ~/.pi
 
 Remove that file to uninstall. If another extension also replaces the editor, the last one wins.
 
-Measured (2026-11-08, M4 Pro): ghost on screen 139 ms p50 / 191 ms max after the last keystroke (`bench/integration_latency.py`).
+Last keystroke → ghost on screen (`bench/integration_latency.py`, Apple M4 Pro, macOS 27.2): 117-156 ms p50, under 200 ms max.

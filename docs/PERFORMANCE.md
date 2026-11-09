@@ -1,19 +1,22 @@
 # Performance: benchmarks and latency
 
-Current numbers: [bench/RESULTS.md](../bench/RESULTS.md). The history below is an Apple M4 Pro (16-core GPU, 48 GB, macOS 27.2).
-The same policy on an Apple M4 Max (32-core GPU, 36 GB, macOS 27.0.1) measured 295 ms steady p50 and 255-258 ms key → ghost.
+Full results per machine, with the raw data: [bench/RESULTS.md](../bench/RESULTS.md). Every table below names the machine it was
+measured on.
 
-## What the user feels
+## Summary
 
-| Where | Last keystroke → ghost on screen, p50 | Measured with |
+| Measurement | Apple M4 Pro, macOS 27.2 | Apple M4 Max, macOS 27.0.1 |
 |---|---|---|
-| `pred try` | ~250 ms | `bench/human_pty.py` (pty, human-like typing) |
-| pi extension | 117-139 ms | `bench/integration_latency.py` (real app in tmux) |
-| Claude Code mod | 157-161 ms | `bench/integration_latency.py` |
+| Steady benchmark, p50 / p90 (`bench/run.py`) | 329-331 / 422-426 ms | 295 / 408 ms |
+| Typing simulation, key → ghost p50 / p90 (`bench/human_pty.py`) | 259 / 284 ms | 258 / 291 ms |
+| pi extension, last keystroke → ghost on screen p50 (`bench/integration_latency.py`) | 117-156 ms | not measured |
+| Claude Code mod, last keystroke → ghost on screen p50 | 157-161 ms | not measured |
 
-The rows are not directly comparable: different phrases, and in the integration runs the ghost from an earlier keystroke often
-still fits, so it is shown again without a new request (follow-the-ghost); a fresh model call never takes under ~250 ms. End to end on
-the fixed benchmark (unrelated texts, nothing but the prefix cached): ~330 ms p50 on the M4 Pro, 295 ms p50 on the M4 Max.
+The rows measure different things. The steady benchmark sends unrelated texts, so only the prompt prefix is cached. While typing,
+the previous keystroke's text is cached too. In the integration runs, the ghost from an earlier keystroke often still fits and is
+shown again without a new request (follow-the-ghost); a fresh model call never takes under ~250 ms.
+
+Where the time of one keystroke goes (Apple M4 Pro, short typing prompt):
 
 ```mermaid
 flowchart LR
@@ -23,7 +26,7 @@ flowchart LR
     asm --> draw["client draws<br/>a few ms"]
 ```
 
-## Benchmarks
+## How the benchmarks work
 
 The benchmarks measure the ghost policy on predictd end to end: `run.py` imports `ghost.policy` and talks to a private predictd, so
 a run covers both layers (a change in either shows up). `bench/run.py` scenarios: `steady` (1.2 s between requests), `burst` (back to back), `idle` (15 s gaps: does the keep-alive keep the
@@ -50,7 +53,8 @@ python3 -I bench/integration_latency.py <tmux pane> <ghost escape> [clear keys] 
 
 ## Latency history
 
-Key → ghost in `pred try` = wait before sending (debounce) + model call (socket and JSON < 1 ms). Measured with `bench/human_pty.py`:
+Apple M4 Pro, macOS 27.2. Key → ghost in `pred try` = wait before sending (debounce) + model call (socket and JSON < 1 ms), measured
+with `bench/human_pty.py`:
 
 | Change | key → ghost p50 / p90 |
 |---|---|
@@ -60,9 +64,8 @@ Key → ghost in `pred try` = wait before sending (debounce) + model call (socke
 | + one reused session with transcript restore, short instructions, 100-token context | 263 / 326 ms |
 | + `maxTokens` 6 (drop a cut-off word), answer memory + prefetch | 250-252 / 284-291 ms (one run at 344 ms) |
 
-Splitting the daemon into mechanism (predictd) and policy (ghost, Python) changed nothing measurable: the steady benchmark gave the
-same raw outputs (same mode fingerprint), identical quality and p50 331 ms before and after. Assembly in Python plus one `spell`
-round trip cost ~1-2 ms.
+Splitting the daemon into mechanism (predictd) and policy (ghost, Python) changed nothing measurable: steady p50 331 ms before and
+after, the same raw outputs and quality. Assembly in Python plus one `spell` round trip cost ~1-2 ms.
 
 A short instruction (~45 tokens instead of ~140) was both faster and more accurate; fewer than 6 examples saved little and cost
 accuracy. A `GenerationSchema` cost ~200 ms. Not available: token streaming (`streamResponse` and `SystemLanguageModel.Executor`
@@ -70,7 +73,7 @@ deliver a short answer in one piece), stop sequences, a smaller model, or turnin
 
 ## Agent-sized prompts (OpenAI-compatible API)
 
-Long prompts behave differently from the typing predictor's short ones: prompt processing dominates and the cache helps little.
+Apple M4 Pro, macOS 27.2. Long prompts behave differently from the typing predictor's short ones: prompt processing dominates and the cache helps little.
 
 | Request | Time |
 |---|---|
@@ -81,6 +84,8 @@ Long prompts behave differently from the typing predictor's short ones: prompt p
 | the next turn after the tool result (4,671 of 4,672 tokens cached), 35-token answer | 7.5-7.8 s |
 
 ### The three interfaces, same typing workload (`bench/openai_compare.py`)
+
+Apple M4 Pro, macOS 27.2, slow model mode, 40 steady cases (unrelated texts, so only the prefix is cached), all paths in one run.
 
 | Path | p50 / p90 | Raw outputs vs native |
 |---|---|---|
@@ -93,16 +98,17 @@ Long prompts behave differently from the typing predictor's short ones: prompt p
 | the same burst through the ghost server (`stream`) | 342 ms | |
 | the same burst through the OpenAI API (no cancellation) | 2,918 ms | |
 
-(One run, slow model mode, on unrelated texts so only the prefix is cached; within one run the paths are comparable.) The model call
-is the whole cost: the policy layer adds ~2 ms and the OpenAI translation nothing. What the OpenAI API lacks for typing is
+The model call is the whole cost: the policy layer adds ~2 ms and the OpenAI translation nothing. What the OpenAI API lacks for typing is
 cancellation, plus pinning and the `spell` op, which is why the ghost policy talks to the native protocol.
 
 ## Caveats when measuring
 
+- **macOS version.** macOS 27.0.1 does not expose the finish reason, so a word cut by the token cap is kept; suggestions then
+  differ from macOS 27.2 on the same raw outputs ([details](../bench/RESULTS.md#macos-versions)).
 - **One cache for the whole system.** Apple's docs ("Optimizing key-value caching in language model sessions") describe the KV cache
   as per session, with the capacity left to the provider. On-device, only the session that prewarmed or generated last keeps it
   (other sessions, in any process, evict it), and it expires after ~5-6 s idle. With a concurrent `pred try`, a run had 43 cache
   misses and 9 of 20 raw outputs differed. Alone, outputs are deterministic (a rerun matched an hour-old run 20/20).
-- **Two model modes.** The system switches between a fast and a slow mode (~325 vs ~393 ms p50, different but deterministic
-  outputs) for unknown reasons. `run.py` records a `mode_fingerprint` and `compare.py` warns when two runs differ: re-run before
+- **Two model modes.** The system switches between a fast and a slow mode (Apple M4 Pro: ~325 vs ~393 ms steady p50, different
+  but deterministic outputs) for unknown reasons. `run.py` records a `mode_fingerprint` and `compare.py` warns when two runs differ: re-run before
   bisecting a "regression".

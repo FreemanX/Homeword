@@ -130,7 +130,7 @@ Errors use OpenAI's shape (`{"error": {"message", "type", "code"}}`): 404 `model
 during generation arrives as a `data: {"error": ...}` event in the (already started, status 200) stream. Content blocked by Apple's
 guardrails returns `finish_reason: "content_filter"` with empty content. `GET /v1/models/{id}` describes one model.
 
-## Limits and performance (M4 Pro, macOS 27.2)
+## Limits and performance (Apple M4 Pro, macOS 27.2)
 
 - **Context window: 8192 tokens** for everything: system prompt, tools, history and answer. Large harness prompts eat most of it
   (pi's system prompt and two tools: ~4,400 tokens). Keep system prompts small, and enable the harness's compaction.

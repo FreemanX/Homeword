@@ -66,7 +66,7 @@ Policy (ghost, typing):
 5. **Applications** (`pred try`, pi, Claude Code): request on every keystroke, follow the ghost when the typed char matches it;
    `pred try` also remembers answers by exact text and prefetches the continuation of a shown ghost.
 
-## Facts about the model that drive the design (measured, M4 Pro)
+## Facts about the model that drive the design (measured on Apple M4 Pro, macOS 27.2)
 
 - **One cached session at a time.** Apple's docs ("Optimizing key-value caching in language model sessions") leave cache management to
   the provider. On-device, only the session that prewarmed or generated last keeps its KV cache; any other session, in any process,
@@ -81,7 +81,8 @@ Policy (ghost, typing):
 - **Determinism and modes**: greedy outputs are deterministic within a mode, but the system switches between a fast and a slow mode
   (different outputs, ~70 ms apart) for unknown reasons. See RESULTS.md.
 - `prewarm()` needs ~1 s of lead time; `tokenCount(for:)` costs ~25 ms; cancelling a plain generation is free.
-- Non-public bits in use: reading `Transcript.Response.finishReason` via `Mirror`. If an OS update breaks it, cut-off words are kept.
+- Non-public bits in use: reading `Transcript.Response.finishReason` via `Mirror`. macOS 27.0.1 does not have it (cut-off words are
+  kept there; see bench/RESULTS.md).
 
 ## Benchmarking rules
 
@@ -95,7 +96,10 @@ Policy (ghost, typing):
   looks odd, re-run before bisecting: a mode switch once made a harmless change look like a 70 ms regression.
 - Quality metrics are exact word matches against one real continuation: treat them as relative. Mid-word completion accuracy is the
   most objective number.
-- To share a run, copy it to `bench/baselines/` and update `bench/RESULTS.md`. Put before/after numbers in the commit message.
+- To share a run, copy it to `bench/baselines/` (name: `<date>-<scenario>-<chip>.json`) and add a row to the tables in
+  `bench/RESULTS.md`. Present results plainly: the machine by its specs (chip, GPU, memory, macOS version) in the Machines table and
+  a Machine column, the numbers in the tables, the JSON file only as a link. No personal context ("this laptop", "my machine",
+  "here"), no narrative. Put before/after numbers in the commit message.
 - Changing `cases.json` or `corpus.md` breaks comparability with older runs: record a new baseline.
 
 ## Repo rules
