@@ -48,6 +48,7 @@ flowchart TB
 | stateless sessions, or conversations that keep their turns | stateless |
 | finish reason (`length` or `stop`) | drop a word cut by the token cap |
 | OS text services: `tokens`, `spell` | what counts as a word, when to show nothing |
+| an OpenAI-compatible chat API (`/v1`), a pure translation onto sessions | nothing: harnesses bring their own prompts and tools |
 
 ## predictd: the mechanism
 
@@ -105,7 +106,8 @@ flowchart LR
 - **Default session** (`session` omitted): stateless. After each answer `session.transcript = base`, so the next request matches the
   cache: the whole prefix and often the start of the previous prompt.
 - **Named sessions** (`session: "conv1"`, `keep: true`): the turns stay, for a conversation. `session.drop` forgets one.
-- **Pinning**: the keep-alive prewarms the pinned profile while idle: at once when another session took the cache, otherwise every
+- **Pinning**: while idle, the keep-alive keeps the session that generated last warm for `followRecentSec` (30 s: an agent loop
+  keeps its cache between turns), then the pinned profile: at once when another session took the cache, otherwise every
   `keepAliveSec`. Without a pin it keeps the most recently used session warm. Using several profiles is fine; each switch costs one
   uncached prefix (~2 ms per token).
 - **Order**: generations on one session run one after another; a newer request with the same `stream` cancels the older one (it
@@ -145,6 +147,14 @@ curl -s 127.0.0.1:47320/ -d '{"op":"profile.set","name":"triage","instructions":
 curl -s 127.0.0.1:47320/ -d '{"profile":"triage","prompt":"Could you add a dark mode?","schema":true}'
 # {"ok":true,"content":{"category":"feature","urgent":false},"finish":"stop","state":"cold",...}
 ```
+
+### OpenAI-compatible API
+
+The HTTP port also serves `GET /v1/models` and `POST /v1/chat/completions`. Each request's messages become a session transcript
+(system → instructions with the tools as tool definitions, earlier turns → prompt, response, tool-call and tool-output entries), the
+last user message is the prompt. Tools are never run: a stand-in tool records the model's call and stops the generation, and the
+call goes back as OpenAI `tool_calls`. One session per model and tool set, so a conversation's turns hit the prefix cache. Details,
+parameters and harness setup: [OPENAI.md](OPENAI.md).
 
 ### Lifecycle
 

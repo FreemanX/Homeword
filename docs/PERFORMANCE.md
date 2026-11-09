@@ -67,6 +67,18 @@ A short instruction (~45 tokens instead of ~140) was both faster and more accura
 accuracy. A `GenerationSchema` cost ~200 ms. Not available: token streaming (`streamResponse` and `SystemLanguageModel.Executor`
 deliver a short answer in one piece), stop sequences, a smaller model, or turning guardrails off (permissive is the lightest).
 
+## Agent-sized prompts (OpenAI-compatible API)
+
+Long prompts behave differently from the typing predictor's short ones: prompt processing dominates and the cache helps little.
+
+| Request | Time |
+|---|---|
+| ~4,100-token prompt, 1-token answer, cold | 3.4 s |
+| the same, fully cached | 3.1 s (~0.75 ms per prompt token) |
+| the same, 29-token answer | 3.7 s (~20 ms per output token) |
+| pi's prompt with two tools (~4,400 tokens), ends in a tool call | 4.7 s |
+| the next turn after the tool result (4,671 of 4,672 tokens cached), 35-token answer | 7.5-7.8 s |
+
 ## Caveats when measuring
 
 - **One cache for the whole system.** Apple's docs ("Optimizing key-value caching in language model sessions") describe the KV cache

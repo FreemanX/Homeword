@@ -34,6 +34,7 @@ flowchart LR
 | `idleExitSec` | 1800 | exit after this long without requests; 0 = never |
 | `cacheTTLSec` | 5.5 | after this long unused, a session's cache counts as `expired` in answers (reporting only) |
 | `maxSessions` | 32 | sessions kept before the least recently used idle one is forgotten (never the pinned profile's) |
+| `followRecentSec` | 30 | keep the session that generated last warm this long (an agent loop between turns), then the pinned profile |
 | `httpPort` | 47320 | HTTP on 127.0.0.1; 0 = off. Restart to change |
 | `socketPath` | /tmp/predictd-UID.sock | the unix socket. Restart to change |
 
@@ -55,6 +56,9 @@ flowchart LR
 | `session`, `keep` | generate | default session, false | a named session, and whether it keeps its turns (conversation) |
 | `stream` | generate | none | requests on one stream replace each other |
 | `schemaInPrompt` | generate | false | also describe the schema in the prompt |
+
+OpenAI-compatible requests (`/v1/chat/completions`) map onto the same fields: `max_tokens` → `maxTokens`, `temperature: 0` →
+greedy, `top_p`/`seed` → `topP`/`seed`, `response_format` → `schema`, `tool_choice` → the tool-calling mode. See [OPENAI.md](OPENAI.md).
 
 ## ghost/config.json (policy)
 

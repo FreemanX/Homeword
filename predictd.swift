@@ -1,7 +1,8 @@
 // predictd: a model host for Apple's on-device language model (FoundationModels). Mechanism only: it holds named system-prompt
 // profiles, keeps one of them warm, and generates plain text or structured output on request. It assumes nothing about what the
 // text is for: policies (what to ask, how to use the answer) live in its clients, such as the typing predictor in ghost/.
-// Protocol: newline-delimited JSON over a unix socket, the same requests over HTTP on 127.0.0.1. See docs/ARCHITECTURE.md.
+// Protocol: newline-delimited JSON over a unix socket, the same requests over HTTP on 127.0.0.1, and an OpenAI-compatible chat API
+// (/v1/models, /v1/chat/completions) on the same HTTP port. See docs/ARCHITECTURE.md.
 import Foundation
 import FoundationModels
 import AppKit
@@ -16,6 +17,7 @@ func num(_ x: Any?) -> NSNumber? { x as? NSNumber }
 struct Config {
     var socketPath = "/tmp/predictd-\(getuid()).sock", httpPort = 47320
     var keepAliveSec = 3.0, keepAliveMaxIdleSec = 300.0, idleExitSec = 1800.0, cacheTTLSec = 5.5, maxSessions = 32
+    var followRecentSec = 30.0   // keep the most recently used session warm this long after its last generation, then the pinned one
 
     mutating func apply(_ d: [String: Any]) {
         socketPath = d["socketPath"] as? String ?? socketPath; httpPort = num(d["httpPort"])?.intValue ?? httpPort
@@ -24,10 +26,11 @@ struct Config {
         idleExitSec = num(d["idleExitSec"])?.doubleValue ?? idleExitSec
         cacheTTLSec = num(d["cacheTTLSec"])?.doubleValue ?? cacheTTLSec
         maxSessions = num(d["maxSessions"])?.intValue ?? maxSessions
+        followRecentSec = num(d["followRecentSec"])?.doubleValue ?? followRecentSec
     }
     func dict() -> [String: Any] {
         ["socketPath": socketPath, "httpPort": httpPort, "keepAliveSec": keepAliveSec, "keepAliveMaxIdleSec": keepAliveMaxIdleSec,
-         "idleExitSec": idleExitSec, "cacheTTLSec": cacheTTLSec, "maxSessions": maxSessions]
+         "idleExitSec": idleExitSec, "cacheTTLSec": cacheTTLSec, "maxSessions": maxSessions, "followRecentSec": followRecentSec]
     }
 }
 
@@ -42,12 +45,24 @@ func jsonText(_ o: Any) -> String {
 
 // MARK: schemas: a JSON Schema subset -> GenerationSchema
 
-/// Supported: object (properties, required, propertyOrder), array (items, minItems, maxItems), string (enum), integer, number, boolean.
+/// Supported: object (properties, required, propertyOrder), array (items, minItems, maxItems), string (enum), integer, number, boolean,
+/// anyOf/oneOf, nullable types (["string", "null"]). Anything else (refs, formats) is generated as a string.
 /// JSON objects carry no key order, so properties are generated in `propertyOrder`, else `required`, else alphabetical order.
 func dynamicSchema(_ s: [String: Any], name: String) throws -> DynamicGenerationSchema {
     let desc = s["description"] as? String
     if let choices = s["enum"] as? [String] { return DynamicGenerationSchema(name: name, description: desc, anyOf: choices) }
-    switch s["type"] as? String ?? "string" {
+    if let alts = (s["anyOf"] ?? s["oneOf"]) as? [[String: Any]] {
+        let real = alts.filter { ($0["type"] as? String) != "null" }
+        if real.count == 1 { return try dynamicSchema(real[0], name: name) }
+        if real.count > 1 {
+            var opts: [DynamicGenerationSchema] = []
+            for (i, a) in real.enumerated() { opts.append(try dynamicSchema(a, name: "\(name)_\(i)")) }
+            return DynamicGenerationSchema(name: name, description: desc, anyOf: opts)
+        }
+    }
+    var type = s["type"] as? String
+    if let ts = s["type"] as? [String] { type = ts.first { $0 != "null" } }
+    switch type ?? (s["properties"] != nil ? "object" : s["items"] != nil ? "array" : "string") {
     case "object":
         let props = s["properties"] as? [String: Any] ?? [:]
         let required = s["required"] as? [String]
@@ -66,8 +81,7 @@ func dynamicSchema(_ s: [String: Any], name: String) throws -> DynamicGeneration
     case "integer": return DynamicGenerationSchema(type: Int.self)
     case "number": return DynamicGenerationSchema(type: Double.self)
     case "boolean": return DynamicGenerationSchema(type: Bool.self)
-    case "string": return DynamicGenerationSchema(type: String.self)
-    case let t: throw NSError(domain: "predictd", code: 1, userInfo: [NSLocalizedDescriptionKey: "unsupported schema type \(t)"])
+    default: return DynamicGenerationSchema(type: String.self)
     }
 }
 func makeSchema(_ s: [String: Any]) throws -> GenerationSchema {
@@ -87,6 +101,35 @@ func hitTokenCap(_ t: Transcript) -> Bool {
         return false
     }
     return walk(last, 0)
+}
+
+/// What went wrong in a generation, from the framework's typed errors (message text as a fallback).
+enum Failure { case guardrail, context, refusal, rateLimited, empty, other }
+func classify(_ e: Error) -> Failure {
+    if let g = e as? LanguageModelSession.GenerationError {
+        switch g {
+        case .exceededContextWindowSize: return .context
+        case .guardrailViolation: return .guardrail
+        case .decodingFailure where "\(g)".lowercased().contains("empty response"): return .empty
+        case .refusal: return .refusal
+        case .rateLimited, .concurrentRequests: return .rateLimited
+        default: return .other
+        }
+    }
+    if let l = e as? LanguageModelError {
+        switch l {
+        case .contextSizeExceeded: return .context
+        case .guardrailViolation: return .guardrail
+        case .refusal: return .refusal
+        case .rateLimited: return .rateLimited
+        default: return .other
+        }
+    }
+    let m = "\(e)".lowercased()
+    if m.contains("empty response") { return .empty }   // e.g. a token limit too small for a single token of text
+    if m.contains("context") && m.contains("exceed") { return .context }
+    if m.contains("unsafe") || m.contains("guardrail") { return .guardrail }
+    return .other
 }
 
 // MARK: profiles and sessions
@@ -148,11 +191,17 @@ final class Slot: @unchecked Sendable {
     var usedAt = clock.now
     var fresh = true, conversation = false
     var tail: Task<Void, Never>? = nil     // the last generation queued on this session: generations on one session run in order
+    let catcher: ToolCatcher?              // OpenAI-style sessions: records the tool calls the model makes
     init(profile: Profile, name: String) throws {
         self.profile = profile.name; self.name = name; key = profile.name + "/" + name
         let t = try profile.transcript()
         session = LanguageModelSession(model: profile.model, transcript: t)
-        base = session.transcript
+        base = session.transcript; catcher = nil
+    }
+    /// A session of the OpenAI-compatible API: its transcript is replaced by each request's messages.
+    init(key: String, session: LanguageModelSession, catcher: ToolCatcher) {
+        self.key = key; profile = "openai"; name = key; self.session = session; base = session.transcript; self.catcher = catcher
+        conversation = true
     }
 }
 
@@ -161,30 +210,50 @@ final class Slot: @unchecked Sendable {
 final class Conn: @unchecked Sendable {
     let fd: Int32; let lock = NSLock(); let http: Bool
     init(_ fd: Int32, http: Bool = false) { self.fd = fd; self.http = http }
+    private func writeAll(_ d: Data) -> Bool {
+        var ok = true
+        d.withUnsafeBytes { p in
+            var off = 0
+            while off < d.count { let n = write(fd, p.baseAddress! + off, d.count - off); if n <= 0 { ok = false; return }; off += n }
+        }
+        return ok
+    }
     func send(_ obj: [String: Any]) {
+        if http { return respond(status: 200, obj) }   // one request, one response, then close
         guard var d = try? JSONSerialization.data(withJSONObject: obj) else { return }
         d.append(10)
         lock.lock(); defer { lock.unlock() }
-        if http {   // one request, one response, then close
-            var out = Data("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: \(d.count)\r\nConnection: close\r\n\r\n".utf8)
-            out.append(d)
-            out.withUnsafeBytes { p in
-                var off = 0
-                while off < out.count { let n = write(fd, p.baseAddress! + off, out.count - off); if n <= 0 { break }; off += n }
-            }
-            close(fd)
-            return
-        }
-        d.withUnsafeBytes { p in
-            var off = 0
-            while off < d.count { let n = write(fd, p.baseAddress! + off, d.count - off); if n <= 0 { return }; off += n }
-        }
+        _ = writeAll(d)
+    }
+    // -- HTTP
+    func respond(status: Int, _ obj: Any) {
+        var body = (try? JSONSerialization.data(withJSONObject: obj)) ?? Data("{}".utf8)
+        body.append(10)
+        let reason = [200: "OK", 400: "Bad Request", 404: "Not Found", 429: "Too Many Requests", 500: "Internal Server Error"][status] ?? "Error"
+        lock.lock(); defer { lock.unlock() }
+        _ = writeAll(Data("HTTP/1.1 \(status) \(reason)\r\nContent-Type: application/json\r\nContent-Length: \(body.count)\r\nConnection: close\r\n\r\n".utf8) + body)
+        close(fd)
+    }
+    func beginStream() {   // server-sent events, as OpenAI streams
+        lock.lock(); defer { lock.unlock() }
+        _ = writeAll(Data("HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\nConnection: close\r\n\r\n".utf8))
+    }
+    /// One event; false when the client has gone away.
+    @discardableResult func event(_ obj: Any) -> Bool {
+        guard let d = try? JSONSerialization.data(withJSONObject: obj) else { return true }
+        lock.lock(); defer { lock.unlock() }
+        return writeAll(Data("data: ".utf8) + d + Data("\n\n".utf8))
+    }
+    func endStream() {
+        lock.lock(); defer { lock.unlock() }
+        _ = writeAll(Data("data: [DONE]\n\n".utf8))
+        close(fd)
     }
 }
 
 // MARK: engine
 
-struct Stats { var requests = 0, cold = 0, cancelled = 0, errors = 0, guardrail = 0, keepAlives = 0 }
+struct Stats { var requests = 0, chat = 0, cold = 0, cancelled = 0, errors = 0, guardrail = 0, keepAlives = 0 }
 
 actor Engine {
     var cfg: Config
@@ -193,7 +262,7 @@ actor Engine {
     var slots: [String: Slot] = [:]
     var pinned: String? = nil              // the profile kept warm; nil = the most recently used session
     var cacheOwner: String? = nil          // the session that prewarmed or generated last: the only one with a warm prefix cache
-    var lastUsed: String? = nil
+    var lastUsed: String? = nil, recentAt = clock.now   // the session that generated last, and when
     var streams: [String: (id: String, task: Task<Void, Never>)] = [:]
     var inflight = 0, busy = 0
     var lastActivity = clock.now
@@ -211,18 +280,22 @@ actor Engine {
         let key = profile.name + "/" + name
         if let s = slots[key] { return s }
         let s = try Slot(profile: profile, name: name)
-        slots[key] = s
+        remember(s)
+        return s
+    }
+    func remember(_ s: Slot) {
+        slots[s.key] = s
         stats.cold += 1
         if slots.count > cfg.maxSessions {   // forget the least recently used idle session (never the pinned one)
             let keepKey = pinned.map { $0 + "/" }
-            let victim = slots.values.filter { $0.key != key && $0.tail == nil && $0.key != keepKey }.min { $0.usedAt < $1.usedAt }
+            let victim = slots.values.filter { $0.key != s.key && $0.tail == nil && $0.key != keepKey }.min { $0.usedAt < $1.usedAt }
             if let v = victim { slots[v.key] = nil }
         }
-        return s
     }
 
-    // -- the cache: only one session in the whole system keeps a warm prefix. Keep the pinned profile (or the last used session)
-    // warm while idle: prewarm it again when another session took the cache, or before the cache expires.
+    // -- the cache: only one session in the whole system keeps a warm prefix. While idle, keep the session that generated last warm
+    // for `followRecentSec` (an agent loop between turns), then the pinned profile (or still the last used session if none is
+    // pinned): prewarm it again when another session took the cache, or before the cache expires.
     func keepAliveLoop() async {
         while true {
             try? await Task.sleep(for: .milliseconds(500))
@@ -230,8 +303,10 @@ actor Engine {
             if cfg.idleExitSec > 0 && idle > cfg.idleExitSec && inflight == 0 { log("idle for \(Int(idle)) s, exiting"); unlink(cfg.socketPath); exit(0) }
             guard cfg.keepAliveSec > 0, idle <= cfg.keepAliveMaxIdleSec, inflight == 0 else { continue }
             var target: Slot? = nil
-            if let p = pinned, let prof = profiles[p] { target = try? slot(prof, "") }
-            else if let k = lastUsed { target = slots[k] }
+            let recent = lastUsed.flatMap { slots[$0] }
+            if let r = recent, ms(clock.now - recentAt) / 1000 < cfg.followRecentSec { target = r }
+            else if let p = pinned, let prof = profiles[p] { target = try? slot(prof, "") }
+            else { target = recent }
             guard let s = target else { continue }
             if cacheOwner != s.key || ms(clock.now - s.usedAt) / 1000 >= cfg.keepAliveSec {
                 if !s.conversation { s.session.transcript = s.base }
@@ -288,16 +363,15 @@ actor Engine {
             s.session.transcript = keep ? before : s.base; s.usedAt = clock.now
             if Task.isCancelled || error is CancellationError { stats.cancelled += 1; return ["id": id, "ok": false, "error": "cancelled"] }
             let msg = "\(error)"
-            if msg.contains("sensitive or unsafe") || msg.lowercased().contains("guardrail") {
-                stats.guardrail += 1
-                return ["id": id, "ok": false, "error": "guardrail", "detail": String(msg.prefix(200))]
+            switch classify(error) {
+            case .guardrail: stats.guardrail += 1; return ["id": id, "ok": false, "error": "guardrail", "detail": String(msg.prefix(200))]
+            case .context: stats.errors += 1; return ["id": id, "ok": false, "error": "context_length_exceeded", "detail": String(msg.prefix(200))]
+            default: stats.errors += 1; return ["id": id, "ok": false, "error": String(msg.prefix(200))]
             }
-            stats.errors += 1
-            return ["id": id, "ok": false, "error": String(msg.prefix(200))]
         }
         let modelMs = ms(clock.now - t0)
         if !keep { s.session.transcript = s.base }
-        s.usedAt = clock.now
+        s.usedAt = clock.now; recentAt = clock.now
         resp["tokens"] = ["in": usage.0, "cached": usage.1, "out": usage.2]
         resp["timing"] = ["wait_ms": ms(t0 - queuedAt), "model_ms": modelMs, "total_ms": ms(clock.now - queuedAt)]
         resp["state"] = state
@@ -384,7 +458,7 @@ actor Engine {
             let list = profiles.values.sorted { $0.name < $1.name }.map { p in
                 p.summary(pinned: pinned == p.name, sessions: slots.values.filter { $0.profile == p.name }.map(\.name).sorted())
             }
-            conn.send(["id": id, "ok": true, "uptime_s": ms(clock.now - started) / 1000, "requests": stats.requests, "cold": stats.cold,
+            conn.send(["id": id, "ok": true, "uptime_s": ms(clock.now - started) / 1000, "requests": stats.requests, "chat": stats.chat, "cold": stats.cold,
                        "cancelled": stats.cancelled, "errors": stats.errors, "guardrail": stats.guardrail, "keepalives": stats.keepAlives,
                        "profiles": list, "pinned": pinned ?? NSNull(), "warm": cacheOwner ?? NSNull(), "config": cfg.dict()])
 
@@ -397,6 +471,294 @@ actor Engine {
         case "shutdown": conn.send(["id": id, "ok": true]); unlink(cfg.socketPath); exit(0)
         case let op: fail("unknown op \(op)")
         }
+    }
+}
+
+// MARK: OpenAI-compatible API (GET /v1/models, POST /v1/chat/completions) on the HTTP port
+//
+// A translation onto the same mechanism, so agent harnesses can use the on-device model as an OpenAI endpoint. Each request's
+// messages become the session transcript: system/developer -> instructions (with the tools as tool definitions), earlier turns ->
+// prompt, response, tool-call and tool-output entries; the last user message (or nothing, after tool results) is the prompt.
+// Tools are not run here: a client tool records the model's call and stops the generation, and the call goes back to the caller,
+// which runs it and sends the result in the next request, as with OpenAI. One session per model and tool set: consecutive turns
+// of a conversation extend its transcript, so they hit the prefix cache.
+
+final class ToolCatcher: @unchecked Sendable {
+    private let lock = NSLock(); private var calls: [(name: String, args: String)] = []
+    func add(_ name: String, _ args: String) { lock.lock(); calls.append((name, args)); lock.unlock() }
+    func take() -> [(name: String, args: String)] { lock.lock(); defer { calls = []; lock.unlock() }; return calls }
+}
+struct ToolCallCaught: Error {}
+struct ClientTool: Tool {
+    let name: String, description: String, parameters: GenerationSchema, catcher: ToolCatcher
+    func call(arguments: GeneratedContent) async throws -> String { catcher.add(name, arguments.jsonString); throw ToolCallCaught() }
+}
+
+struct APIError: Error {
+    let status: Int, message: String, code: String?
+    var body: [String: Any] { ["error": ["message": message, "type": status >= 500 ? "server_error" : "invalid_request_error", "param": NSNull(), "code": code.map { $0 as Any } ?? NSNull()]] }
+}
+
+/// The text of an OpenAI message content: a string, or an array of parts of which only text is supported.
+func contentText(_ c: Any?) throws -> String {
+    if c == nil || c is NSNull { return "" }
+    if let s = c as? String { return s }
+    if let parts = c as? [[String: Any]] {
+        var out: [String] = []
+        for p in parts {
+            guard ["text", "input_text"].contains(p["type"] as? String ?? "text") else { throw APIError(status: 400, message: "only text content is supported", code: "unsupported_content") }
+            out.append(p["text"] as? String ?? "")
+        }
+        return out.joined(separator: "\n")
+    }
+    throw APIError(status: 400, message: "content must be a string or an array of text parts", code: nil)
+}
+
+struct ChatRequest {
+    var model = "", key = ""
+    var guardrails = "default"
+    var specs: [(name: String, description: String, schema: GenerationSchema)] = []
+    var entries: [Transcript.Entry] = []
+    var prompt = ""
+    var options = GenerationOptions()
+    var schema: GenerationSchema? = nil
+    var stop: [String] = []
+    var stream = false, includeUsage = false
+}
+
+func firstStop(_ text: String, _ stops: [String]) -> String.Index? {
+    stops.compactMap { $0.isEmpty ? nil : text.range(of: $0)?.lowerBound }.min()
+}
+
+extension Engine {
+    static let baseModels = ["apple-on-device": "default", "apple-on-device-permissive": "permissive"]
+
+    func openai(_ method: String, _ path: String, _ body: Data, _ conn: Conn) {
+        lastActivity = clock.now
+        switch (method, path) {
+        case ("GET", "/v1/models"): conn.respond(status: 200, ["object": "list", "data": modelList()])
+        case ("GET", _) where path.hasPrefix("/v1/models/"):
+            let id = String(path.dropFirst("/v1/models/".count))
+            if let m = modelList().first(where: { $0["id"] as? String == id }) { conn.respond(status: 200, m) }
+            else { conn.respond(status: 404, APIError(status: 404, message: "model \(id) not found", code: "model_not_found").body) }
+        case ("POST", "/v1/chat/completions"):
+            guard let b = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any] else {
+                return conn.respond(status: 400, APIError(status: 400, message: "the body must be a JSON object", code: nil).body)
+            }
+            chat(b, conn)
+        default:
+            conn.respond(status: 404, APIError(status: 404, message: "\(method) \(path) is not supported: use GET /v1/models or POST /v1/chat/completions", code: "not_found").body)
+        }
+    }
+
+    func modelList() -> [[String: Any]] {
+        let ctx = SystemLanguageModel.default.contextSize
+        return Engine.baseModels.keys.sorted().map { ["id": $0, "object": "model", "created": 0, "owned_by": "apple", "context_window": ctx] }
+            + profiles.keys.sorted().map { ["id": $0, "object": "model", "created": 0, "owned_by": "predictd-profile", "context_window": ctx] }
+    }
+
+    func parseChat(_ b: [String: Any]) throws -> ChatRequest {
+        var r = ChatRequest()
+        r.model = b["model"] as? String ?? "apple-on-device"
+        let prof = profiles[r.model]
+        guard prof != nil || Engine.baseModels[r.model] != nil else {
+            throw APIError(status: 404, message: "model \(r.model) not found: GET /v1/models lists them", code: "model_not_found")
+        }
+        r.guardrails = prof?.guardrails ?? Engine.baseModels[r.model]!
+        if let n = num(b["n"])?.intValue, n != 1 { throw APIError(status: 400, message: "only n = 1 is supported", code: nil) }
+        guard let msgs = b["messages"] as? [[String: Any]], !msgs.isEmpty else { throw APIError(status: 400, message: "messages is required", code: nil) }
+
+        // tools: OpenAI function definitions -> client tools (a forced tool_choice keeps only that function)
+        var forced: String? = nil
+        if let c = b["tool_choice"] as? [String: Any], let f = c["function"] as? [String: Any] { forced = f["name"] as? String }
+        for t in b["tools"] as? [[String: Any]] ?? [] {
+            guard (t["type"] as? String ?? "function") == "function", let f = t["function"] as? [String: Any], let name = f["name"] as? String else { continue }
+            if let fn = forced, fn != name { continue }
+            var params = f["parameters"] as? [String: Any] ?? ["type": "object", "properties": [String: Any]()]
+            params["title"] = name + "_arguments"
+            do { r.specs.append((name, f["description"] as? String ?? "", try makeSchema(params))) }
+            catch { throw APIError(status: 400, message: "tool \(name): \(error.localizedDescription)", code: "invalid_tool_schema") }
+        }
+
+        // messages -> transcript entries
+        var system: [String] = [], turns: [Transcript.Entry] = [], user: [String] = [], names: [String: String] = [:]
+        func flushUser() {
+            if !user.isEmpty { turns.append(.prompt(Transcript.Prompt(segments: [.text(Transcript.TextSegment(content: user.joined(separator: "\n\n")))]))); user = [] }
+        }
+        for m in msgs {
+            switch m["role"] as? String ?? "" {
+            case "system", "developer": system.append(try contentText(m["content"]))
+            case "user": user.append(try contentText(m["content"]))
+            case "assistant":
+                flushUser()
+                let text = try contentText(m["content"])
+                if !text.isEmpty { turns.append(.response(Transcript.Response(assetIDs: [], segments: [.text(Transcript.TextSegment(content: text))]))) }
+                if let calls = m["tool_calls"] as? [[String: Any]], !calls.isEmpty {
+                    var tc: [Transcript.ToolCall] = []
+                    for c in calls {
+                        let f = c["function"] as? [String: Any] ?? [:]
+                        let id = c["id"] as? String ?? UUID().uuidString, name = f["name"] as? String ?? ""
+                        names[id] = name
+                        let args = (try? GeneratedContent(json: f["arguments"] as? String ?? "{}")) ?? (try! GeneratedContent(json: "{}"))
+                        tc.append(Transcript.ToolCall(id: id, toolName: name, arguments: args))
+                    }
+                    turns.append(.toolCalls(Transcript.ToolCalls(tc)))
+                }
+            case "tool":
+                flushUser()
+                let id = m["tool_call_id"] as? String ?? ""
+                turns.append(.toolOutput(Transcript.ToolOutput(id: id, toolName: names[id] ?? m["name"] as? String ?? "",
+                                                               segments: [.text(Transcript.TextSegment(content: try contentText(m["content"])))])))
+            case let role: throw APIError(status: 400, message: "unsupported role \(role)", code: nil)
+            }
+        }
+        if !user.isEmpty { r.prompt = user.joined(separator: "\n\n") }                   // answer the last user message
+        else if case .toolOutput = turns.last { r.prompt = "" }                           // continue after tool results
+        else { throw APIError(status: 400, message: "the last message must come from the user or a tool", code: nil) }
+
+        // response format
+        var instructions = ([prof?.instructions ?? ""] + system).filter { !$0.isEmpty }.joined(separator: "\n\n")
+        if let rf = b["response_format"] as? [String: Any] {
+            switch rf["type"] as? String {
+            case "json_schema":
+                let js = rf["json_schema"] as? [String: Any] ?? [:]
+                var sc = js["schema"] as? [String: Any] ?? ["type": "object"]
+                sc["title"] = sc["title"] ?? js["name"] ?? "Output"
+                do { r.schema = try makeSchema(sc) } catch { throw APIError(status: 400, message: "response_format: \(error.localizedDescription)", code: nil) }
+            case "json_object": instructions += (instructions.isEmpty ? "" : "\n\n") + "Respond with a single JSON object."
+            default: break
+            }
+        }
+        if !instructions.isEmpty || !r.specs.isEmpty {
+            r.entries.append(.instructions(Transcript.Instructions(segments: [.text(Transcript.TextSegment(content: instructions))],
+                toolDefinitions: r.specs.map { Transcript.ToolDefinition(name: $0.name, description: $0.description, parameters: $0.schema) })))
+        }
+        if let prof { r.entries += Array(try prof.transcript()).dropFirst() }             // a profile's example turns
+        r.entries += turns
+
+        // options
+        let temp = num(b["temperature"])?.doubleValue, topP = num(b["top_p"])?.doubleValue
+        let seed: UInt64? = num(b["seed"]).map { UInt64(max(0, $0.int64Value)) }
+        var mode: GenerationOptions.SamplingMode? = nil
+        if temp == 0 { mode = .greedy }
+        else if let p = topP, p < 1 { mode = .random(probabilityThreshold: p, seed: seed) }
+        else if seed != nil { mode = .random(probabilityThreshold: 1.0, seed: seed) }
+        var toolMode: GenerationOptions.ToolCallingMode? = nil
+        if !r.specs.isEmpty {
+            switch b["tool_choice"] as? String { case "none": toolMode = .disallowed; case "required": toolMode = .required; default: toolMode = forced != nil ? .required : .allowed }
+        }
+        r.options = GenerationOptions(samplingMode: mode, temperature: temp == 0 ? nil : temp,
+                                      maximumResponseTokens: num(b["max_completion_tokens"])?.intValue ?? num(b["max_tokens"])?.intValue, toolCallingMode: toolMode)
+        // reasoning_effort is accepted and ignored: the on-device model has no reasoning mode (asking for one fails the request)
+        if let st = b["stop"] as? String { r.stop = [st] } else { r.stop = b["stop"] as? [String] ?? [] }
+        r.stream = b["stream"] as? Bool ?? false
+        r.includeUsage = (b["stream_options"] as? [String: Any])?["include_usage"] as? Bool ?? false
+        r.key = "openai/\(r.model)/\(jsonText((b["tools"] ?? []) as Any).hashValue)/\(forced ?? "")"
+        return r
+    }
+
+    func chat(_ b: [String: Any], _ conn: Conn) {
+        let r: ChatRequest
+        do { r = try parseChat(b) }
+        catch let e as APIError { return conn.respond(status: e.status, e.body) }
+        catch { return conn.respond(status: 400, APIError(status: 400, message: "\(error)", code: nil).body) }
+        let s: Slot
+        if let old = slots[r.key] { s = old }
+        else {
+            let catcher = ToolCatcher()
+            let tools: [any Tool] = r.specs.map { ClientTool(name: $0.name, description: $0.description, parameters: $0.schema, catcher: catcher) }
+            let model = r.guardrails == "permissive" ? SystemLanguageModel(useCase: .general, guardrails: .permissiveContentTransformations) : SystemLanguageModel.default
+            s = Slot(key: r.key, session: LanguageModelSession(model: model, tools: tools, transcript: Transcript(entries: r.entries)), catcher: catcher)
+            remember(s)
+        }
+        let prev = s.tail
+        inflight += 1
+        let task = Task { await prev?.value; await self.runChat(r, s, conn) }
+        s.tail = task
+        Task { await task.value; self.finished(nil, "", s, task) }
+    }
+
+    func runChat(_ r: ChatRequest, _ s: Slot, _ conn: Conn) async {
+        let t0 = clock.now
+        stats.requests += 1; stats.chat += 1; lastActivity = t0; busy += 1
+        defer { busy -= 1; lastActivity = clock.now }
+        s.fresh = false; cacheOwner = s.key; lastUsed = s.key
+        s.session.transcript = Transcript(entries: r.entries)
+        _ = s.catcher?.take()
+        let id = "chatcmpl-" + UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased().prefix(24)
+        let created = Int(Date().timeIntervalSince1970)
+        func chunk(_ delta: [String: Any], finish: String? = nil) -> [String: Any] {
+            ["id": id, "object": "chat.completion.chunk", "created": created, "model": r.model,
+             "choices": [["index": 0, "delta": delta, "finish_reason": finish.map { $0 as Any } ?? NSNull(), "logprobs": NSNull()]]]
+        }
+        var text = "", finish = "stop", usage = (0, 0, 0), stopped = false, calls: [[String: Any]] = []
+        var failure: APIError? = nil
+        if r.stream { conn.beginStream(); conn.event(chunk(["role": "assistant", "content": ""])) }
+        do {
+            if let schema = r.schema {
+                let out = try await s.session.respond(to: r.prompt, schema: schema, includeSchemaInPrompt: true, options: r.options)
+                text = out.content.jsonString
+                usage = (out.usage.input.totalTokenCount, out.usage.input.cachedTokenCount, out.usage.output.totalTokenCount)
+                if r.stream { conn.event(chunk(["content": text])) }
+            } else if r.stream {
+                var sent = ""
+                for try await snap in s.session.streamResponse(to: r.prompt, options: r.options) {
+                    var full = snap.content
+                    if let cut = firstStop(full, r.stop) { full = String(full[..<cut]); stopped = true }
+                    if full.hasPrefix(sent), full.count > sent.count {
+                        if !conn.event(chunk(["content": String(full.dropFirst(sent.count))])) { stopped = true }   // client went away
+                        sent = full
+                    }
+                    usage = (snap.usage.input.totalTokenCount, snap.usage.input.cachedTokenCount, snap.usage.output.totalTokenCount)
+                    if stopped { break }
+                }
+                text = sent
+            } else {
+                let out = try await s.session.respond(to: r.prompt, options: r.options)
+                text = out.content
+                usage = (out.usage.input.totalTokenCount, out.usage.input.cachedTokenCount, out.usage.output.totalTokenCount)
+                if let cut = firstStop(text, r.stop) { text = String(text[..<cut]); stopped = true }
+            }
+            if !stopped && hitTokenCap(s.session.transcript) { finish = "length" }
+        } catch {
+            let caught = s.catcher?.take() ?? []
+            let msg = "\(error)"
+            if !caught.isEmpty {   // the model called tools: hand the calls back to the caller
+                finish = "tool_calls"
+                calls = caught.enumerated().map { i, c in
+                    ["index": i, "id": "call_" + UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased().prefix(24), "type": "function",
+                     "function": ["name": c.name, "arguments": c.args]]
+                }
+                usage.0 = (try? await SystemLanguageModel.default.tokenCount(for: r.entries)) ?? 0
+            } else {
+                switch classify(error) {
+                case .guardrail, .refusal: stats.guardrail += 1; finish = "content_filter"; text = ""
+                case .empty: finish = "length"; text = ""
+                case .context:
+                    stats.errors += 1
+                    failure = APIError(status: 400, message: "the conversation does not fit the model's context window of \(SystemLanguageModel.default.contextSize) tokens", code: "context_length_exceeded")
+                case .rateLimited: stats.errors += 1; failure = APIError(status: 429, message: String(msg.prefix(300)), code: "rate_limit_exceeded")
+                case .other: stats.errors += 1; failure = APIError(status: 500, message: String(msg.prefix(300)), code: nil)
+                }
+            }
+        }
+        s.usedAt = clock.now; recentAt = clock.now
+        let u: [String: Any] = ["prompt_tokens": usage.0, "completion_tokens": usage.2, "total_tokens": usage.0 + usage.2,
+                                "prompt_tokens_details": ["cached_tokens": usage.1]]
+        if r.stream {
+            if let f = failure { conn.event(f.body) }
+            else {
+                if !calls.isEmpty { conn.event(chunk(["tool_calls": calls])) }
+                conn.event(chunk([:], finish: finish))
+                if r.includeUsage { conn.event(["id": id, "object": "chat.completion.chunk", "created": created, "model": r.model, "choices": [Any](), "usage": u]) }
+            }
+            return conn.endStream()
+        }
+        if let f = failure { return conn.respond(status: f.status, f.body) }
+        var message: [String: Any] = ["role": "assistant", "content": calls.isEmpty || !text.isEmpty ? text : NSNull()]
+        if !calls.isEmpty { message["tool_calls"] = calls.map { c in c.filter { $0.key != "index" } } }
+        conn.respond(status: 200, ["id": id, "object": "chat.completion", "created": created, "model": r.model,
+                                   "choices": [["index": 0, "message": message, "finish_reason": finish, "logprobs": NSNull()]], "usage": u])
     }
 }
 
@@ -484,6 +846,9 @@ func handleHTTP(_ cfd: Int32, _ engine: Engine) {
     var body = Data(buf[headerEnd!.upperBound...])
     while body.count < length { let n = read(cfd, &chunk, chunk.count); if n <= 0 { break }; body.append(chunk, count: n) }
     let conn = Conn(cfd, http: true)
+    let parts = requestLine.split(separator: " ")
+    let method = parts.first.map(String.init) ?? "", path = parts.count > 1 ? String(parts[1].split(separator: "?").first ?? "") : ""
+    if path.hasPrefix("/v1/") { Task { await engine.openai(method, path, body, conn) }; return }
     if requestLine.hasPrefix("GET /health") { conn.send(["ok": true]); return }
     guard requestLine.hasPrefix("POST /"), var req = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any] else {
         conn.send(["ok": false, "error": "POST a JSON object (see docs/ARCHITECTURE.md)"]); return

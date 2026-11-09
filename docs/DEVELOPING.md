@@ -6,6 +6,7 @@ per layer:
 | You want to | Work in | Example |
 |---|---|---|
 | put ghost text into another app | an **application** on the ghost policy | a zsh widget, a Mac app, another agent's prompt box |
+| run an agent or tool on the on-device model | nothing to build: point it at the **OpenAI-compatible API** | pi, the `openai` SDK, LangChain ([OPENAI.md](OPENAI.md)) |
 | use the model for something other than typing prediction | a new **policy** on predictd | summarise a selection, write a commit message, triage |
 | change what the model host can do | the **mechanism**, predictd | a new op, streaming, tool calling |
 
@@ -162,6 +163,7 @@ in [PERFORMANCE.md](PERFORMANCE.md).
 | schemas | JSON Schema subset → `DynamicGenerationSchema`; `hitTokenCap` (the finish reason) |
 | profiles and sessions | `Profile` (definition → transcript), `Slot` (one session, its base transcript and queue) |
 | engine | `Engine`: keep-alive, `options`, `generate`, `handle` (every op) |
+| OpenAI-compatible API | `parseChat` (messages → transcript, options), `chat`/`runChat` (sessions, streaming, tool-call capture) |
 | socket server, HTTP | listeners; `main` parses the flags |
 
 ### Adding a knob

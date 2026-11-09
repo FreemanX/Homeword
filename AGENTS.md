@@ -17,7 +17,9 @@ surface is not designed yet.
 - **Mechanism** `predictd.swift` → `./predictd` (config `predictd.json`): a model host that assumes nothing about its use. Named
   profiles (instructions, example turns, schema, guardrails, defaults), pinning (which profile the keep-alive keeps warm), stateless
   or conversation sessions, `generate` (plain or structured, `maxTokens`, sampling), newest-wins `stream`s, `tokens`, `spell`,
-  `stats`. Newline-delimited JSON on `/tmp/predictd-<uid>.sock`, the same over HTTP on `127.0.0.1:47320`.
+  `stats`. Newline-delimited JSON on `/tmp/predictd-<uid>.sock`, the same over HTTP on `127.0.0.1:47320`, plus an
+  OpenAI-compatible chat API there (`/v1/models`, `/v1/chat/completions`: streaming, tool calls returned to the caller, JSON schema;
+  docs/OPENAI.md). The context window is 8192 tokens.
 - **Policy** `ghost/` (Python, standard library only): the typing predictor. `policy.py` (profile from `prompt.json`, trim,
   generate, assemble), `config.json` (its knobs), `predictd.py` (generic predictd client), `server.py` (HTTP `127.0.0.1:47321`,
   `POST /predict`, for non-Python apps).
