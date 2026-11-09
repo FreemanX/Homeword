@@ -139,10 +139,10 @@ guardrails returns `finish_reason: "content_filter"` with empty content. `GET /v
   well under a second.
 - **The translation costs nothing.** The typing workload through `/v1/chat/completions` (permissive model, same examples as
   messages, or the typing profile as the model) gave the same outputs (40/40) and the same latency as the native `generate` op
-  (374 vs 372 ms p50). `apple-on-device` (default guardrails) is ~100 ms slower per request than `apple-on-device-permissive`, with
-  the same outputs on these cases. Re-measure with `bench/openai_compare.py`.
+  and the ghost server (370, 375 and 377 ms p50). `apple-on-device` (default guardrails) is ~100 ms slower per request than
+  `apple-on-device-permissive`, with the same outputs on these cases. Re-measure with `bench/openai_compare.py`.
 - **No cancellation.** OpenAI requests have no "newest wins": a burst of 12 keystroke requests 40 ms apart took 3.1 s to answer the
-  last one, against 0.35 s with the native protocol's `stream`. Keystroke-rate clients (the ghost policy) use the native protocol.
+  last one, against 0.34-0.36 s with the native protocol's or the ghost server's `stream`. Keystroke-rate clients (the ghost policy) use the native protocol.
 - **One model for the whole machine.** The typing predictor, other policies and API calls share it. predictd keeps the most recent
   session warm for `followRecentSec` (30 s) so an agent loop keeps its cache between turns, then returns to the pinned profile.
 - Usage of a turn that ends in tool calls is approximate: `prompt_tokens` counts the transcript without the last prompt, cached and
