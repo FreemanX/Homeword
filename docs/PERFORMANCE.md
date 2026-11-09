@@ -79,6 +79,20 @@ Long prompts behave differently from the typing predictor's short ones: prompt p
 | pi's prompt with two tools (~4,400 tokens), ends in a tool call | 4.7 s |
 | the next turn after the tool result (4,671 of 4,672 tokens cached), 35-token answer | 7.5-7.8 s |
 
+### Native protocol vs OpenAI API, same typing workload (`bench/openai_compare.py`)
+
+| Path | p50 / p90 | Outputs vs native |
+|---|---|---|
+| native `generate` | 372 / 417 ms | |
+| `/v1/chat/completions`, `apple-on-device-permissive`, examples as messages | 374 / 419 ms | 40/40 identical |
+| `/v1/chat/completions`, the typing profile as the model | 371 / 424 ms | 40/40 identical |
+| `/v1/chat/completions`, `apple-on-device` (default guardrails) | 475 / 512 ms | 40/40 identical |
+| burst of 12 keystrokes 40 ms apart, last key → answer: native with a `stream` | 350 ms | |
+| the same burst through the OpenAI API (no cancellation) | 3,051 ms | |
+
+(Measured in the slow model mode; within one run the paths are comparable.) The translation is free; what the OpenAI API lacks for
+typing is cancellation, plus pinning and the `spell` op, which is why the ghost policy talks to the native protocol.
+
 ## Caveats when measuring
 
 - **One cache for the whole system.** Apple's docs ("Optimizing key-value caching in language model sessions") describe the KV cache

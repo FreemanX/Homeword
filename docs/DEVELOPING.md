@@ -189,3 +189,4 @@ Add a `case` to `Engine.handle` and answer with `conn.send([...])` including the
 - Integrations: run the real app in tmux and measure with `bench/integration_latency.py` (see its docstring). Test Claude Code with
   a throwaway `CLAUDE_CONFIG_DIR` holding the keybindings, never by editing `~/.claude/keybindings.json`.
 - `claude plugin validate integrations/claude-code` after changing the mod.
+- `python3 -I bench/openai_compare.py`: the OpenAI-compatible API against the native protocol (latency, identical outputs, bursts).

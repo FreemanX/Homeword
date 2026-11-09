@@ -27,7 +27,7 @@ surface is not designed yet.
   `pred start|stop|status` (predictd + ghost server).
 - `bench/`: `run.py` (fixed 80-case benchmark), `human_pty.py` (drives `pred try` like a typist), `compare.py`, `gen_cases.py` +
   `corpus.md` → `cases.json`, `machine.py`, `try_pty_test.py` (smoke test), `integration_latency.py` (keystroke → ghost in a real
-  terminal app via tmux), `baselines/` (shared results), `RESULTS.md`.
+  terminal app via tmux), `openai_compare.py` (native protocol vs OpenAI API on the typing workload), `baselines/` (shared results), `RESULTS.md`.
 - `integrations/pi/ghost-editor.ts`: pi extension (a `CustomEditor` subclass drawing the ghost in the fake cursor and padding).
 - `integrations/claude-code/`: Claude Code mod (`prompt.edit` hook + `$.prompt.fill` decorations; Tab/→ through two commands bound in
   `keybindings.json`, since keys that do nothing at the end of the draft never reach the hook). Validate with `claude plugin validate`.
