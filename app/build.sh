@@ -1,6 +1,7 @@
 #!/bin/sh
-# Build InputPredictor.app into app/build/. SIGN_IDENTITY: a code-signing identity (default: ad-hoc). With ad-hoc signing macOS
-# treats every build as a new app, so the Accessibility permission has to be granted again after a rebuild.
+# Build InputPredictor.app into app/build/. SIGN_IDENTITY: a code-signing identity (default: ad-hoc). An ad-hoc signature gets a
+# designated requirement on the bundle ID instead of the binary's hash, so the Accessibility permission survives rebuilds (fine for
+# a local prototype: any program signed with this bundle ID would match it).
 set -e
 cd "$(dirname "$0")"
 REPO=$(cd .. && pwd)
@@ -10,5 +11,9 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 export CLANG_MODULE_CACHE_PATH="${TMPDIR:-/tmp}/inputpredictor-modcache"
 swiftc -O -parse-as-library Sources/*.swift -o "$APP/Contents/MacOS/InputPredictor"
 sed "s#@REPO@#$REPO#" Info.plist.in > "$APP/Contents/Info.plist"
-codesign --force --sign "${SIGN_IDENTITY:--}" "$APP"
+if [ -n "$SIGN_IDENTITY" ]; then
+  codesign --force --sign "$SIGN_IDENTITY" "$APP"
+else
+  codesign --force --sign - -r='designated => identifier "dev.inputpredictor.menubar"' "$APP"
+fi
 echo "built $APP"

@@ -20,7 +20,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let predictor = Predictor()
     private let proofreader = Proofreader()
     private var windows: [String: NSWindow] = [:]
-    private var tapRunning = false
+    private var tapRunning = false, axTrusted = false, askedListen = false
     private var permissionTimer: Timer?
 
     func applicationDidFinishLaunching(_ note: Notification) {
@@ -44,18 +44,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func applicationWillTerminate(_ note: Notification) { Metrics.shared.flushKeys() }
 
-    /// The keyboard tap needs the Accessibility permission; until it is granted, check again every 2 s.
+    /// Reading fields needs the Accessibility permission, the keyboard tap needs it too (and on some systems Input Monitoring);
+    /// until both work, check again every 2 s.
     private func startTap(prompt: Bool) {
-        if AX.trusted(prompt: prompt), tap.start() {
-            tapRunning = true
-            permissionTimer?.invalidate()
-            updateIcon()
-            return
+        axTrusted = AX.trusted(prompt: prompt)
+        if axTrusted && !tapRunning {
+            tapRunning = tap.start()
+            if !tapRunning && !askedListen { askedListen = true; CGRequestListenEventAccess() }
         }
+        writeStatus()
         updateIcon()
-        if permissionTimer == nil {
+        if axTrusted && tapRunning {
+            permissionTimer?.invalidate()
+            permissionTimer = nil
+        } else if permissionTimer == nil {
             permissionTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in self?.startTap(prompt: false) }
         }
+    }
+
+    /// Permission state for troubleshooting (status.json next to the metrics; no user data).
+    private func writeStatus() {
+        let o: [String: Any] = ["accessibility": axTrusted, "keyTap": tapRunning, "listenAccess": CGPreflightListenEventAccess(),
+                                "postAccess": CGPreflightPostEventAccess(), "bundlePath": Bundle.main.bundlePath,
+                                "t": ISO8601DateFormatter().string(from: Date())]
+        let url = Metrics.shared.url.deletingLastPathComponent().appendingPathComponent("status.json")
+        try? JSONSerialization.data(withJSONObject: o, options: [.prettyPrinted, .sortedKeys]).write(to: url)
     }
 
     private func key(_ k: KeyPress) -> TapDecision {
@@ -86,8 +99,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(proof)
         menu.addItem(rewrite)
         menu.addItem(.separator())
-        let perm = tapRunning ? "Accessibility: granted" : "Accessibility: not granted (click to open Settings)"
-        menu.addItem(NSMenuItem(title: perm, action: tapRunning ? nil : #selector(openAccessibility), keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: axTrusted ? "Accessibility: allowed" : "Accessibility: not allowed (click to open Settings)",
+                                action: axTrusted ? nil : #selector(openAccessibility), keyEquivalent: ""))
+        if axTrusted && !tapRunning {
+            menu.addItem(NSMenuItem(title: "Keyboard: blocked (click to allow in Input Monitoring)", action: #selector(openInputMonitoring), keyEquivalent: ""))
+        }
         menu.addItem(NSMenuItem(title: "Services: \(Services.shared.state.rawValue)", action: Services.shared.state == .running ? nil : #selector(startServices), keyEquivalent: ""))
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "Statistics…", action: #selector(showStats), keyEquivalent: ""))
@@ -105,6 +121,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func rewriteSelection() { DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { self.proofreader.run(mode: "rewrite") } }
     @objc private func openAccessibility() {
         NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!)
+    }
+    @objc private func openInputMonitoring() {
+        NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent")!)
     }
     @objc private func startServices() { Services.shared.start(force: true) }
     @objc private func showSettings() {

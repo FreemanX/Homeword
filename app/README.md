@@ -51,9 +51,13 @@ repo it was built in) when they are not running. To start it at login, add it in
 focused text field and the caret position, to see key presses, and to insert accepted words. It starts working within 2 s of being
 allowed. Password fields are never read.
 
-**Rebuilding.** An ad-hoc signed app is a new app to macOS after every build, so the Accessibility permission has to be granted
-again: remove the old entry (–) and allow the new build. With a code-signing certificate the permission survives rebuilds:
-`SIGN_IDENTITY="Apple Development: …" app/build.sh` (`security find-identity -p codesigning` lists yours).
+**Rebuilding.** `build.sh` signs ad-hoc with a designated requirement on the bundle ID (`dev.inputpredictor.menubar`) instead of
+the binary's hash, so the permission survives rebuilds. With a code-signing certificate: `SIGN_IDENTITY="Apple Development: …"
+app/build.sh` (`security find-identity -p codesigning` lists yours). If the menu still says "not allowed" after you allowed it, the
+entry belongs to an older signature: remove it (–), or `tccutil reset Accessibility dev.inputpredictor.menubar`, then relaunch the
+app and allow it again. `~/Library/Application Support/InputPredictor/status.json` shows what the app currently has (Accessibility,
+the keyboard tap, Input Monitoring, event posting). If Accessibility is allowed but the menu says "Keyboard: blocked", also allow
+the app in Privacy & Security → Input Monitoring.
 
 **macOS inline predictions.** macOS shows its own inline predictive text in many apps. With both on you see two suggestions, and Tab
 may go to either. Turn off System Settings → Keyboard → Text Input → "Show inline predictive text", or this app's predictions.
