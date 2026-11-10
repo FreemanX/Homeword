@@ -1,5 +1,9 @@
 # Mac app, version 2: design
 
+Status: implemented (Homeword). Changes from the plan after measuring: chat, email, academic and code default to
+general's prompt (prompts written for them did worse on their cases, see bench/RESULTS.md); switching between prompts costs ~70 ms
+on the first request, not the ~0.4 s assumed below.
+
 Scope of this round: user-facing names, a writing style per app (detected automatically, adjustable), a prompt per style with a
 built-in benchmark and a history of versions, custom shortcuts, an app picker instead of bundle IDs, and an Engine tab that
 shows and controls the local service. The layering stays: the app is UI only; prompts, styles, benchmarks and history live in the

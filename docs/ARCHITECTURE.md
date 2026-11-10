@@ -8,7 +8,7 @@ The project is split by one rule: **separate mechanism from policy.**
 - **Policies: `ghost/`** (Python). The typing predictor decides what to ask while someone types and how to turn the answer into
   ghost text. The proofreader fixes or rewrites a selected text. Each is one client of the mechanism; a summariser, a
   commit-message writer or a triage bot would be others, side by side.
-- **Applications** use a policy: `pred try` imports it, pi, Claude Code and the Mac app reach it over HTTP.
+- **Applications** use a policy: `pred try` imports it, pi, Claude Code and the Homeword Mac app reach it over HTTP.
 
 ```mermaid
 flowchart TB
@@ -17,12 +17,12 @@ flowchart TB
         try["pred try"]
         pi["pi extension"]
         cc["Claude Code mod"]
-        mac["Mac app<br/>menu bar, any text field"]
+        mac["Homeword Mac app<br/>menu bar, any text field"]
         next["shell completer<br/>future"]:::future
     end
     subgraph policy["Policies"]
         direction LR
-        srv["policy server<br/>HTTP 127.0.0.1:47321<br/>/predict, /proofread"]
+        srv["policy server<br/>HTTP 127.0.0.1:47321<br/>/predict, /warm, /proofread,<br/>/prompts, /tokens, /bench"]
         lib["ghost.policy (Python)<br/>prompt, trim, assemble"]
         pr["ghost.proofread (Python)<br/>fix, rewrite, diff"]
         other["other policies<br/>future"]:::future
@@ -135,10 +135,11 @@ Newline-delimited JSON on the unix socket `/tmp/predictd-UID.sock` (mode 0600), 
 | `generate` | `profile`, `prompt`, `session`, `keep`, `stream`, `maxTokens`, `sampling` (`greedy`/`topK`/`topP`), `topK`, `topP`, `temperature`, `seed`, `schema` (`true` = the profile's, or a JSON schema), `schemaInPrompt` | `text` or `content` (structured), `finish` (`length`/`stop`), `tokens: {in, cached, out}`, `timing: {wait_ms, model_ms, total_ms}`, `state` |
 | `cancel` | `stream` | |
 | `session.drop` | `profile`, `session` | |
+| `prewarm` | `profile` | `prewarmed`: warm the profile's default session now and keep it warm as the most recently used one (skipped while a generation runs) |
 | `tokens` | `text` | `count` |
 | `spell` | `words`, `language` | `valid: [bool]` (`NSSpellChecker`) |
 | `stats` | | counters, `profiles`, `pinned`, `warm`, `config` |
-| `reload` | `config: {...}` | re-reads predictd.json, applies `config` on top |
+| `reload` | `config: {...}` | re-reads predictd.json and the user's overrides, applies `config` on top |
 | `ping`, `shutdown` | | |
 
 Errors: `{"ok":false,"error":...}` with `cancelled`, `unknown_profile` (register it, then retry: a restarted daemon has none),
@@ -170,11 +171,21 @@ parameters and harness setup: [OPENAI.md](OPENAI.md).
   exist until clients register them.
 - **One per user**: a new daemon that finds a live one on the socket exits; a daemon whose socket file is removed or replaced exits.
 - **Idle**: keep-alive for `keepAliveMaxIdleSec` (5 min) after the last request, exit after `idleExitSec` (30 min).
+- **Config**: `predictd.json` next to the binary (`--config`), then the user's overrides in `~/.config/input-predictor/predictd.json`
+  if present (`$XDG_CONFIG_HOME` respected; `--user-config ""` ignores them, as the benchmarks do).
 - **Logs**: stderr, `/tmp/predictd-UID.log` when started by `pred`.
 - **Non-public bits**: the finish reason is read from the transcript through `Mirror` (`Transcript.Response.finishReason`). macOS
   27.0.1 does not have it: there every answer reports `stop`. Settable `session.transcript` is macOS 27 API.
 
 ## ghost: the typing policy
+
+**Writing styles.** One prompt per style: `general` (`ghost/prompt.json`, the prompt the benchmarks have always used) and `chat`,
+`email`, `work`, `academic`, `code` (`ghost/styles.json`). A request names its style (`context`); a style with no prompt of its own
+uses general's (the user's version, if any), and its own label in the `App:` line. Measured on `bench/styles.json`, general's prompt
+predicted chat, email, academic and code cases as well as or better than prompts written for them (its examples are mixed; the
+style-only ones were narrower), so only `work` ships its own ([bench/RESULTS.md](../bench/RESULTS.md)). Styles that share a prompt
+share its profile, so switching between them costs nothing; another prompt costs ~70 ms on its first request, which `POST /warm`
+(pin + predictd's `prewarm`) moves to when the user switches apps.
 
 `ghost/policy.py` registers one profile built from `ghost/prompt.json` (instructions + the first `shots` examples, named by a hash
 of its content) and pins it. Then, per keystroke:
@@ -281,10 +292,21 @@ copy only, and a long text could hit the token cap. Paragraph requests share the
 `total_ms`), `tokens`, `paragraphs` and `warnings` (show them before replacing). A refusal answers `ok: false` with `error: "the
 model declined this text"`. A paragraph takes about 0.5-1 s (a 4-paragraph, 180-word email: 3.6 s).
 
-### User prompts
+### User prompts, history and benchmarks
 
-The instructions of both policies can be replaced per user (`ghost/prompts.py`), in a file outside the repo (`userPrompts` knob).
-`GET /prompts` lists `typing`, `proofread-fix` and `proofread-rewrite` with the current text, the default, whether it is custom
-and a note; `POST /prompts {"name", "text"}` saves one, `{"name", "reset": true}` restores the default. The examples stay as
-shipped. A changed prompt is a new profile (named by its content hash), so it applies to the next request; the typing policy
-re-pins whenever its profile changes.
+Every prompt (instructions and examples) can be replaced per user (`ghost/prompts.py`), in files outside the repo
+(`~/.config/input-predictor/`): `predict-<style>` for each writing style, `proofread-fix`, `proofread-rewrite`.
+
+| Endpoint | What |
+|---|---|
+| `GET /prompts` | every prompt: the one in use, the shipped one, whether it is the user's, its hash, the benchmark results of both, a note |
+| `POST /prompts` | `{"name", "prompt": {"instructions", "examples"}}` saves the user's version and a history entry (last 20 per prompt); `{"name", "reset": true}` restores the shipped one |
+| `GET /history?name=` | the saved versions, newest first, each with its benchmark result |
+| `POST /tokens` | `{"name", "prompt"?}`: tokens of the instructions and of the whole prompt as sent (a probe profile), and the estimated cost per request (~0.55 ms per cached token) |
+| `POST /bench` | `{"name", "prompt"?}`: runs the prompt (default: the one in use) on the style's cases with an unpinned profile, then gives the cache back to the pinned prompt; the result is stored by the prompt's content hash |
+
+A changed prompt is a new profile (named by its content hash), so it applies to the next request; the typing policy re-pins whenever
+its profile changes. Benchmark metrics (`ghost/evaluate.py`, shared with `bench/run.py`): latency p50/p90, next word right
+(`acc1`), words right (`lead`), word completions right (`mid_word_ok`), shown; proofreading: fully corrected, word match; rewriting:
+latency and length ratio. Benchmarks from the command line (`run.py`, `human_pty.py`, `openai_compare.py`) ignore the user's prompts
+and config overrides (`Ghost(user=False)`, `PRED_NO_USER=1`), so their numbers stay comparable.

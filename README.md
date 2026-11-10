@@ -10,8 +10,8 @@ It is built in three layers, keeping **mechanism and policy apart**:
   **OpenAI chat API**, so agent harnesses can use the on-device model directly.
 - **ghost**: the policies (Python). Typing prediction owns the prompt and examples, the context trimming and the rules that turn
   the model's answer into a ghost (word glue, spelling, one sentence, five words). Proofreading fixes or rewrites a selected text.
-- **Applications**: `pred try` in a terminal, ghost text in the pi and Claude Code prompt boxes, and a menu bar Mac app that
-  predicts in any text field and proofreads the selection. Other policies (summarise, commit messages, triage) can share the same
+- **Applications**: `pred try` in a terminal, ghost text in the pi and Claude Code prompt boxes, and Homeword, a menu bar Mac app
+  that suggests the next words in any text field (in a writing style that follows the app) and proofreads the selection. Other policies (summarise, commit messages, triage) can share the same
   predictd.
 
 ```mermaid
@@ -21,7 +21,7 @@ flowchart TB
         try["pred try"]
         pi["pi extension"]
         cc["Claude Code mod"]
-        mac["Mac app"]
+        mac["Homeword<br/>Mac app"]
         next["shell completer<br/>future"]:::future
     end
     subgraph policy["Policy"]
@@ -100,14 +100,17 @@ before installing it.
 
 Last keystroke → ghost on screen, human-like typing in tmux (Apple M4 Pro, macOS 27.2): pi 117-156 ms p50, Claude Code 157-161 ms p50.
 
-### Mac app: any text field, plus proofreading
+### Homeword: any text field, plus proofreading
 
-A menu bar app (prototype). While you type in any app, a pop-up below the text cursor shows the next words; Tab inserts the next
-word, Esc dismisses. Select text and press ⌃⌥P to fix typos and grammar, or ⌃⌥R to rewrite it, keeping its meaning; Return
-replaces the selection. It logs latency and acceptance metrics (no text) for tuning. Needs the Accessibility permission.
+A menu bar Mac app (prototype); your words never leave home. While you type in any app, a pop-up below the text cursor shows the
+next words in a writing style that follows the app (Chat in Slack, Email in Mail or Gmail, Work documents in Pages or Google Docs,
+...); Tab inserts the next word, Esc dismisses. Select text and press ⌃⌥P to fix typos and grammar, or ⌃⌥R to rewrite it, keeping
+its meaning; Return replaces the selection. Settings has a writing style per app, every prompt editable with a built-in benchmark
+and version history, configurable shortcuts, engine controls and the OpenAI-compatible API's address. It logs latency and acceptance
+statistics (no text). Needs the Accessibility permission.
 
 ```sh
-app/build.sh && open app/build/InputPredictor.app
+app/build.sh && open app/build/Homeword.app
 ```
 
 Details, permissions and metrics: [app](app/README.md).

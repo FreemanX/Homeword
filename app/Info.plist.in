@@ -2,10 +2,10 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <key>CFBundleIdentifier</key><string>dev.inputpredictor.menubar</string>
-  <key>CFBundleName</key><string>InputPredictor</string>
-  <key>CFBundleDisplayName</key><string>InputPredictor</string>
-  <key>CFBundleExecutable</key><string>InputPredictor</string>
+  <key>CFBundleIdentifier</key><string>dev.homeword.app</string>
+  <key>CFBundleName</key><string>Homeword</string>
+  <key>CFBundleDisplayName</key><string>Homeword</string>
+  <key>CFBundleExecutable</key><string>Homeword</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleShortVersionString</key><string>0.1</string>
   <key>CFBundleVersion</key><string>1</string>

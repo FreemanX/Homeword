@@ -6,9 +6,15 @@ Knobs follow the mechanism/policy split ([ARCHITECTURE.md](ARCHITECTURE.md)):
 |---|---|---|
 | Mechanism | `predictd.json`, daemon flags | how the host runs: socket, port, keep-alive, idle exit |
 | Mechanism, per caller | `profile.set` and `generate` fields | what a client asks for: instructions, examples, schema, guardrails, token limit, sampling |
-| Policy | `ghost/config.json`, `ghost/prompt.json` | how the typing predictor uses the model: context size, words, spell rules, its prompt |
+| Policy | `ghost/config.json`, `ghost/prompt.json`, `ghost/styles.json` | how the typing predictor uses the model: context size, words, spell rules, its prompts per writing style |
+| User | `~/.config/input-predictor/` | the user's overrides, outside the repo: `config.json` (policy knobs), `predictd.json` (daemon), `prompts.json` and `prompt-history.json` (their prompts) |
 
 `pred status` prints the daemon's config, its profiles and the policy's config in effect.
+
+**User overrides.** Both layers read the shipped file, then the user's file of the same name in `~/.config/input-predictor/`
+(`$XDG_CONFIG_HOME/input-predictor/` if set) for the keys it contains. Homeword's Engine tab writes the ports there
+(`serverPort` in `config.json`, `httpPort` in `predictd.json`); any other knob works the same way. Benchmarks ignore the user's
+files (`Ghost(user=False)`, `predictd --user-config ""`).
 
 ```mermaid
 flowchart LR
@@ -83,8 +89,16 @@ greedy, `top_p`/`seed` → `topP`/`seed`, `response_format` → `schema`, `tool_
 | `proofreadMaxInputTokens` | 2500 | the longest paragraph `/proofread` accepts (estimated tokens); a text is proofread one paragraph per request | the window is 8192: prefix + input + an answer of about the same length |
 | `proofreadGuardrails` | permissive | the proofreading profiles' guardrails | `default` refuses more texts and is ~100 ms slower |
 
-The proofreading prompts (instructions and examples per mode) are constants in `ghost/proofread.py`. All three instructions (typing,
-proofread, rewrite) can be overridden per user without touching the repo: `userPrompts` above.
+The proofreading prompts (instructions and examples per mode) are constants in `ghost/proofread.py`. Every prompt (each writing
+style, proofread, rewrite; instructions and examples) can be overridden per user without touching the repo: `userPrompts` above,
+edited in Homeword's Prompts tab or through `POST /prompts`.
+
+## ghost/styles.json (policy)
+
+The writing styles besides `general` (which is prompt.json): `title` (shown to users), `label` (the `App:` line), and optionally
+`instructions` + `shots` (same format as prompt.json's). A style without its own prompt uses general's. Shipped: `chat`, `email`,
+`academic`, `code` without a prompt (general's did as well or better on their benchmark cases), `work` with one. The benchmark
+cases per style are in `bench/styles.json` (`run.py --styles`).
 
 Every typing knob except `serverPort` and `serverIdleExitSec` (read when the server starts) also works per request:
 `pred ask "text" --opts '{"words":8}'`, `pred try --opts ...`, or `opts` in a ghost HTTP request.
@@ -121,7 +135,7 @@ restart `pred` clients (the profile name changes with the content) and re-run th
 |---|---|---|
 | pi | env `GHOST_PORT`, `GHOST_APP`, `PRED_CLI` | 47321, `coding agent prompt`, the repo's `bin/pred` |
 | Claude Code | constants `URL`, `APP` at the top of `hooks/register.ts` | `http://127.0.0.1:47321/predict`, `coding agent prompt` |
-| Mac app | Settings window (UserDefaults domain `dev.inputpredictor.menubar`): predictions, pop-up position, minimum characters, excluded apps, Chrome-based browsers, proofreading, server URL; `appLabel` in `app/Sources/Services.swift` | see [app/README.md](../app/README.md) |
+| Homeword (Mac app) | Settings window (UserDefaults domain `dev.homeword.app`): suggestions, pop-up position, minimum characters, Chrome-based browsers, proofreading and its shortcuts, a writing style per app; the built-in style tables in `app/Sources/Styles.swift`; ports in the user files above | see [app/README.md](../app/README.md) |
 
 All three send at most the last 2000 characters; the policy trims further to `textBudget`.
 

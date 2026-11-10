@@ -1,13 +1,14 @@
-"""Summarise the Mac app's usage metrics (app/README.md): suggestion latency, acceptance, keystrokes saved, proofreading.
+"""Summarise the Mac app's (Homeword) usage metrics (app/README.md): suggestion latency, acceptance, keystrokes saved, writing
+styles, proofreading.
 
   python3 -I bench/app_metrics.py [metrics.jsonl] [--since YYYY-MM-DD] [--json]
 
 The file holds counts, lengths, timings and app bundle identifiers, never text. Default location:
-~/Library/Application Support/InputPredictor/metrics.jsonl. It stays on the machine: don't commit it or its per-app breakdown.
+~/Library/Application Support/Homeword/metrics.jsonl. It stays on the machine: don't commit it or its per-app breakdown.
 """
 import collections, json, pathlib, sys
 
-DEFAULT = pathlib.Path.home() / "Library/Application Support/InputPredictor/metrics.jsonl"
+DEFAULT = pathlib.Path.home() / "Library/Application Support/Homeword/metrics.jsonl"
 
 
 def pct(xs, p):
@@ -27,6 +28,13 @@ def summarise(events):
     tabs = sum(e.get("accepted_words", 0) for e in sug)
     lat = [e["latency_ms"] for e in sug if "latency_ms" in e]
     per_app = collections.defaultdict(lambda: {"shown": 0, "accepted": 0, "words": 0})
+    per_style = collections.defaultdict(lambda: {"shown": 0, "accepted": 0, "latencies": []})
+    for e in sug:
+        st = per_style[e.get("style", "general")]
+        st["shown"] += 1
+        st["accepted"] += e.get("accepted_words", 0) > 0
+        if "latency_ms" in e:
+            st["latencies"].append(e["latency_ms"])
     for e in sug:
         a = per_app[e.get("app", "?")]
         a["shown"] += 1
@@ -53,6 +61,8 @@ def summarise(events):
         },
         "requests_without_suggestion": dict(collections.Counter(e.get("outcome", "?").split(":")[0] for e in req).most_common()),
         "per_app": dict(sorted(per_app.items(), key=lambda kv: -kv[1]["shown"])),
+        "per_style": {k: {"shown": v["shown"], "accepted": v["accepted"], "latency_p50": pct(v["latencies"], 50)}
+                      for k, v in sorted(per_style.items(), key=lambda kv: -kv[1]["shown"])},
         "proofread": {
             "requests": len(proof),
             "by_mode": dict(collections.Counter(e.get("mode", "?") for e in proof)),
@@ -92,6 +102,8 @@ def main():
           f"p99 {fmt(g['latency_ms']['p99'], ' ms')}; model p50 {fmt(g['model_ms_p50'], ' ms')}")
     print(f"keystrokes    {k['typed']} typed in text fields, {k['saved']} saved ({fmt(k['saved_share'] and round(k['saved_share'] * 100, 1), '%')})")
     print(f"no suggestion {s['requests_without_suggestion']}")
+    for st, a in s["per_style"].items():
+        print(f"  style {st:34} {a['shown']:5} shown {a['accepted']:5} accepted   p50 {fmt(a['latency_p50'], ' ms')}")
     for app, a in list(s["per_app"].items())[:10]:
         print(f"  {app:40} {a['shown']:5} shown {a['accepted']:5} accepted {a['words']:5} words")
     print(f"proofread     {p['requests']} {p['by_mode']}, outcomes {p['outcomes']}, "

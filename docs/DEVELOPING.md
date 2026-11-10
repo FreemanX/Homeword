@@ -20,15 +20,17 @@ predictd.swift  predictd.json   mechanism: the model host (profiles, sessions, g
 build.sh                        swiftc -O -> ./predictd (git-ignored)
 ghost/                          policies (Python, standard library only): typing prediction, proofreading
   predictd.py                     generic client for predictd, reusable by any Python policy
-  policy.py                       typing: profile from prompt.json, trim, generate, assemble
+  policy.py                       typing: profiles per writing style, trim, generate, assemble, warm
   proofread.py                    proofreading: fix or rewrite a text, paragraph by paragraph, word diff
-  prompts.py                      the user's versions of the instructions (outside the repo)
-  server.py                       HTTP front end for non-Python apps (127.0.0.1:47321: /predict, /proofread)
-  config.json  prompt.json        policy knobs and prompt
+  prompts.py                      the user's prompts, their history and benchmark results (outside the repo)
+  evaluate.py                     scoring and per-style benchmarks (shared by run.py and POST /bench)
+  server.py                       HTTP front end for non-Python apps (127.0.0.1:47321)
+  config.json  prompt.json        policy knobs and the general prompt
+  styles.json                     the other writing styles (chat, email, work, academic, code)
 bin/pred                        CLI: try, ask, serve, start, stop, status
 integrations/pi/                application: pi extension (TypeScript)
 integrations/claude-code/       application: Claude Code mod (TypeScript)
-app/                            application: menu bar Mac app, system-wide prediction and proofreading (Swift)
+app/                            application: Homeword, menu bar Mac app, system-wide suggestions and proofreading (Swift)
 bench/                          benchmarks of the ghost policy, cases, baselines, RESULTS.md
 docs/                           these documents
 ```
@@ -84,7 +86,7 @@ print(ghost.predict(link, "chat", "See you tomor")["suggestion"])   # row for co
 
 ### The sample applications
 
-| | pi | Claude Code | Mac app |
+| | pi | Claude Code | Homeword (Mac app) |
 |---|---|---|---|
 | Extension point | `ctx.ui.setEditorComponent`: a `CustomEditor` subclass replaces the prompt editor | a mod: `prompt.edit` hook sees every edit | none: Accessibility reads the focused field of any app, a session event tap sees every key |
 | Request | `fetch` with an `AbortController` | `$.http.fetch` from a `$.clock.after` timer, so typing is never held up | `URLSession`; the field is re-read before showing, so an answer for stale text is dropped |
@@ -92,9 +94,11 @@ print(ghost.predict(link, "chat", "See you tomor")["suggestion"])   # row for co
 | Keys | `handleInput` sees Tab and → first | Tab and → at the end of the draft never reach a hook: they are bound to two slash commands in keybindings.json | the event tap consumes Tab and Esc while a suggestion shows; accepted words are typed as synthetic key events |
 | Source | [integrations/pi](../integrations/pi/README.md) | [integrations/claude-code](../integrations/claude-code/README.md) | [app](../app/README.md) |
 
-pi and Claude Code send `app: "coding agent prompt"`, which is not an example label: the model treats it as chat-like prose. The
-Mac app maps the frontmost app's bundle ID to `mail`, `chat`, `code` or `notes`. The Mac app also uses the proofreading policy
-(`POST /proofread`) on the selection, and logs usage metrics (counts and timings, no text) that `bench/app_metrics.py` summarises.
+pi and Claude Code send `app: "coding agent prompt"` and no style (general), which is not an example label: the model treats it as
+chat-like prose. Homeword sends a writing style (`context`) picked per app and per web app (`app/Sources/Styles.swift`), warms it
+on app switch (`POST /warm`), uses the proofreading policy (`POST /proofread`) on the selection, edits and benchmarks prompts
+(`/prompts`, `/tokens`, `/bench`, `/history`), and logs usage metrics (counts and timings, no text) that `bench/app_metrics.py`
+summarises.
 
 ### Ideas for the next applications
 
@@ -102,8 +106,8 @@ Mac app maps the frontmost app's bundle ID to `mail`, `chat`, `code` or `notes`.
   so the value is in commit messages, quoted strings and comments; send `app: "terminal"` (the prompt has a few `terminal` examples; add more).
 - **Other terminal agents**: anything with a prompt-editor hook works like the samples. Codex has no extension point for its prompt
   box today (it would need a patch).
-- **Mac app, next steps**: inline ghost text instead of a pop-up needs an input method (InputMethodKit), which owns the marked text
-  in every app; per-app examples in prompt.json for the labels the app sends; tuning from the collected metrics (acceptance by app,
+- **Homeword, next steps**: inline ghost text instead of a pop-up needs an input method (InputMethodKit), which owns the marked text
+  in every app; more benchmark cases per style (14 is coarse); tuning from the collected metrics (acceptance by style and app,
   latency tail). Still open: whether the on-device model may be used on a managed Mac (check the policy first).
 
 ## A new policy on predictd

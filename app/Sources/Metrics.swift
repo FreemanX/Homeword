@@ -1,12 +1,12 @@
 // Usage metrics, to improve the app: latency, how often suggestions are shown and accepted, proofreading outcomes. One JSON object
-// per line in ~/Library/Application Support/InputPredictor/metrics.jsonl. Never any typed or selected text: only counts, lengths,
-// timings and the app's bundle identifier. bench/app_metrics.py summarises the file.
+// per line in ~/Library/Application Support/Homeword/metrics.jsonl. Never any typed or selected text: only counts, lengths,
+// timings, the writing style and the app's bundle identifier. bench/app_metrics.py summarises the file.
 import Foundation
 
 final class Metrics {
     static let shared = Metrics()
     let url: URL = {
-        let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("InputPredictor")
+        let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("Homeword")
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir.appendingPathComponent("metrics.jsonl")
     }()
@@ -57,17 +57,17 @@ final class Metrics {
 
 /// One shown suggestion, from the moment it appears until it is used up, replaced or dismissed.
 final class SuggestionRecord {
-    let app: String, label: String
+    let app: String, style: String
     let latency: Double, model: Double
     let words: Int, chars: Int
     var acceptedWords = 0, acceptedChars = 0, typedAlong = 0
-    init(app: String, label: String, latency: Double, model: Double, suggestion: String) {
-        self.app = app; self.label = label; self.latency = latency; self.model = model
+    init(app: String, style: String, latency: Double, model: Double, suggestion: String) {
+        self.app = app; self.style = style; self.latency = latency; self.model = model
         words = suggestion.split(whereSeparator: \.isWhitespace).count; chars = suggestion.count
     }
     func finish(_ how: String) {
         let outcome = acceptedWords > 0 ? (acceptedChars >= chars ? "accepted_all" : "accepted_part") : typedAlong >= 2 ? "typed_along" : how
-        Metrics.shared.log("suggestion", ["app": app, "label": label, "latency_ms": Int(latency), "model_ms": Int(model), "words": words,
+        Metrics.shared.log("suggestion", ["app": app, "style": style, "latency_ms": Int(latency), "model_ms": Int(model), "words": words,
                                           "chars": chars, "accepted_words": acceptedWords, "accepted_chars": acceptedChars,
                                           "typed_along": typedAlong, "outcome": outcome])
     }
@@ -79,6 +79,7 @@ struct MetricsSummary {
     var latencies: [Double] = [], models: [Double] = []
     var empty = 0, errors = 0
     var perApp: [String: (shown: Int, accepted: Int)] = [:]
+    var perStyle: [String: (shown: Int, accepted: Int, latencies: [Double])] = [:]
     var proofreads = 0, replaced = 0, copied = 0, cancelled = 0, failed = 0, proofLatencies: [Double] = []
 
     init(_ events: [[String: Any]]) {
@@ -93,6 +94,10 @@ struct MetricsSummary {
                 if let l = e["latency_ms"] as? Double { latencies.append(l) }
                 if let m = e["model_ms"] as? Double { models.append(m) }
                 var a = perApp[app] ?? (0, 0); a.shown += 1; if w > 0 { a.accepted += 1 }; perApp[app] = a
+                let st = e["style"] as? String ?? "general"
+                var b = perStyle[st] ?? (0, 0, []); b.shown += 1; if w > 0 { b.accepted += 1 }
+                if let l = e["latency_ms"] as? Double { b.latencies.append(l) }
+                perStyle[st] = b
             case "request":
                 if (e["outcome"] as? String ?? "").hasPrefix("error") { errors += 1 } else { empty += 1 }
             case "keys": keys += e["n"] as? Int ?? 0

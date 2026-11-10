@@ -87,6 +87,24 @@ enum AX {
         if chromium { AXUIElementSetAttributeValue(app, "AXEnhancedUserInterface" as CFString, kCFBooleanTrue) }
     }
 
+    /// The host name of the web page a field is in (browsers): the URL of the enclosing web area. Only the host is kept, in
+    /// memory, to pick a writing style. Cached for the last focused element (walking up the tree costs a few ms in Chrome).
+    private static var hostCache: (AXUIElement, String?)?
+    static func pageHost(_ e: AXUIElement) -> String? {
+        if let (el, host) = hostCache, CFEqual(el, e) { return host }
+        var cur: AXUIElement? = e, host: String? = nil
+        for _ in 0..<60 {
+            guard let c = cur else { break }
+            if string(c, kAXRoleAttribute) == "AXWebArea" {
+                if let u = attr(c, "AXURL"), CFGetTypeID(u) == CFURLGetTypeID() { host = (u as! CFURL as URL).host }
+                break
+            }
+            cur = attr(c, kAXParentAttribute).flatMap { CFGetTypeID($0) == AXUIElementGetTypeID() ? ($0 as! AXUIElement) : nil }
+        }
+        hostCache = (e, host)
+        return host
+    }
+
     /// AX coordinates (top-left origin) to AppKit screen coordinates (bottom-left origin).
     static func toCocoa(_ r: CGRect) -> CGRect {
         let h = NSScreen.screens.first?.frame.height ?? 0
@@ -103,6 +121,7 @@ struct FieldSnapshot {
     let atLineEnd: Bool         // nothing after the caret on its line
     let caret: CGRect?          // AX coordinates
     let field: CGRect?
+    let host: String?           // the web page's host, in browsers
 
     static let window = 600
 
@@ -133,8 +152,9 @@ struct FieldSnapshot {
         }
         let pid = AX.pid(e)
         let bundle = NSRunningApplication(processIdentifier: pid)?.bundleIdentifier ?? ""
+        let host = Style.browsers.contains(bundle) ? AX.pageHost(e) : nil
         return (FieldSnapshot(element: e, pid: pid, bundle: bundle, before: b, atLineEnd: a.isEmpty || a == "\n" || a == "\r",
-                              caret: caretRect, field: AX.frame(e)), "ok")
+                              caret: caretRect, field: AX.frame(e), host: host), "ok")
     }
 }
 

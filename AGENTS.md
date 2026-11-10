@@ -9,8 +9,8 @@ Context for an AI agent (or a human) who develops, benchmarks or extends this pr
 
 A research prototype of a typing predictor on Apple's on-device language model (FoundationModels framework, macOS 27): given the app
 and the text typed so far, show a gray "ghost" with the rest of the unfinished word plus up to 5 more words, within one sentence. The
-owner works experiment-first: measure, then decide. It runs in `pred try`, in two coding agents (pi, Claude Code) and in a
-prototype menu bar Mac app (any text field, plus proofreading of the selection).
+owner works experiment-first: measure, then decide. It runs in `pred try`, in two coding agents (pi, Claude Code) and in Homeword,
+a prototype menu bar Mac app (any text field, a writing style per app, proofreading of the selection).
 
 **Design principle: separate mechanism from policy.** The owner asked for this explicitly; keep it when changing anything.
 
@@ -20,23 +20,28 @@ prototype menu bar Mac app (any text field, plus proofreading of the selection).
   `stats`. Newline-delimited JSON on `/tmp/predictd-<uid>.sock`, the same over HTTP on `127.0.0.1:47320`, plus an
   OpenAI-compatible chat API there (`/v1/models`, `/v1/chat/completions`: streaming, tool calls returned to the caller, JSON schema;
   docs/OPENAI.md). The context window is 8192 tokens.
-- **Policy** `ghost/` (Python, standard library only): the typing predictor and the proofreader. `policy.py` (profile from
-  `prompt.json`, trim, generate, assemble), `proofread.py` (fix or rewrite a text, per paragraph, word diff), `prompts.py`
-  (the user's own instructions, in `~/.config/input-predictor/prompts.json`), `config.json` (their knobs), `predictd.py`
-  (generic predictd client), `server.py` (HTTP `127.0.0.1:47321`: `POST /predict`, `POST /proofread`, `GET`/`POST /prompts`, for
-  non-Python apps).
+- **Policy** `ghost/` (Python, standard library only): the typing predictor and the proofreader. `policy.py` (a profile per writing
+  style: general from `prompt.json`, the others from `styles.json`; trim, generate, assemble, warm), `proofread.py` (fix or rewrite
+  a text, per paragraph, word diff), `prompts.py` (the user's prompts, history and benchmark results, in
+  `~/.config/input-predictor/`), `evaluate.py` (scoring, per-style benchmarks), `config.json` (knobs; user overrides in
+  `~/.config/input-predictor/config.json`), `predictd.py` (generic predictd client), `server.py` (HTTP `127.0.0.1:47321`:
+  `/predict`, `/warm`, `/proofread`, `/prompts`, `/history`, `/tokens`, `/bench`, for non-Python apps).
 - `bin/pred`: CLI on the policy. `pred try` (interactive line editor, Enter = new round with stats), `pred ask`, `pred serve`,
   `pred start|stop|status` (predictd + ghost server).
 - `bench/`: `run.py` (fixed 80-case benchmark), `human_pty.py` (drives `pred try` like a typist), `compare.py`, `gen_cases.py` +
   `corpus.md` → `cases.json`, `machine.py`, `try_pty_test.py` (smoke test), `integration_latency.py` (keystroke → ghost in a real
-  terminal app via tmux), `openai_compare.py` (native protocol vs OpenAI API on the typing workload), `app_metrics.py` (summary of
-  the Mac app's usage metrics), `baselines/` (shared results), `RESULTS.md`.
+  terminal app via tmux), `openai_compare.py` (native protocol vs OpenAI API on the typing workload), `styles.json` + `run.py
+  --styles` (cases and benchmark per writing style, also run by Homeword), `app_metrics.py` (summary of Homeword's usage metrics),
+  `baselines/` (shared results), `RESULTS.md`.
 - `integrations/pi/ghost-editor.ts`: pi extension (a `CustomEditor` subclass drawing the ghost in the fake cursor and padding).
 - `integrations/claude-code/`: Claude Code mod (`prompt.edit` hook + `$.prompt.fill` decorations; Tab/→ through two commands bound in
   `keybindings.json`, since keys that do nothing at the end of the draft never reach the hook). Validate with `claude plugin validate`.
-- `app/`: menu bar Mac app (Swift, AppKit + SwiftUI, `app/build.sh`). Accessibility reads the focused field and caret, a session
-  event tap sees keys (consumes Tab/Esc while a suggestion shows, ⌃⌥P/⌃⌥R proofread), a non-activating panel shows the suggestion.
-  Metrics in `~/Library/Application Support/InputPredictor/metrics.jsonl`: counts and timings only, never text. Keep it that way.
+- `app/`: Homeword, menu bar Mac app (Swift, AppKit + SwiftUI, `app/build.sh`, bundle ID `dev.homeword.app`). Accessibility reads
+  the focused field, caret and a browser page's host, a session event tap sees keys (consumes Tab/Esc while a suggestion shows, and
+  the configurable proofread/rewrite shortcuts), a non-activating panel shows the suggestion. Settings: General, Apps (style per
+  app), Prompts (editor, benchmark, history), Statistics, Engine. Metrics in `~/Library/Application Support/Homeword/metrics.jsonl`:
+  counts and timings only, never text. Keep it that way. User-facing text avoids internal terms (policy, profile, predictd): say
+  engine, writing style, prompt. Design notes: `app/DESIGN.md`.
 
 ## Build and run
 
@@ -107,6 +112,10 @@ Policy (ghost, typing):
   a Machine column, the numbers in the tables, the JSON file only as a link. No personal context ("this laptop", "my machine",
   "here"), no narrative. Put before/after numbers in the commit message.
 - Changing `cases.json` or `corpus.md` breaks comparability with older runs: record a new baseline.
+- Benchmarks must not see the user's prompts or config overrides: scripts use `Ghost(user=False)`, spawned `pred` processes get
+  `PRED_NO_USER=1`, a spawned predictd `--user-config ""`. `integration_latency.py` drives the running engine, which uses them.
+- Writing styles: the general prompt (prompt.json) is the one all earlier baselines used; keep its profile unchanged unless you mean
+  to break comparability. A style gets its own prompt only when it beats general's on its cases (`run.py --styles`).
 
 ## Repo rules
 
@@ -122,7 +131,7 @@ Policy (ghost, typing):
   the policy. The integrations are UI only: no prediction logic in TypeScript.
 - A new tunable is a knob, not a constant: daemon-wide → `Config` + predictd.json; per request → a `generate`/profile field; policy →
   ghost/config.json. Plus a row in docs/CONFIG.md (steps in docs/DEVELOPING.md). Results must not record machine paths (`run.py`
-  drops the daemon's `socketPath`). Mermaid diagrams in docs must render on GitHub: quoted labels, `<br/>` for line breaks.
+  drops the daemon's `socketPath`). Mermaid diagrams in docs must render on GitHub: quoted labels, `<br/>` for line breaks, no node ids named `style`, `end` or `class`.
 
 ## Testing the integrations
 
@@ -145,9 +154,9 @@ cursor). Test Claude Code with a throwaway `CLAUDE_CONFIG_DIR` holding the keybi
 
 ## Open questions and future work
 
-- Product surface: pi, Claude Code and a menu bar Mac app (pop-up, not inline) exist; inline ghost text system-wide would need an input
+- Product surface: pi, Claude Code and Homeword (menu bar, pop-up, not inline) exist; inline ghost text system-wide would need an input
   method (InputMethodKit). Apple Intelligence is MDM-restricted on managed Macs: check policy first. Key bindings (Tab = one word,
-  → = all) need user testing; the Mac app's metrics are the place to measure acceptance.
+  → = all) need user testing; Homeword's metrics are the place to measure acceptance (by style and app).
 - Energy cost of a model request on almost every keystroke (needs `powermetrics`, i.e. sudo: ask the owner).
 - Quality on the owner's real typing (keep that data local and out of git); the 80 cases are a small proxy.
 - Known misses: an abbreviation the spell checker accepts ("fri") gets split from the model's next word when the model ignores it;

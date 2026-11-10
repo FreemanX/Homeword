@@ -47,6 +47,42 @@ is the one being typed (`ACCEPT=1`).
 
 The Apple M4 Max typing-only run had 1 failed request out of 303.
 
+## Writing styles
+
+`run.py --spawn --styles`: each writing style's shipped prompt on its 14 cases in `bench/styles.json` (synthetic text, cut
+mid-word or after a word), sequential requests on a warm prefix; proofreading on 12 sentences with known mistakes. Chat, email,
+academic and code use general's prompt with their own `App:` label. The same benchmark runs in Homeword's Prompts tab.
+
+| Machine | macOS | Prompt | p50 | p90 | Next word right | Words right | Word completions | Shown | Data |
+|---|---|---|---|---|---|---|---|---|---|
+| Apple M4 Pro | 27.2 | general | 243 ms | 273 ms | 79% | 1.36 | 83% | 93% | [styles](baselines/2026-11-10-styles.json) |
+| Apple M4 Pro | 27.2 | chat | 264 ms | 309 ms | 79% | 1.21 | 83% | 100% | [styles](baselines/2026-11-10-styles.json) |
+| Apple M4 Pro | 27.2 | email | 207 ms | 278 ms | 93% | 1.21 | 92% | 93% | [styles](baselines/2026-11-10-styles.json) |
+| Apple M4 Pro | 27.2 | work | 292 ms | 308 ms | 79% | 1.07 | 75% | 93% | [styles](baselines/2026-11-10-styles.json) |
+| Apple M4 Pro | 27.2 | academic | 321 ms | 361 ms | 93% | 1.14 | 92% | 100% | [styles](baselines/2026-11-10-styles.json) |
+| Apple M4 Pro | 27.2 | code | 356 ms | 392 ms | 79% | 0.86 | 83% | 100% | [styles](baselines/2026-11-10-styles.json) |
+
+| Machine | macOS | Prompt | p50 | p90 | Fully corrected | Word match | Length vs. input | Data |
+|---|---|---|---|---|---|---|---|---|
+| Apple M4 Pro | 27.2 | proofread | 371 ms | 419 ms | 75% | 0.98 | – | [styles](baselines/2026-11-10-styles.json) |
+| Apple M4 Pro | 27.2 | rewrite | 365 ms | 453 ms | – | – | 1.0 | [styles](baselines/2026-11-10-styles.json) |
+
+With 14 cases one case is 7 points. Latency differs between runs of the same prompt by up to ~100 ms (model modes).
+
+**Prompts written for a style vs general's prompt** (Apple M4 Pro, macOS 27.2, 2026-11-10; the style prompts were not kept, so there
+is no data file). Each style's own prompt had style-specific instructions and 6 examples in that register; general's has 6 mixed
+examples (mail, chat, notes, terminal, essay). Next word right on the style's cases:
+
+| Style | Own prompt | Own instructions + general's examples | General's prompt |
+|---|---|---|---|
+| chat | 64% | 79% | 86% |
+| email | 57-71% | 79% | 79% |
+| work | 79-86% | 64% | 64% |
+| academic | 79% | 79% | 93% |
+| code | 64-71% | 71% | 79% |
+
+Ranges are two runs. Only work did better with its own prompt, so only work ships one.
+
 ## Reading the numbers
 
 - **Steady vs typing.** Steady cases are unrelated texts, so only the instructions and examples are cached. While typing, the

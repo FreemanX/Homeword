@@ -15,9 +15,12 @@ final class Predictor {
     private var readSeq = 0
     private var lastKeyAt = CACurrentMediaTime()
     private var pendingKeys = 0             // key presses since the last field read, credited to that field's app
+    private var warmed = ""                 // the style the engine was last asked to warm
+    /// No requests while a prompt benchmark runs (the model has one cache) or after the user stopped the engine.
+    static var paused = false
     private var task: URLSessionDataTask?
 
-    var enabled: Bool { Pref.d.bool(forKey: Pref.predictions) }
+    var enabled: Bool { Pref.d.bool(forKey: Pref.predictions) && !Predictor.paused && !Services.shared.stoppedByUser }
 
     // MARK: events (main thread)
 
@@ -49,6 +52,14 @@ final class Predictor {
         if panel.visible { dismiss("dismissed") }
         let chromium = chromiumApps.contains(bundle) && Pref.d.bool(forKey: Pref.chromium)
         axQueue.async { AX.enableAccessibility(pid: pid, chromium: chromium) }
+        warm(Style.resolve(bundle: bundle, host: nil))          // browsers: refined at the first field read
+    }
+
+    /// Have the engine get this style's prompt ready, so the first keystroke does not wait for it.
+    private func warm(_ style: String) {
+        guard enabled, style != "off", style != warmed else { return }
+        warmed = style
+        Services.shared.post("/warm", ["context": style], timeout: 5) { _, _ in }
     }
 
     // MARK: reading the field
@@ -68,10 +79,12 @@ final class Predictor {
     private func handle(_ s: FieldSnapshot?, retries: Int) {
         let keys = pendingKeys
         pendingKeys = 0
-        guard enabled, let s, !Pref.excludedApps.contains(s.bundle), s.pid != getpid() else {
+        let style = s.map { Style.resolve(bundle: $0.bundle, host: $0.host) } ?? "off"
+        guard enabled, let s, style != "off", s.pid != getpid() else {
             if panel.visible { dismiss("dismissed") }
             return
         }
+        warm(style)
         if keys > 0 { Metrics.shared.keystrokes(keys, app: s.bundle) }
         if panel.visible {
             if s.before == ghostFor { snap = s; redraw(); return }     // still following: move to the new caret
@@ -82,28 +95,28 @@ final class Predictor {
             dismiss("ignored")
         }
         guard s.atLineEnd, s.before.trimmingCharacters(in: .whitespacesAndNewlines).count >= max(1, Pref.d.integer(forKey: Pref.minChars)) else { return }
-        request(s)
+        request(s, style: style)
     }
 
     // MARK: asking the policy
 
-    private func request(_ s: FieldSnapshot, depth: Int = 0) {
+    private func request(_ s: FieldSnapshot, style: String, depth: Int = 0) {
         task?.cancel()
         let my = seq, t0 = lastKeyAt
-        let body: [String: Any] = ["app": appLabel(s.bundle), "text": String(s.before.suffix(2000)), "stream": "macapp"]
+        let body: [String: Any] = ["app": "notes", "context": style, "text": String(s.before.suffix(2000)), "stream": "macapp"]
         task = Services.shared.post("/predict", body, timeout: 5) { r, err in
             guard my == self.seq else { return }                        // typed on meanwhile
             let latency = (CACurrentMediaTime() - t0) * 1000
             guard let r, r["ok"] as? Bool == true else {
                 let e = (r?["error"] as? String) ?? err ?? "error"
-                if e != "cancelled" { Metrics.shared.log("request", ["app": s.bundle, "outcome": "error: " + e, "latency_ms": Int(latency)]) }
+                if e != "cancelled" { Metrics.shared.log("request", ["app": s.bundle, "style": style, "outcome": "error: " + e, "latency_ms": Int(latency)]) }
                 return
             }
             let sug = r["suggestion"] as? String ?? ""
             let model = (r["timing"] as? [String: Any])?["model_ms"] as? Double ?? 0
             if sug.trimmingCharacters(in: .whitespaces).isEmpty {
                 let why = (r["suppressed"] as? String).map { "suppressed: " + $0 } ?? "empty"
-                Metrics.shared.log("request", ["app": s.bundle, "outcome": why, "latency_ms": Int(latency)])
+                Metrics.shared.log("request", ["app": s.bundle, "style": style, "outcome": why, "latency_ms": Int(latency)])
                 return
             }
             self.axQueue.async {                                        // is the field still showing this text?
@@ -111,21 +124,21 @@ final class Predictor {
                 DispatchQueue.main.async {
                     guard my == self.seq, let now, now.atLineEnd else { return }
                     if now.before == s.before {
-                        self.show(sug, now, latency: (CACurrentMediaTime() - t0) * 1000, model: model)
+                        self.show(sug, now, style: style, latency: (CACurrentMediaTime() - t0) * 1000, model: model)
                     } else if depth < 2 {
-                        self.request(now, depth: depth + 1)             // the read raced the key: ask for the real text
+                        self.request(now, style: style, depth: depth + 1)   // the read raced the key: ask for the real text
                     }
                 }
             }
         }
     }
 
-    private func show(_ suggestion: String, _ s: FieldSnapshot, latency: Double, model: Double) {
+    private func show(_ suggestion: String, _ s: FieldSnapshot, style: String, latency: Double, model: Double) {
         record?.finish("replaced")
         ghost = suggestion
         ghostFor = s.before
         snap = s
-        record = SuggestionRecord(app: s.bundle, label: appLabel(s.bundle), latency: latency, model: model, suggestion: suggestion)
+        record = SuggestionRecord(app: s.bundle, style: style, latency: latency, model: model, suggestion: suggestion)
         redraw()
     }
 

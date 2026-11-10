@@ -1,10 +1,11 @@
-// InputPredictor: a menu bar app that brings the typing ghost and proofreading to every text field, on top of the local
-// services (the policy server and predictd, Apple's on-device model). No Dock icon; its only windows are Settings and Statistics.
+// Homeword: a menu bar app that brings next-word suggestions and proofreading to every text field, on top of the local engine
+// (the policies' HTTP server and predictd, Apple's on-device model): your words never leave the Mac. No Dock icon; its only window
+// is Settings.
 import AppKit
 import SwiftUI
 
 @main
-struct InputPredictorApp {
+struct HomewordApp {
     static func main() {
         let app = NSApplication.shared
         let delegate = AppDelegate()
@@ -25,9 +26,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var permissionTimer: Timer?
 
     func applicationDidFinishLaunching(_ note: Notification) {
+        Pref.migrate()
         Pref.register()
         status = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        status.button?.image = NSImage(systemSymbolName: "character.cursor.ibeam", accessibilityDescription: "InputPredictor")
+        status.button?.image = NSImage(systemSymbolName: "character.cursor.ibeam", accessibilityDescription: "Homeword")
         let menu = NSMenu()
         menu.delegate = self
         status.menu = menu
@@ -42,7 +44,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         Services.shared.check()
         startTap(prompt: true)
 
-        // for development: `open InputPredictor.app --args -show prompts` opens a Settings tab, `-demoProofread file` runs the
+        // for development: `open Homeword.app --args -show prompts` opens a Settings tab, `-demoProofread file` runs the
         // proofread panel on a file's text (no selection, Replace disabled)
         let args = UserDefaults(suiteName: UserDefaults.argumentDomain)
         if let tab = args?.string(forKey: "show") { showSettings(tab: tab) }
@@ -81,16 +83,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private func key(_ k: KeyPress) -> TapDecision {
-        // ⌃⌥P proofread, ⌃⌥R rewrite the selection
-        if k.control && k.option && !k.command && proofreader.enabled {
-            if k.code == 35 { proofreader.run(mode: "fix"); return .consume }
-            if k.code == 15 { proofreader.run(mode: "rewrite"); return .consume }
+        if Hotkey.recording { return .pass }                    // Settings is recording a new shortcut
+        if proofreader.enabled {
+            if Hotkey.load(Pref.proofreadKey).matches(k) { proofreader.run(mode: "fix"); return .consume }
+            if Hotkey.load(Pref.rewriteKey).matches(k) { proofreader.run(mode: "rewrite"); return .consume }
         }
         return predictor.key(k)
     }
 
     private func updateIcon() {
-        let ok = tapRunning && Services.shared.state != .unavailable
+        let ok = tapRunning && Services.shared.state != .stopped
         status.button?.appearsDisabled = !ok || !Pref.d.bool(forKey: Pref.predictions)
     }
 
@@ -101,24 +103,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let predict = NSMenuItem(title: "Predict While Typing", action: #selector(togglePredictions), keyEquivalent: "")
         predict.state = Pref.d.bool(forKey: Pref.predictions) ? .on : .off
         menu.addItem(predict)
-        let proof = NSMenuItem(title: "Proofread Selection", action: #selector(proofreadSelection), keyEquivalent: "p")
-        proof.keyEquivalentModifierMask = [.control, .option]
-        let rewrite = NSMenuItem(title: "Rewrite Selection", action: #selector(rewriteSelection), keyEquivalent: "r")
-        rewrite.keyEquivalentModifierMask = [.control, .option]
-        menu.addItem(proof)
-        menu.addItem(rewrite)
+        for (title, sel, key) in [("Proofread Selection", #selector(proofreadSelection), Pref.proofreadKey),
+                                  ("Rewrite Selection", #selector(rewriteSelection), Pref.rewriteKey)] {
+            let (ch, mods) = Hotkey.load(key).menuEquivalent
+            let item = NSMenuItem(title: title, action: sel, keyEquivalent: ch)
+            item.keyEquivalentModifierMask = mods
+            menu.addItem(item)
+        }
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: axTrusted ? "Accessibility: allowed" : "Accessibility: not allowed (click to open Settings)",
                                 action: axTrusted ? nil : #selector(openAccessibility), keyEquivalent: ""))
         if axTrusted && !tapRunning {
             menu.addItem(NSMenuItem(title: "Keyboard: blocked (click to allow in Input Monitoring)", action: #selector(openInputMonitoring), keyEquivalent: ""))
         }
-        menu.addItem(NSMenuItem(title: "Services: \(Services.shared.state.rawValue)", action: Services.shared.state == .running ? nil : #selector(startServices), keyEquivalent: ""))
+        let e = Services.shared
+        let engine = e.state == .stopped ? (e.stoppedByUser ? "Engine: stopped (click to start)" : "Engine: stopped, starts when needed (click to start)")
+            : "Engine: \(e.state.rawValue.lowercased())"
+        menu.addItem(NSMenuItem(title: engine, action: e.state == .stopped ? #selector(startServices) : nil, keyEquivalent: ""))
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "Statistics…", action: #selector(showStats), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "Settings…", action: #selector(showSettingsGeneral), keyEquivalent: ","))
         menu.addItem(.separator())
-        menu.addItem(NSMenuItem(title: "Quit InputPredictor", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
+        menu.addItem(NSMenuItem(title: "Quit Homeword", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
         for item in menu.items where item.action != nil && item.action != #selector(NSApplication.terminate(_:)) { item.target = self }
     }
 
@@ -141,9 +147,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func showSettings(tab: String) {
         nav.tab = tab
         let w = settings ?? {
-            let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 640, height: 560), styleMask: [.titled, .closable, .miniaturizable],
+            let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 880, height: 660), styleMask: [.titled, .closable, .miniaturizable],
                              backing: .buffered, defer: false)
-            w.title = "InputPredictor"
+            w.title = "Homeword"
             w.contentView = NSHostingView(rootView: SettingsView(nav: nav))
             w.isReleasedWhenClosed = false
             w.center()

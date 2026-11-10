@@ -1,7 +1,8 @@
-// The Settings window: General, Prompts (the policies' system prompts, editable, each with a reset to its default), Statistics
-// (from the metrics file) and Services. The prompts live in the policy server (GET/POST /prompts); the app only edits them.
+// The Settings window: General (prediction, proofreading, shortcuts), Apps (a writing style per app, or off), Prompts
+// (PromptsView.swift), Statistics (from the metrics file) and Engine (the local service, the OpenAI-compatible API, permissions).
 import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 final class SettingsNav: ObservableObject {
     @Published var tab = "general"
@@ -13,16 +14,28 @@ struct SettingsView: View {
     var body: some View {
         TabView(selection: $nav.tab) {
             GeneralTab().tabItem { Label("General", systemImage: "gearshape") }.tag("general")
-            PromptsTab().tabItem { Label("Prompts", systemImage: "text.bubble") }.tag("prompts")
+            AppsTab().tabItem { Label("Apps", systemImage: "square.grid.2x2") }.tag("apps")
+            PromptsView().tabItem { Label("Prompts", systemImage: "text.bubble") }.tag("prompts")
             StatsTab().tabItem { Label("Statistics", systemImage: "chart.bar") }.tag("stats")
-            ServicesTab().tabItem { Label("Services", systemImage: "server.rack") }.tag("services")
+            EngineTab().tabItem { Label("Engine", systemImage: "cpu") }.tag("engine")
         }
         .padding(12)
-        .frame(width: 640, height: 560)
+        .frame(width: 880, height: 660)
     }
 }
 
+/// A colored status dot: green = running, yellow = in between, red = stopped.
+struct StatusDot: View {
+    let color: Color
+    var body: some View { Circle().fill(color).frame(width: 10, height: 10) }
+}
+
 // MARK: General
+
+final class ShortcutsModel: ObservableObject {
+    let proofread = HotkeyRecorderModel(key: Pref.proofreadKey)
+    let rewrite = HotkeyRecorderModel(key: Pref.rewriteKey)
+}
 
 struct GeneralTab: View {
     @AppStorage(Pref.predictions) var predictions = true
@@ -30,125 +43,183 @@ struct GeneralTab: View {
     @AppStorage(Pref.minChars) var minChars = 3
     @AppStorage(Pref.position) var position = "below"
     @AppStorage(Pref.chromium) var chromium = true
-    @AppStorage(Pref.excluded) var excluded = Pref.defaultExcluded
+    @StateObject private var keys = ShortcutsModel()
 
     var body: some View {
         Form {
-            Section("Input prediction") {
-                Toggle("Predict while typing", isOn: $predictions)
+            Section("Next-word suggestions") {
+                Toggle("Suggest while typing", isOn: $predictions)
                 Picker("Pop-up position", selection: $position) {
                     Text("Below the cursor").tag("below")
                     Text("Next to the cursor").tag("beside")
                 }
                 Stepper("Start after \(minChars) characters", value: $minChars, in: 1...20)
                 Toggle("Support Chrome-based browsers and Electron apps", isOn: $chromium)
-                Text("Tab inserts the highlighted word, Esc dismisses. Typing the suggestion's next letters keeps it.")
+                Text("Tab inserts the highlighted word, Esc dismisses. Typing the suggestion's next letters keeps it. The writing style "
+                     + "follows the app you type in (Apps tab).")
                     .font(.caption).foregroundStyle(.secondary)
             }
             Section("Proofreading") {
-                Toggle("Proofread (⌃⌥P) and rewrite (⌃⌥R) the selection", isOn: $proofreading)
-                Text("Return replaces the selection with the result, ⌘C copies it, Esc cancels.")
+                Toggle("Proofread and rewrite selected text", isOn: $proofreading)
+                ShortcutRow(title: "Proofread selection", model: keys.proofread, other: keys.rewrite, fallback: .defaultProofread)
+                ShortcutRow(title: "Rewrite selection", model: keys.rewrite, other: keys.proofread, fallback: .defaultRewrite)
+                Text("Proofread fixes typos and grammar; rewrite makes the text clearer. Both keep your meaning. Return replaces the "
+                     + "selection, ⌘C copies the result, Esc cancels.")
                     .font(.caption).foregroundStyle(.secondary)
-            }
-            Section("Never predict in these apps (bundle IDs, one per line)") {
-                TextEditor(text: $excluded)
-                    .font(.system(.body, design: .monospaced))
-                    .frame(minHeight: 110)
             }
         }
         .formStyle(.grouped)
     }
 }
 
-// MARK: Prompts
+struct ShortcutRow: View {
+    let title: String
+    @ObservedObject var model: HotkeyRecorderModel
+    @ObservedObject var other: HotkeyRecorderModel
+    let fallback: Hotkey
 
-final class PromptStore: ObservableObject {
-    struct Item: Identifiable, Equatable {
-        let id: String, title: String, defaultText: String, note: String
-        var text: String, custom: Bool
-    }
-    @Published var items: [Item] = []
-    @Published var message = ""
-    @Published var busy = false
-    @Published var selected = "typing" { didSet { if selected != oldValue { draft = item?.text ?? "" } } }
-    @Published var draft = ""
-    var item: Item? { items.first { $0.id == selected } }
-
-    func load() { busy = true; Services.shared.get("/prompts") { r, err in self.apply(r, err) } }
-    func save(_ id: String, _ text: String) { send(["name": id, "text": text], done: "Saved. The next suggestion uses it.") }
-    func reset(_ id: String) { send(["name": id, "reset": true], done: "Restored the default.") }
-
-    private func send(_ body: [String: Any], done: String) {
-        busy = true
-        Services.shared.post("/prompts", body) { r, err in
-            self.apply(r, err)
-            if r?["ok"] as? Bool == true { self.message = done }
-        }
-    }
-
-    private func apply(_ r: [String: Any]?, _ err: String?) {
-        busy = false
-        guard let r, r["ok"] as? Bool == true, let list = r["prompts"] as? [[String: Any]] else {
-            message = (r?["error"] as? String) ?? err.map { "The policy server is not answering (\($0)). Start it in Services." } ?? "error"
-            return
-        }
-        message = ""
-        defer { draft = item?.text ?? "" }
-        items = list.map {
-            Item(id: $0["name"] as? String ?? "", title: $0["title"] as? String ?? "", defaultText: $0["default"] as? String ?? "",
-                 note: $0["note"] as? String ?? "", text: $0["text"] as? String ?? "", custom: $0["custom"] as? Bool ?? false)
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Text(title)
+                Spacer()
+                HotkeyRecorder(model: model)
+                Button("Default") { model.reset(to: fallback) }
+                    .disabled(model.hotkey == fallback)
+            }
+            if let w = model.hotkey.warning(other: other.hotkey) {
+                Label(w, systemImage: "exclamationmark.triangle.fill").font(.caption).foregroundStyle(.orange)
+            }
         }
     }
 }
 
-struct PromptsTab: View {
-    @StateObject private var store = PromptStore()
-    private var item: PromptStore.Item? { store.item }
+// MARK: Apps
+
+final class AppsModel: ObservableObject {
+    struct Row: Identifiable {
+        let info: AppInfo
+        var choice: String          // "auto", a style, or "off"
+        var id: String { info.bundle }
+        var automatic: String { Style.automatic(bundle: info.bundle, host: nil) }
+        var builtIn: Bool { Style.builtIn[info.bundle] != nil }
+    }
+    @Published var rows: [Row] = []
+    @Published var selection: String?
+
+    init() { reload() }
+
+    func reload() {
+        let choices = Style.userChoices
+        var bundles = Set(choices.keys)
+        for b in Style.builtIn.keys where NSWorkspace.shared.urlForApplication(withBundleIdentifier: b) != nil { bundles.insert(b) }
+        rows = bundles.map { Row(info: AppInfo.of($0), choice: choices[$0] ?? "auto") }
+            .sorted { $0.info.name.localizedCaseInsensitiveCompare($1.info.name) == .orderedAscending }
+    }
+
+    func set(_ bundle: String, _ choice: String) {
+        var c = Style.userChoices
+        if choice == "auto" && Style.builtIn[bundle] != nil { c[bundle] = nil } else { c[bundle] = choice }   // "auto" keeps a listed app
+        Style.userChoices = c
+        reload()
+    }
+
+    func add(_ bundle: String) {
+        guard !bundle.isEmpty, bundle != Bundle.main.bundleIdentifier else { return }
+        var c = Style.userChoices
+        if c[bundle] == nil && Style.builtIn[bundle] == nil { c[bundle] = "auto" }
+        Style.userChoices = c
+        reload()
+        selection = bundle
+    }
+
+    func removeSelected() {
+        guard let b = selection else { return }
+        var c = Style.userChoices
+        c[b] = nil
+        Style.userChoices = c
+        reload()
+        selection = nil
+    }
+
+    func choose() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.application]
+        panel.directoryURL = URL(fileURLWithPath: "/Applications")
+        panel.allowsMultipleSelection = true
+        if panel.runModal() == .OK {
+            for url in panel.urls { if let b = Bundle(url: url)?.bundleIdentifier { add(b) } }
+        }
+    }
+
+    var running: [NSRunningApplication] {
+        NSWorkspace.shared.runningApplications
+            .filter { $0.activationPolicy == .regular && $0.bundleIdentifier != nil && $0.bundleIdentifier != Bundle.main.bundleIdentifier }
+            .sorted { ($0.localizedName ?? "").localizedCaseInsensitiveCompare($1.localizedName ?? "") == .orderedAscending }
+    }
+}
+
+struct AppsTab: View {
+    @StateObject private var model = AppsModel()
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("The instructions the on-device model gets. Edit to change how it predicts, proofreads or rewrites.")
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Homeword picks a writing style for the app you type in, and for web apps in browsers (Gmail is Email, Google Docs is "
+                 + "Work documents). Change it per app here, or turn suggestions off for an app.")
                 .foregroundStyle(.secondary)
-            Picker("", selection: $store.selected) {
-                ForEach(store.items) { Text($0.title + ($0.custom ? " •" : "")).tag($0.id) }
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .disabled(store.items.isEmpty)
-            TextEditor(text: $store.draft)
-                .font(.system(.body))
-                .scrollContentBackground(.hidden)
-                .padding(6)
-                .background(RoundedRectangle(cornerRadius: 6).fill(Color(nsColor: .textBackgroundColor)))
-                .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.secondary.opacity(0.3)))
-                .disabled(item == nil)
-            if let item {
-                HStack(alignment: .top) {
-                    Text(item.custom ? "Your prompt (custom)" : "Default prompt").bold()
-                    Text(item.note).foregroundStyle(.secondary)
-                    Spacer()
-                    Text("\(store.draft.count) characters").foregroundStyle(.secondary).monospacedDigit()
+                .fixedSize(horizontal: false, vertical: true)
+            List(selection: $model.selection) {
+                ForEach(model.rows) { row in
+                    HStack(spacing: 10) {
+                        if let icon = row.info.icon {
+                            Image(nsImage: icon).resizable().frame(width: 22, height: 22)
+                        } else {
+                            Image(systemName: "app.dashed").frame(width: 22, height: 22).foregroundStyle(.secondary)
+                        }
+                        Text(row.info.name).foregroundStyle(row.info.installed ? Color.primary : Color.secondary)
+                        Spacer()
+                        Picker("", selection: Binding(get: { row.choice }, set: { model.set(row.id, $0) })) {
+                            Text("Automatic (\(Style.title(row.automatic)))").tag("auto")
+                            Divider()
+                            ForEach(Style.all, id: \.self) { Text(Style.title($0)).tag($0) }
+                            Divider()
+                            Text("Off").tag("off")
+                        }
+                        .labelsHidden()
+                        .frame(width: 250, alignment: .trailing)
+                    }
+                    .help(row.info.bundle)
+                    .tag(row.id)
                 }
-                .font(.caption)
             }
-            HStack {
-                Button("Reset to Default") {
-                    store.reset(store.selected)
+            .listStyle(.bordered(alternatesRowBackgrounds: true))
+            HStack(spacing: 4) {
+                Menu {
+                    ForEach(model.running, id: \.processIdentifier) { app in
+                        Button {
+                            model.add(app.bundleIdentifier ?? "")
+                        } label: {
+                            if let icon = app.icon { Image(nsImage: icon) }
+                            Text(app.localizedName ?? app.bundleIdentifier ?? "")
+                        }
+                    }
+                    Divider()
+                    Button("Choose an App…") { model.choose() }
+                } label: {
+                    Image(systemName: "plus")
                 }
-                .disabled(item == nil || (!(item?.custom ?? false) && store.draft == item?.defaultText))
-                .help("Restore this prompt to the one the app ships with")
+                .menuIndicator(.hidden)
+                .fixedSize()
+                .help("Add a running app, or choose one from Applications")
+                Button { model.removeSelected() } label: { Image(systemName: "minus") }
+                    .disabled(model.selection.map { Style.userChoices[$0] == nil } ?? true)
+                    .help("Remove your setting for the selected app (built-in apps go back to Automatic)")
                 Spacer()
-                if store.busy { ProgressView().controlSize(.small) }
-                Text(store.message).font(.caption).foregroundStyle(.secondary).lineLimit(2)
-                Button("Revert") { store.draft = item?.text ?? "" }
-                    .disabled(store.draft == item?.text)
-                Button("Save") { store.save(store.selected, store.draft) }
-                    .keyboardShortcut("s", modifiers: .command)
-                    .disabled(item == nil || store.draft == item?.text || store.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                Text("Apps not listed use Automatic.").font(.caption).foregroundStyle(.secondary)
             }
         }
         .padding(8)
-        .onAppear { store.load() }
+        .onAppear { model.reload() }
     }
 }
 
@@ -166,7 +237,7 @@ struct StatsTab: View {
     var body: some View {
         VStack(spacing: 8) {
             Form {
-                Section("Predictions") {
+                Section("Suggestions") {
                     row("Suggestions shown", "\(s.shown)")
                     row("Accepted (at least one word)", s.shown > 0 ? "\(s.accepted) (\(pct(s.accepted, s.shown)))" : "–")
                     row("Words accepted", "\(s.acceptedWords)")
@@ -176,10 +247,17 @@ struct StatsTab: View {
                     row("Model time, p50", ms(MetricsSummary.pct(s.models, 50)))
                     row("Requests with nothing to show / errors", "\(s.empty) / \(s.errors)")
                 }
+                if !s.perStyle.isEmpty {
+                    Section("By writing style") {
+                        ForEach(s.perStyle.sorted { $0.value.shown > $1.value.shown }, id: \.key) { st, v in
+                            row(Style.title(st), "\(v.shown) shown, \(pct(v.accepted, v.shown)) accepted, p50 \(ms(MetricsSummary.pct(v.latencies, 50)))")
+                        }
+                    }
+                }
                 if !s.perApp.isEmpty {
                     Section("By app") {
                         ForEach(s.perApp.sorted { $0.value.shown > $1.value.shown }.prefix(8), id: \.key) { app, v in
-                            row(app, "\(v.shown) shown, \(pct(v.accepted, v.shown)) accepted")
+                            row(AppInfo.of(app).name, "\(v.shown) shown, \(pct(v.accepted, v.shown)) accepted")
                         }
                     }
                 }
@@ -191,7 +269,7 @@ struct StatsTab: View {
             }
             .formStyle(.grouped)
             HStack {
-                Text("Counts and timings only, never your text.").font(.caption).foregroundStyle(.secondary)
+                Text("Counts and timings only, never your text. Stored on this Mac.").font(.caption).foregroundStyle(.secondary)
                 Spacer()
                 Button("Reveal File") { NSWorkspace.shared.activateFileViewerSelecting([Metrics.shared.url]) }
                 Button("Reset…") { confirmReset() }
@@ -204,7 +282,7 @@ struct StatsTab: View {
 
     private func confirmReset() {
         let a = NSAlert()
-        a.messageText = "Delete all collected metrics?"
+        a.messageText = "Delete all collected statistics?"
         a.addButton(withTitle: "Delete")
         a.addButton(withTitle: "Cancel")
         if a.runModal() == .alertFirstButtonReturn {
@@ -219,50 +297,159 @@ struct StatsTab: View {
     private func ms(_ x: Double?) -> String { x.map { "\(Int($0)) ms" } ?? "–" }
 }
 
-// MARK: Services
+// MARK: Engine
 
-struct ServicesTab: View {
-    @AppStorage(Pref.server) var server = "http://127.0.0.1:47321"
-    @StateObject private var model = ServicesModel()
-    private var state: String { model.state }
-    private var ax: Bool { model.ax }
+final class EngineModel: ObservableObject {
+    @Published var state = Services.State.unknown
+    @Published var stoppedByUser = false
+    @Published var apiUp = false
+    @Published var ax = AX.trusted(prompt: false)
+    @Published var port = String(EngineConfig.port)
+    @Published var apiPort = String(EngineConfig.apiPort)
+    @Published var message = ""
+    private var timer: Timer?
+
+    init() {
+        refresh()
+        timer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in self?.refresh() }
+    }
+    deinit { timer?.invalidate() }
+
+    func refresh() {
+        let s = Services.shared
+        if s.state != .starting && s.state != .stopping { s.check(autostart: false) }
+        state = s.state
+        stoppedByUser = s.stoppedByUser
+        ax = AX.trusted(prompt: false)
+        s.checkAPI { self.apiUp = $0 }
+    }
+
+    var color: Color {
+        switch state {
+        case .running: return .green
+        case .starting, .stopping, .unknown: return .yellow
+        case .stopped: return .red
+        }
+    }
+    var detail: String {
+        switch state {
+        case .running: return "Runs Apple's on-device model on this Mac. Nothing you type leaves it."
+        case .starting: return "Loading the on-device model…"
+        case .stopping: return "Stopping…"
+        case .unknown: return "Checking…"
+        case .stopped: return stoppedByUser ? "Stopped. Suggestions and proofreading are paused until you start it."
+            : "Not running. It shuts down after 30 idle minutes and starts again when you type."
+        }
+    }
+
+    var savedPorts: (Int, Int) { (EngineConfig.port, EngineConfig.apiPort) }
+    var portsChanged: Bool { (Int(port) ?? -1, Int(apiPort) ?? -1) != savedPorts }
+    var portsValid: Bool {
+        guard let a = Int(port), let b = Int(apiPort) else { return false }
+        return (1024...65535).contains(a) && (1024...65535).contains(b) && a != b
+    }
+
+    func applyPorts() {
+        guard portsValid, let a = Int(port), let b = Int(apiPort) else { return }
+        do {
+            try Services.shared.setPorts(engine: a, api: b)
+            message = "Restarting the engine on the new ports…"
+        } catch {
+            message = "Could not save: \(error.localizedDescription)"
+        }
+    }
+}
+
+struct EngineTab: View {
+    @StateObject private var model = EngineModel()
+
+    private var baseURL: String { "http://127.0.0.1:\(EngineConfig.apiPort)/v1" }
 
     var body: some View {
         Form {
-            Section("Policy server (predictions, proofreading, prompts)") {
-                TextField("URL", text: $server)
-                HStack {
-                    Text("Status: \(state)")
+            Section {
+                HStack(spacing: 8) {
+                    StatusDot(color: model.color)
+                    Text(model.state.rawValue).bold()
                     Spacer()
-                    Button("Check") { Services.shared.check() }
-                    Button("Start Services") { Services.shared.start(force: true) }
+                    if model.state == .stopped {
+                        Button("Start") { Services.shared.start(force: true); model.refresh() }
+                    } else {
+                        Button("Stop") { Services.shared.stop(); model.refresh() }
+                            .disabled(model.state == .stopping || model.state == .starting)
+                        Button("Restart") { Services.shared.restart(); model.refresh() }
+                            .disabled(model.state == .stopping || model.state == .starting)
+                    }
                 }
-                Text("Started with bin/pred start from the repo this app was built in; it stops after 30 idle minutes.")
+                Text(model.detail).font(.caption).foregroundStyle(.secondary)
+                HStack {
+                    Text("Port")
+                    Spacer()
+                    TextField("", text: $model.port).frame(width: 80).multilineTextAlignment(.trailing).labelsHidden()
+                }
+                Text("Used by Homeword and the pred command line tool. The pi and Claude Code integrations have their own port setting.")
                     .font(.caption).foregroundStyle(.secondary)
+            } header: {
+                Text("Engine")
+            }
+            Section {
+                HStack(spacing: 8) {
+                    StatusDot(color: model.apiUp ? .green : (model.state == .starting ? .yellow : .red))
+                    Text(model.apiUp ? "Available" : "Not available").bold()
+                    Spacer()
+                }
+                copyRow("Base URL", baseURL)
+                copyRow("Model", "apple-on-device")
+                copyRow("API key", "any text")
+                HStack {
+                    Text("Port")
+                    Spacer()
+                    TextField("", text: $model.apiPort).frame(width: 80).multilineTextAlignment(.trailing).labelsHidden()
+                }
+                Text("Point any OpenAI-compatible app or agent at the base URL to use Apple's on-device model. Local only: other "
+                     + "machines cannot reach it. The model's context window is 8,192 tokens.")
+                    .font(.caption).foregroundStyle(.secondary)
+            } header: {
+                Text("OpenAI-compatible API")
+            }
+            if model.portsChanged || !model.message.isEmpty {
+                HStack {
+                    Text(model.portsValid ? model.message : "Ports must be different numbers between 1024 and 65535.")
+                        .font(.caption).foregroundStyle(model.portsValid ? Color.secondary : Color.red)
+                    Spacer()
+                    Button("Revert") { model.port = String(EngineConfig.port); model.apiPort = String(EngineConfig.apiPort); model.message = "" }
+                        .disabled(!model.portsChanged)
+                    Button("Apply and Restart") { model.applyPorts() }
+                        .disabled(!model.portsChanged || !model.portsValid)
+                }
             }
             Section("Permissions") {
-                HStack {
-                    Text("Accessibility: \(ax ? "allowed" : "not allowed")")
+                HStack(spacing: 8) {
+                    StatusDot(color: model.ax ? .green : .red)
+                    Text("Accessibility: \(model.ax ? "allowed" : "not allowed")")
                     Spacer()
                     Button("Open Accessibility Settings") {
                         NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!)
                     }
                 }
+                Text("Needed to read the text field you type in, see key presses and insert words.")
+                    .font(.caption).foregroundStyle(.secondary)
             }
         }
         .formStyle(.grouped)
     }
-}
 
-final class ServicesModel: ObservableObject {
-    @Published var state = Services.shared.state.rawValue
-    @Published var ax = AX.trusted(prompt: false)
-    private var timer: Timer?
-    init() {
-        timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
-            self?.state = Services.shared.state.rawValue
-            self?.ax = AX.trusted(prompt: false)
+    private func copyRow(_ label: String, _ value: String) -> some View {
+        HStack {
+            Text(label)
+            Spacer()
+            Text(value).font(.system(.body, design: .monospaced)).textSelection(.enabled)
+            Button {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(value, forType: .string)
+            } label: { Image(systemName: "doc.on.doc") }
+                .buttonStyle(.borderless)
+                .help("Copy")
         }
     }
-    deinit { timer?.invalidate() }
 }
