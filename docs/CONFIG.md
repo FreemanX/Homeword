@@ -95,10 +95,12 @@ edited in Homeword's Prompts tab or through `POST /prompts`.
 
 ## ghost/styles.json (policy)
 
-The writing styles besides `general` (which is prompt.json): `title` (shown to users), `label` (the `App:` line), and optionally
-`instructions` + `shots` (same format as prompt.json's). A style without its own prompt uses general's. Shipped: `chat`, `email`,
-`academic`, `code` without a prompt (general's did as well or better on their benchmark cases), `work` with one. The benchmark
-cases per style are in `bench/styles.json` (`run.py --styles`).
+The writing styles besides `general` (which is prompt.json): `title` (shown to users), `label` (the `App:` line), `shots` (its own
+examples, same format as prompt.json's) and optionally `instructions` (without, it uses general's instructions). A style without
+`shots` uses general's whole prompt; `"base": "general"` puts general's examples (the user's version, if any) before the style's
+own. Shipped: `chat`, `email`, `academic`, `code` with general's instructions and its 6 examples plus 2 of their own (this beat 6
+style-only examples on the benchmark), `work` with its own instructions and examples. The benchmark suite: `bench/cases.json` +
+`bench/styles.json` (`run.py --styles`, [bench/RESULTS.md](../bench/RESULTS.md)).
 
 Every typing knob except `serverPort` and `serverIdleExitSec` (read when the server starts) also works per request:
 `pred ask "text" --opts '{"words":8}'`, `pred try --opts ...`, or `opts` in a ghost HTTP request.

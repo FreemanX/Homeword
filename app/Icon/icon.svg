@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <!-- Homeword app icon: a house (home: everything stays on this Mac) holding a line of text with the cursor and the suggested
+       next words (ghost text). macOS icon grid: 824 x 824 rounded square on a 1024 canvas. -->
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#4C63F0"/>
+      <stop offset="1" stop-color="#3A2B9E"/>
+    </linearGradient>
+    <linearGradient id="house" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FFFFFF"/>
+      <stop offset="1" stop-color="#EEF0FF"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.5" cy="0.35" r="0.65">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.22"/>
+      <stop offset="1" stop-color="#FFFFFF" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="150%">
+      <feDropShadow dx="0" dy="18" stdDeviation="22" flood-color="#160C4A" flood-opacity="0.45"/>
+    </filter>
+  </defs>
+  <rect x="100" y="100" width="824" height="824" rx="185" fill="url(#bg)"/>
+  <rect x="100" y="100" width="824" height="824" rx="185" fill="url(#glow)"/>
+  <!-- the house -->
+  <path d="M512 236 L806 478 L742 478 L742 774 Q742 800 716 800 L308 800 Q282 800 282 774 L282 478 L218 478 Z"
+        fill="url(#house)" stroke="url(#house)" stroke-width="28" stroke-linejoin="round" filter="url(#shadow)"/>
+  <!-- a typed line -->
+  <rect x="332" y="540" width="270" height="44" rx="22" fill="#3A2B9E" opacity="0.85"/>
+  <!-- the line being typed, the cursor, the suggested words -->
+  <rect x="332" y="644" width="138" height="52" rx="26" fill="#3A2B9E"/>
+  <rect x="514" y="644" width="92" height="52" rx="26" fill="#5B4BD8" opacity="0.32"/>
+  <rect x="620" y="644" width="74" height="52" rx="26" fill="#5B4BD8" opacity="0.32"/>
+  <g stroke="#FFB020" stroke-width="16" stroke-linecap="round" fill="none">
+    <line x1="492" y1="618" x2="492" y2="722"/>
+    <line x1="472" y1="618" x2="512" y2="618"/>
+    <line x1="472" y1="722" x2="512" y2="722"/>
+  </g>
+</svg>

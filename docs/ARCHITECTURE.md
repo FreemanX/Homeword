@@ -180,12 +180,13 @@ parameters and harness setup: [OPENAI.md](OPENAI.md).
 ## ghost: the typing policy
 
 **Writing styles.** One prompt per style: `general` (`ghost/prompt.json`, the prompt the benchmarks have always used) and `chat`,
-`email`, `work`, `academic`, `code` (`ghost/styles.json`). A request names its style (`context`); a style with no prompt of its own
-uses general's (the user's version, if any), and its own label in the `App:` line. Measured on `bench/styles.json`, general's prompt
-predicted chat, email, academic and code cases as well as or better than prompts written for them (its examples are mixed; the
-style-only ones were narrower), so only `work` ships its own ([bench/RESULTS.md](../bench/RESULTS.md)). Styles that share a prompt
-share its profile, so switching between them costs nothing; another prompt costs ~70 ms on its first request, which `POST /warm`
-(pin + predictd's `prewarm`) moves to when the user switches apps.
+`email`, `work`, `academic`, `code` (`ghost/styles.json`). A request names its style (`context`) and gets that style's prompt and
+its label in the `App:` line. Chat, email, academic and code use general's instructions and its 6 mixed examples (the user's
+version, if any) followed by 2 examples in their own register; work has its own instructions and examples. Measured on the suite:
+6 style-only examples did worse than general's prompt (broken word completions in code, 68% vs 79% next word right), while the 6
+mixed examples teach the answer format and 2 more add the register ([bench/RESULTS.md](../bench/RESULTS.md)). Each style is its
+own profile: the first request after switching costs ~70 ms more, which `POST /warm` (pin + predictd's `prewarm`) moves to when
+the user switches apps.
 
 `ghost/policy.py` registers one profile built from `ghost/prompt.json` (instructions + the first `shots` examples, named by a hash
 of its content) and pins it. Then, per keystroke:
@@ -303,10 +304,17 @@ Every prompt (instructions and examples) can be replaced per user (`ghost/prompt
 | `POST /prompts` | `{"name", "prompt": {"instructions", "examples"}}` saves the user's version and a history entry (last 20 per prompt); `{"name", "reset": true}` restores the shipped one |
 | `GET /history?name=` | the saved versions, newest first, each with its benchmark result |
 | `POST /tokens` | `{"name", "prompt"?}`: tokens of the instructions and of the whole prompt as sent (a probe profile), and the estimated cost per request (~0.55 ms per cached token) |
-| `POST /bench` | `{"name", "prompt"?}`: runs the prompt (default: the one in use) on the style's cases with an unpinned profile, then gives the cache back to the pinned prompt; the result is stored by the prompt's content hash |
+| `POST /bench` | `{"name", "prompt"?, "scope": "all" \| "user"}`: starts a job that runs the prompt (default: the one in use) on the benchmark suite and the user's cases (`all`), or on the user's cases only (`user`), with an unpinned profile, then gives the cache back to the pinned prompt; answers `{"job"}` |
+| `GET /bench?job=` | `state` (`running`, `done`, `error`), `done`/`total` cases, then `result`: per category, overall, the user's section; stored by the prompt's content hash |
+| `GET`/`POST /cases` | the user's own benchmark cases for a prompt: `[{"text", "rest"}]` (`rest` = what comes next, or the expected output for proofreading) |
 
 A changed prompt is a new profile (named by its content hash), so it applies to the next request; the typing policy re-pins whenever
-its profile changes. Benchmark metrics (`ghost/evaluate.py`, shared with `bench/run.py`): latency p50/p90, next word right
-(`acc1`), words right (`lead`), word completions right (`mid_word_ok`), shown; proofreading: fully corrected, word match; rewriting:
-latency and length ratio. Benchmarks from the command line (`run.py`, `human_pty.py`, `openai_compare.py`) ignore the user's prompts
+its profile changes.
+
+**The benchmark suite** (`ghost/evaluate.py`, shared with `bench/run.py --styles`): every case of `bench/cases.json` (the fixed
+80-case benchmark) and `bench/styles.json` (14 per style), 164 in all, each tagged with a category (chat 26, email 23, work 14,
+academic 14, code 19, general 49, terminal 19) and keeping its own app label. A prompt runs on all of them, so one run shows how it
+does on every kind of text; results are reported per category. The user's cases run with the prompt's own label and are reported
+as a separate section. Metrics: latency p50/p90, next word right (`acc1`), words right (`lead`), word completions right
+(`mid_word_ok`), shown; proofreading: fully corrected, word match; rewriting: latency and length ratio. Benchmarks from the command line (`run.py`, `human_pty.py`, `openai_compare.py`) ignore the user's prompts
 and config overrides (`Ghost(user=False)`, `PRED_NO_USER=1`), so their numbers stay comparable.

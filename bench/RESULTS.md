@@ -49,39 +49,43 @@ The Apple M4 Max typing-only run had 1 failed request out of 303.
 
 ## Writing styles
 
-`run.py --spawn --styles`: each writing style's shipped prompt on its 14 cases in `bench/styles.json` (synthetic text, cut
-mid-word or after a word), sequential requests on a warm prefix; proofreading on 12 sentences with known mistakes. Chat, email,
-academic and code use general's prompt with their own `App:` label. The same benchmark runs in Homeword's Prompts tab.
+`run.py --spawn --styles`: each prompt on the whole suite, 164 cases from `bench/cases.json` and `bench/styles.json`, each case with
+its category's app label; sequential requests on a warm prefix. Next word right per category, and over all cases. The same
+benchmark runs in Homeword's Prompts tab.
 
-| Machine | macOS | Prompt | p50 | p90 | Next word right | Words right | Word completions | Shown | Data |
-|---|---|---|---|---|---|---|---|---|---|
-| Apple M4 Pro | 27.2 | general | 243 ms | 273 ms | 79% | 1.36 | 83% | 93% | [styles](baselines/2026-11-10-styles.json) |
-| Apple M4 Pro | 27.2 | chat | 264 ms | 309 ms | 79% | 1.21 | 83% | 100% | [styles](baselines/2026-11-10-styles.json) |
-| Apple M4 Pro | 27.2 | email | 207 ms | 278 ms | 93% | 1.21 | 92% | 93% | [styles](baselines/2026-11-10-styles.json) |
-| Apple M4 Pro | 27.2 | work | 292 ms | 308 ms | 79% | 1.07 | 75% | 93% | [styles](baselines/2026-11-10-styles.json) |
-| Apple M4 Pro | 27.2 | academic | 321 ms | 361 ms | 93% | 1.14 | 92% | 100% | [styles](baselines/2026-11-10-styles.json) |
-| Apple M4 Pro | 27.2 | code | 356 ms | 392 ms | 79% | 0.86 | 83% | 100% | [styles](baselines/2026-11-10-styles.json) |
+| Machine | macOS | Prompt | Chat | Email | Work | Academic | Code | General | Terminal | All | p50 | Data |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| Apple M4 Pro | 27.2 | general | 77% | 87% | 71% | 79% | 90% | 33% | 53% | 63% | 265 ms | [suite](baselines/2026-11-10-styles-suite.json) |
+| Apple M4 Pro | 27.2 | chat | **81%** | 83% | 64% | 71% | 79% | 33% | 53% | 61% | 305 ms | [suite](baselines/2026-11-10-styles-suite.json) |
+| Apple M4 Pro | 27.2 | email | 77% | **83%** | 64% | 86% | 74% | 33% | 37% | 59% | 285 ms | [suite](baselines/2026-11-10-styles-suite.json) |
+| Apple M4 Pro | 27.2 | work | 42% | 74% | **79%** | 79% | 74% | 29% | 21% | 50% | 310 ms | [suite](baselines/2026-11-10-styles-suite.json) |
+| Apple M4 Pro | 27.2 | academic | 73% | 87% | 64% | **86%** | 84% | 33% | 47% | 62% | 281 ms | [suite](baselines/2026-11-10-styles-suite.json) |
+| Apple M4 Pro | 27.2 | code | 69% | 78% | 57% | 71% | **90%** | 31% | 32% | 56% | 286 ms | [suite](baselines/2026-11-10-styles-suite.json) |
 
-| Machine | macOS | Prompt | p50 | p90 | Fully corrected | Word match | Length vs. input | Data |
+Cases per category: chat 26, email 23, work 14, academic 14, code 19, general 49, terminal 19. Bold: the style's own category. On
+it, the style's prompt is within one or two cases of general's (work +1 case, academic +1, chat +1, code 0, email -1).
+
+| Machine | macOS | Prompt | Cases | p50 | Fully corrected | Word match | Length vs. input | Data |
 |---|---|---|---|---|---|---|---|---|
-| Apple M4 Pro | 27.2 | proofread | 371 ms | 419 ms | 75% | 0.98 | – | [styles](baselines/2026-11-10-styles.json) |
-| Apple M4 Pro | 27.2 | rewrite | 365 ms | 453 ms | – | – | 1.0 | [styles](baselines/2026-11-10-styles.json) |
+| Apple M4 Pro | 27.2 | proofread | 12 | 370 ms | 75% | 0.98 | – | [suite](baselines/2026-11-10-styles-suite.json) |
+| Apple M4 Pro | 27.2 | rewrite | 12 | 368 ms | – | – | 1.0 | [suite](baselines/2026-11-10-styles-suite.json) |
 
-With 14 cases one case is 7 points. Latency differs between runs of the same prompt by up to ~100 ms (model modes).
+**Examples for a style** (Apple M4 Pro, macOS 27.2, 2026-11-10, two runs each, identical; no data file). General's instructions in
+all variants; next word right on the style's own category, its cases labeled with the style:
 
-**Prompts written for a style vs general's prompt** (Apple M4 Pro, macOS 27.2, 2026-11-10; the style prompts were not kept, so there
-is no data file). Each style's own prompt had style-specific instructions and 6 examples in that register; general's has 6 mixed
-examples (mail, chat, notes, terminal, essay). Next word right on the style's cases:
-
-| Style | Own prompt | Own instructions + general's examples | General's prompt |
+| Style | General's 6 examples | 6 examples of the style | General's 6 + 2 of the style (shipped) |
 |---|---|---|---|
-| chat | 64% | 79% | 86% |
-| email | 57-71% | 79% | 79% |
-| work | 79-86% | 64% | 64% |
-| academic | 79% | 79% | 93% |
-| code | 64-71% | 71% | 79% |
+| chat | 77% | 77% | 85% |
+| email | 78% | 78% | 83% |
+| academic | 93% | 86% | 86% |
+| code | 79% | 68% | 79% |
 
-Ranges are two runs. Only work did better with its own prompt, so only work ships one.
+Style-only examples broke word completions in code ("indepen" → "indepenently"). Prompts written entirely for a style (their own
+instructions too) did worse still in an earlier round. Work documents does best with its own instructions and examples.
+
+Outputs and latency depend on the model's mode, which the system switches on its own: the same prompt measured 78% and 87% next
+word right on email in two runs in different modes. Compare prompts only within one run (`--styles` runs all of them together; the
+Prompts tab's Run Default next to your run).
 
 ## Reading the numbers
 

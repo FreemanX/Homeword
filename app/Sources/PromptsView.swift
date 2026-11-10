@@ -1,44 +1,46 @@
 // The Prompts tab: every prompt the engine uses (next-word suggestions per writing style, proofreading, rewriting), editable
-// (instructions and examples), with token counts, a benchmark to compare versions, and the last saved versions. All of it lives
-// in the engine (GET/POST /prompts, /tokens, /bench, /history); this view only edits.
+// (instructions, and examples as line-paired text), with token counts, the benchmark suite reported per category plus the user's
+// own test cases, and the last saved versions. All of it lives in the engine (GET/POST /prompts, /tokens, /bench, /cases,
+// /history); this view only edits.
 import AppKit
 import SwiftUI
 
-struct PromptExample: Identifiable, Equatable {
-    let id = UUID()
-    var text: String
-    var completion: String
-    var app: String?            // the general prompt's examples carry their own app label
-    static func == (a: PromptExample, b: PromptExample) -> Bool { a.text == b.text && a.completion == b.completion && a.app == b.app }
-}
-
+/// A prompt being edited: instructions, and its examples as two line-paired texts (line i left = typed text, right = continuation).
 struct PromptDraft: Equatable {
     var instructions = ""
-    var examples: [PromptExample] = []
+    var left = ""
+    var right = ""
+    var apps: [String: String] = [:]    // typed text → app label: the general prompt's examples carry their own
 
     init() {}
     init(_ d: [String: Any]?) {
         instructions = d?["instructions"] as? String ?? ""
-        examples = (d?["examples"] as? [[String: Any]] ?? []).map {
-            PromptExample(text: $0["text"] as? String ?? "", completion: $0["completion"] as? String ?? "", app: $0["app"] as? String)
-        }
+        let ex = d?["examples"] as? [[String: Any]] ?? []
+        left = ex.map { $0["text"] as? String ?? "" }.joined(separator: "\n")
+        right = ex.map { $0["completion"] as? String ?? "" }.joined(separator: "\n")
+        for e in ex { if let a = e["app"] as? String, let t = e["text"] as? String { apps[t] = a } }
     }
+    var pairs: [(String, String)] { LinePairs.split(left, right).pairs }
+    var incomplete: [Int] { LinePairs.split(left, right).incomplete }
     var json: [String: Any] {
         ["instructions": instructions,
-         "examples": examples.map { e -> [String: Any] in
-             var d: [String: Any] = ["text": e.text, "completion": e.completion]
-             if let a = e.app { d["app"] = a }
+         "examples": pairs.map { p -> [String: Any] in
+             var d: [String: Any] = ["text": p.0, "completion": p.1]
+             if let a = apps[p.0] { d["app"] = a }
              return d
          }]
     }
-    var chars: Int { instructions.count + examples.reduce(0) { $0 + $1.text.count + $1.completion.count } }
+    var chars: Int { instructions.count + pairs.reduce(0) { $0 + $1.0.count + $1.1.count } }
+    static func == (a: PromptDraft, b: PromptDraft) -> Bool {
+        a.instructions == b.instructions && a.pairs.map { $0.0 + "\u{1}" + $0.1 } == b.pairs.map { $0.0 + "\u{1}" + $0.1 }
+    }
 }
 
 struct PromptEntry {
     let name: String, group: String, title: String, note: String
     let prompt: PromptDraft, defaultPrompt: PromptDraft
     let custom: Bool, inherits: Bool
-    let result: [String: Any]?, defaultResult: [String: Any]?
+    let result: [String: Any]?, defaultResult: [String: Any]?, userResult: [String: Any]?
     let labels: [String]
 
     init(_ d: [String: Any]) {
@@ -52,7 +54,8 @@ struct PromptEntry {
         inherits = d["inherits"] as? Bool ?? false
         result = d["result"] as? [String: Any]
         defaultResult = d["default_result"] as? [String: Any]
-        labels = d["labels"] as? [String] ?? ["Text", "Continuation"]
+        userResult = d["user_result"] as? [String: Any]
+        labels = d["labels"] as? [String] ?? ["Typed text", "Continuation"]
     }
 }
 
@@ -70,15 +73,21 @@ final class PromptsModel: ObservableObject {
     @Published var tokens: (instructions: Int, prompt: Int, ms: Int?)?
     @Published var draftResult: [String: Any]?
     @Published var running: String?             // what the benchmark is running on
+    @Published var progress: (done: Int, total: Int) = (0, 0)
     @Published var history: [PromptVersion] = []
+    @Published var casesLeft = "" { didSet { if casesLeft != oldValue { scheduleCasesSave() } } }
+    @Published var casesRight = "" { didSet { if casesRight != oldValue { scheduleCasesSave() } } }
+    @Published var savedCases = 0
     @Published var message = ""
     @Published var loaded = false
-    private var tokenTimer: Timer?
+    private var tokenTimer: Timer?, casesTimer: Timer?, pollTimer: Timer?
     private var tokenSeq = 0
+    private var loadingCases = false
 
     var entry: PromptEntry? { entries.first { $0.name == selected } }
     var dirty: Bool { entry.map { draft != $0.prompt } ?? false }
     var isPrediction: Bool { selected.hasPrefix("predict-") }
+    var casePairs: [(String, String)] { LinePairs.split(casesLeft, casesRight).pairs }
 
     func load(keepDraft: Bool = false) {
         Services.shared.get("/prompts") { r, err in
@@ -101,6 +110,7 @@ final class PromptsModel: ObservableObject {
         draft = entry?.prompt ?? PromptDraft()
         draftResult = nil
         loadHistory()
+        loadCases()
         scheduleTokens(now: true)
     }
 
@@ -115,13 +125,45 @@ final class PromptsModel: ObservableObject {
         }
     }
 
+    // MARK: the user's test cases
+
+    private func loadCases() {
+        let name = selected
+        Services.shared.get("/cases?name=\(name)") { r, _ in
+            guard name == self.selected else { return }
+            let cases = r?["cases"] as? [[String: Any]] ?? []
+            self.loadingCases = true
+            self.casesLeft = cases.map { $0["text"] as? String ?? "" }.joined(separator: "\n")
+            self.casesRight = cases.map { $0["rest"] as? String ?? "" }.joined(separator: "\n")
+            self.savedCases = cases.count
+            self.loadingCases = false
+        }
+    }
+
+    private func scheduleCasesSave() {
+        guard !loadingCases else { return }
+        casesTimer?.invalidate()
+        casesTimer = Timer.scheduledTimer(withTimeInterval: 0.8, repeats: false) { [weak self] _ in self?.saveCases() }
+    }
+
+    private func saveCases(then: (() -> Void)? = nil) {
+        let cases = casePairs.map { ["text": $0.0, "rest": $0.1] }
+        Services.shared.post("/cases", ["name": selected, "cases": cases]) { r, err in
+            if let saved = r?["cases"] as? [[String: Any]] { self.savedCases = saved.count }
+            else { self.message = (r?["error"] as? String) ?? err ?? "Could not save the cases" }
+            then?()
+        }
+    }
+
+    // MARK: tokens, save, reset
+
     private func scheduleTokens(now: Bool = false) {
         tokenTimer?.invalidate()
         tokenTimer = Timer.scheduledTimer(withTimeInterval: now ? 0.05 : 0.6, repeats: false) { [weak self] _ in self?.countTokens() }
     }
 
     private func countTokens() {
-        guard !draft.instructions.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, !Predictor.paused else { return }
+        guard !draft.instructions.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, running == nil else { return }
         tokenSeq += 1
         let seq = tokenSeq
         Services.shared.post("/tokens", ["name": selected, "prompt": draft.json], timeout: 10) { r, _ in
@@ -131,8 +173,7 @@ final class PromptsModel: ObservableObject {
     }
 
     func save() {
-        let name = selected
-        Services.shared.post("/prompts", ["name": name, "prompt": draft.json]) { r, err in
+        Services.shared.post("/prompts", ["name": selected, "prompt": draft.json]) { r, err in
             guard r?["ok"] as? Bool == true else { self.message = (r?["error"] as? String) ?? err ?? "Could not save"; return }
             self.entries = (r?["prompts"] as? [[String: Any]] ?? []).map(PromptEntry.init)
             self.message = "Saved. New suggestions use it."
@@ -152,27 +193,61 @@ final class PromptsModel: ObservableObject {
 
     func revert() { draft = entry?.prompt ?? draft }
 
-    func addExample() { draft.examples.append(PromptExample(text: "", completion: "", app: nil)) }
-    func removeExample(_ id: UUID) { draft.examples.removeAll { $0.id == id } }
+    // MARK: benchmark
 
-    /// Benchmark the draft (or the prompt in use when nothing changed), or the shipped default.
-    func bench(defaultPrompt: Bool) {
+    /// Run the benchmark: `scope` "all" (the suite + the user's cases) or "user"; on the draft (or the saved prompt when nothing
+    /// changed), or on the shipped default.
+    func bench(scope: String, defaultPrompt: Bool = false) {
         guard running == nil, let e = entry else { return }
         let p = defaultPrompt ? e.defaultPrompt : draft
-        let wasDirty = dirty
-        running = defaultPrompt ? "default" : (wasDirty ? "draft" : "current")
+        let wasDirty = dirty && !defaultPrompt
+        running = defaultPrompt ? "the default prompt" : (wasDirty ? "this draft" : "this prompt")
+        progress = (0, 0)
         message = ""
         Predictor.paused = true                                 // the model has one cache: no suggestions meanwhile
-        Services.shared.post("/bench", ["name": selected, "prompt": p.json], timeout: 180) { r, err in
-            Predictor.paused = false
-            self.running = nil
-            guard r?["ok"] as? Bool == true, let res = r?["result"] as? [String: Any] else {
-                self.message = (r?["error"] as? String) ?? err ?? "The benchmark failed"
-                return
+        casesTimer?.invalidate()
+        saveCases {                                             // the cases as typed, then the run
+            Services.shared.post("/bench", ["name": self.selected, "prompt": p.json, "scope": scope], timeout: 10) { r, err in
+                guard let job = r?["job"] as? String else {
+                    self.finish((r?["error"] as? String) ?? err ?? "The benchmark did not start")
+                    return
+                }
+                self.poll(job) { res in
+                    if wasDirty && self.draft == p, let res {
+                        var merged = self.draftResult ?? [:]    // a run on the user's cases only keeps the suite's numbers
+                        if scope == "user" { merged["user"] = res["user"] } else { merged = res }
+                        self.draftResult = merged
+                    }
+                }
             }
-            if !defaultPrompt && wasDirty && self.draft == p { self.draftResult = res }
-            self.load(keepDraft: true)
         }
+    }
+
+    private func poll(_ job: String, done: @escaping ([String: Any]?) -> Void) {
+        pollTimer?.invalidate()
+        pollTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] t in
+            Services.shared.get("/bench?job=\(job)", timeout: 3) { r, _ in
+                guard let self, let r else { return }
+                self.progress = (r["done"] as? Int ?? 0, r["total"] as? Int ?? 0)
+                switch r["state"] as? String {
+                case "done":
+                    t.invalidate()
+                    done(r["result"] as? [String: Any])
+                    self.finish(nil)
+                case "error", nil:
+                    t.invalidate()
+                    self.finish(r["error"] as? String ?? "The benchmark failed")
+                default: break
+                }
+            }
+        }
+    }
+
+    private func finish(_ error: String?) {
+        Predictor.paused = false
+        running = nil
+        if let error { message = error }
+        load(keepDraft: true)
     }
 
     func use(_ v: PromptVersion) {
@@ -214,7 +289,7 @@ struct PromptsView: View {
                     ScrollView { editor(e).padding(14) }
                         .onAppear {   // for development: `--args -show prompts -promptsAnchor bench` shows the benchmark
                             if let a = UserDefaults(suiteName: UserDefaults.argumentDomain)?.string(forKey: "promptsAnchor") {
-                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { proxy.scrollTo(a, anchor: .top) }
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { proxy.scrollTo(a, anchor: .top) }
                             }
                         }
                 }
@@ -237,11 +312,27 @@ struct PromptsView: View {
          "proofread-fix": "checkmark.circle", "proofread-rewrite": "wand.and.stars"][name] ?? "text.bubble"
     }
 
+    private func header(_ title: String, _ hint: String) -> some View {
+        HStack(alignment: .firstTextBaseline) {
+            Text(title).font(.headline)
+            Text(hint).font(.caption).foregroundStyle(.secondary)
+            Spacer()
+        }
+    }
+
+    private func columnLabels(_ a: String, _ b: String) -> some View {
+        HStack {
+            Text(a).frame(maxWidth: .infinity, alignment: .leading).padding(.leading, 34)
+            Text(b).frame(maxWidth: .infinity, alignment: .leading).padding(.leading, 34)
+        }
+        .font(.caption).foregroundStyle(.secondary)
+    }
+
     @ViewBuilder private func editor(_ e: PromptEntry) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .firstTextBaseline) {
                 Text(e.title).font(.title2.bold())
-                Text(e.custom ? "Your version" : (e.inherits ? "Same as General" : "Default")).font(.callout).foregroundStyle(.secondary)
+                Text(e.custom ? "Your version" : "Default").font(.callout).foregroundStyle(.secondary)
                 Spacer()
             }
             Text(e.note).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
@@ -251,43 +342,28 @@ struct PromptsView: View {
                 .font(.body)
                 .scrollContentBackground(.hidden)
                 .padding(6)
-                .frame(height: 90)
+                .frame(height: 80)
                 .background(RoundedRectangle(cornerRadius: 6).fill(Color(nsColor: .textBackgroundColor)))
                 .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.secondary.opacity(0.3)))
 
-            HStack {
-                Text("Examples").font(.headline)
-                Text("the model imitates these more than the instructions").font(.caption).foregroundStyle(.secondary)
-                Spacer()
-                Button { model.addExample() } label: { Label("Add", systemImage: "plus") }
-                    .disabled(model.draft.examples.count >= 12)
-            }
-            HStack {
-                Text(e.labels.first ?? "").font(.caption).foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading)
-                Text(e.labels.last ?? "").font(.caption).foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading)
-                Spacer().frame(width: 24)
-            }
-            ForEach($model.draft.examples) { $ex in
-                HStack(alignment: .top) {
-                    TextField(e.labels.first ?? "", text: $ex.text, axis: .vertical).lineLimit(1...4)
-                    TextField(e.labels.last ?? "", text: $ex.completion, axis: .vertical).lineLimit(1...4)
-                    Button { model.removeExample(ex.id) } label: { Image(systemName: "minus.circle") }
-                        .buttonStyle(.borderless).frame(width: 20)
-                }
-                .textFieldStyle(.roundedBorder)
+            header("Examples", "one per line, left and right paired by line number; the model imitates these closely")
+            columnLabels(e.labels.first ?? "", e.labels.last ?? "")
+            PairedLinesEditor(left: $model.draft.left, right: $model.draft.right).frame(height: 150)
+            if !model.draft.incomplete.isEmpty {
+                Label("Line \(model.draft.incomplete.map(String.init).joined(separator: ", ")) has only one side: it is left out.",
+                      systemImage: "exclamationmark.triangle.fill").font(.caption).foregroundStyle(.orange)
             }
             if model.isPrediction {
-                Text("A continuation starts with the rest of an unfinished word (no space), or with a space when the text ends with a "
-                     + "whole word.")
-                    .font(.caption).foregroundStyle(.secondary)
+                Text("A continuation starts with the rest of an unfinished word (no space), or with a space when the typed text ends "
+                     + "with a whole word. Shaded = a space at the start or end of a line.")
+                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }
 
             HStack(spacing: 14) {
-                Text("\(model.draft.chars) characters").monospacedDigit()
+                Text("\(model.draft.pairs.count) examples · \(model.draft.chars) characters").monospacedDigit()
                 if let t = model.tokens {
-                    Text("instructions \(t.instructions) tokens").monospacedDigit()
-                    Text("whole prompt \(t.prompt) tokens").monospacedDigit()
-                    if let ms = t.ms { Text("≈ \(ms) ms of every suggestion").monospacedDigit() }
+                    Text("instructions \(t.instructions) tokens · whole prompt \(t.prompt) tokens").monospacedDigit()
+                    if let ms = t.ms { Text("≈ \(ms) ms of every request").monospacedDigit() }
                 }
                 Spacer()
             }
@@ -313,74 +389,124 @@ struct PromptsView: View {
 
     // MARK: benchmark
 
-    private struct Column { let title: String; let key: String; let kind: Kind; enum Kind { case ms, pct, num } }
+    private struct Column { let title: String; let key: String; let kind: Kind; enum Kind { case ms, pct, num, int } }
 
     private func columns(_ name: String) -> [Column] {
+        let cases = Column(title: "Cases", key: "cases", kind: .int), lat = Column(title: "Latency p50", key: "latency_p50", kind: .ms)
         if name == "proofread-fix" {
-            return [Column(title: "Latency p50", key: "latency_p50", kind: .ms), Column(title: "Fully corrected", key: "exact", kind: .pct),
-                    Column(title: "Word match", key: "word_match", kind: .pct)]
+            return [cases, Column(title: "Fully corrected", key: "exact", kind: .pct), Column(title: "Word match", key: "word_match", kind: .pct), lat]
         }
-        if name == "proofread-rewrite" {
-            return [Column(title: "Latency p50", key: "latency_p50", kind: .ms), Column(title: "Length vs. original", key: "length_ratio", kind: .num)]
-        }
-        return [Column(title: "Latency p50", key: "latency_p50", kind: .ms), Column(title: "Next word right", key: "next_word", kind: .pct),
-                Column(title: "Words right", key: "words_right", kind: .num), Column(title: "Word completions", key: "completions", kind: .pct),
-                Column(title: "Shown", key: "shown", kind: .pct)]
+        if name == "proofread-rewrite" { return [cases, Column(title: "Length vs. original", key: "length_ratio", kind: .num), lat] }
+        return [cases, Column(title: "Next word right", key: "next_word", kind: .pct), Column(title: "Words right", key: "words_right", kind: .num),
+                Column(title: "Completions", key: "completions", kind: .pct), Column(title: "Shown", key: "shown", kind: .pct), lat]
     }
 
-    private func cell(_ r: [String: Any]?, _ c: Column) -> String {
-        guard let v = (r?[c.key] as? NSNumber)?.doubleValue else { return "–" }
-        switch c.kind {
-        case .ms: return "\(Int(v)) ms"
-        case .pct: return "\(Int((v * 100).rounded()))%"
-        case .num: return String(format: "%.2f", v)
+    private func value(_ r: [String: Any]?, _ key: String) -> Double? { (r?[key] as? NSNumber)?.doubleValue }
+
+    private func cell(_ r: [String: Any]?, _ base: [String: Any]?, _ c: Column) -> Text {
+        let v = value(r, c.key)
+        let text: String = {
+            guard let v else { return "–" }
+            switch c.kind {
+            case .ms: return "\(Int(v)) ms"
+            case .pct: return "\(Int((v * 100).rounded()))%"
+            case .num: return String(format: "%.2f", v)
+            case .int: return "\(Int(v))"
+            }
+        }()
+        // the difference to the default prompt's result in the same category (quality columns only)
+        var delta = Text("")
+        if let v, let b = value(base, c.key), c.kind == .pct || c.kind == .num {
+            let d = c.kind == .pct ? (v - b) * 100 : v - b
+            if abs(d) >= (c.kind == .pct ? 0.5 : 0.005) {
+                let s = c.kind == .pct ? String(format: "%+.0f", d) : String(format: "%+.2f", d)
+                delta = Text(" " + s).font(.caption2).foregroundColor(d > 0 ? .green : .red)
+            }
         }
+        return Text("\(Text(text).monospacedDigit())\(delta)")
     }
+
+    private func rows(_ r: [String: Any]?) -> [[String: Any]] { r?["categories"] as? [[String: Any]] ?? [] }
+    private func row(_ r: [String: Any]?, _ name: String) -> [String: Any]? { rows(r).first { $0["name"] as? String == name } }
 
     @ViewBuilder private func benchmark(_ e: PromptEntry) -> some View {
         let cols = columns(e.name)
-        VStack(alignment: .leading, spacing: 8) {
+        // what the table shows: this draft's run, else the saved prompt's, else the default's
+        let showDraft = model.dirty
+        let shown: [String: Any]? = showDraft ? model.draftResult : (e.custom ? e.result : e.defaultResult)
+        let base: [String: Any]? = (showDraft || e.custom) ? e.defaultResult : nil
+        let userRow: [String: Any]? = {                         // the newer of the full run's and a cases-only run's
+            let a = shown?["user"] as? [String: Any]
+            if showDraft { return a }
+            let b = e.userResult?["user"] as? [String: Any]
+            if (e.userResult?["at"] as? String ?? "") > (shown?["at"] as? String ?? "") { return b ?? a }
+            return a ?? b
+        }()
+        VStack(alignment: .leading, spacing: 10) {
+            header("Benchmark", model.isPrediction
+                   ? "the bench/ suite: 164 texts in 7 categories; does the prompt guess what was typed next?"
+                   : "12 sentences with known mistakes" + (e.name == "proofread-rewrite" ? " (no single right answer: length and speed only)" : ""))
+
+            Text("Your test cases").font(.subheadline.bold())
+            columnLabels(e.labels.first == "Input" ? "Text" : "Typed text",
+                         e.name == "proofread-fix" ? "Corrected text" : (e.name == "proofread-rewrite" ? "A good rewrite" : "What comes next"))
+            PairedLinesEditor(left: $model.casesLeft, right: $model.casesRight).frame(height: 110)
+            Text("\(model.savedCases) case\(model.savedCases == 1 ? "" : "s") saved for this prompt (kept on this Mac, outside the repo). They run as their own section.")
+                .font(.caption).foregroundStyle(.secondary)
+
             HStack {
-                Text("Benchmark").font(.headline)
-                Text(benchDescription(e.name)).font(.caption).foregroundStyle(.secondary)
+                if model.running != nil {
+                    ProgressView(value: Double(model.progress.done), total: Double(max(model.progress.total, 1))).frame(width: 160)
+                    Text("\(model.running ?? ""): \(model.progress.done) of \(model.progress.total)").font(.caption).monospacedDigit().foregroundStyle(.secondary)
+                }
                 Spacer()
-                if let r = model.running {
-                    ProgressView().controlSize(.small)
-                    Text("Running on the \(r) prompt…").font(.caption).foregroundStyle(.secondary)
-                }
-                Button("Run Default") { model.bench(defaultPrompt: true) }.disabled(model.running != nil)
-                Button(model.dirty ? "Run Draft" : "Run") { model.bench(defaultPrompt: false) }.disabled(model.running != nil)
+                Button("Run Default") { model.bench(scope: "all", defaultPrompt: true) }.disabled(model.running != nil)
+                    .help("The shipped prompt on the full benchmark, for comparison")
+                Button("Run Your Cases") { model.bench(scope: "user") }.disabled(model.running != nil || model.casePairs.isEmpty)
+                Button("Run Full Benchmark") { model.bench(scope: "all") }.disabled(model.running != nil)
+                    .help("The bench/ suite and your cases")
             }
-            Grid(alignment: .leading, horizontalSpacing: 18, verticalSpacing: 6) {
-                GridRow {
-                    Text("Version").bold()
-                    ForEach(cols, id: \.key) { Text($0.title).bold() }
-                }
-                .font(.caption)
-                benchRow("Default", e.defaultResult, cols)
-                if e.custom { benchRow("Your saved version", e.result, cols) }
-                if model.dirty { benchRow("This draft", model.draftResult, cols) }
+
+            HStack(alignment: .firstTextBaseline) {
+                Text(showDraft ? "Results for this draft" : (e.custom ? "Results for your saved version" : "Results for the default prompt"))
+                    .font(.subheadline.bold())
+                if base != nil { Text("green/red: the difference to the default").font(.caption).foregroundStyle(.secondary) }
             }
-            Text("Measured on this Mac with sequential requests, as when typing. Latency can differ by ~70 ms between runs (the "
-                 + "system switches model modes), so compare versions benchmarked one after the other. Suggestions pause while it runs.")
+            if shown == nil && userRow == nil {
+                Text("Not run yet.").font(.caption).foregroundStyle(.secondary)
+            } else {
+                Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 5) {
+                    GridRow {
+                        Text("Category").bold()
+                        ForEach(cols, id: \.key) { Text($0.title).bold() }
+                    }
+                    .font(.caption)
+                    Divider().gridCellUnsizedAxes(.horizontal)
+                    ForEach(Array(rows(shown).enumerated()), id: \.offset) { _, r in
+                        GridRow {
+                            Text(r["title"] as? String ?? "")
+                            ForEach(cols, id: \.key) { c in cell(r, row(base, r["name"] as? String ?? ""), c) }
+                        }
+                    }
+                    if let all = shown?["overall"] as? [String: Any], rows(shown).count > 1 {
+                        GridRow {
+                            Text("All (ours)").bold()
+                            ForEach(cols, id: \.key) { c in cell(all, base?["overall"] as? [String: Any], c).bold() }
+                        }
+                    }
+                    if let u = userRow {
+                        Divider().gridCellUnsizedAxes(.horizontal)
+                        GridRow {
+                            Text("Your cases").bold()
+                            ForEach(cols, id: \.key) { c in cell(u, nil, c) }
+                        }
+                    }
+                }
+            }
+            Text("Measured on this Mac with sequential requests, as when typing. Each case keeps its category's app label, so a prompt is "
+                 + "tested on every kind of text. Latency can differ by ~70 ms between runs (the system switches model modes). A full run "
+                 + "takes about a minute; suggestions pause meanwhile.")
                 .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-        }
-    }
-
-    private func benchRow(_ label: String, _ r: [String: Any]?, _ cols: [Column]) -> some View {
-        GridRow {
-            Text(label)
-            ForEach(cols, id: \.key) { Text(cell(r, $0)).monospacedDigit() }
-        }
-    }
-
-    private func benchDescription(_ name: String) -> String {
-        switch name {
-        case "proofread-fix": return "12 sentences with known mistakes"
-        case "proofread-rewrite": return "12 sentences; no single right answer, so speed and length only"
-        default:
-            let st = String(name.dropFirst("predict-".count))
-            return "14 \(Style.title(st).lowercased()) texts: does it guess what was typed next?"
         }
     }
 
@@ -407,10 +533,10 @@ struct PromptsView: View {
     }
 
     private func summary(_ r: [String: Any]?) -> String {
-        guard let r else { return "not benchmarked" }
-        let lat = (r["latency_p50"] as? NSNumber).map { "\($0.intValue) ms" } ?? "–"
-        if let n = (r["next_word"] as? NSNumber)?.doubleValue { return "\(lat) · next word \(Int((n * 100).rounded()))%" }
-        if let x = (r["exact"] as? NSNumber)?.doubleValue { return "\(lat) · corrected \(Int((x * 100).rounded()))%" }
+        guard let o = r?["overall"] as? [String: Any] else { return "not benchmarked" }
+        let lat = (o["latency_p50"] as? NSNumber).map { "\($0.intValue) ms" } ?? "–"
+        if let n = (o["next_word"] as? NSNumber)?.doubleValue { return "\(lat) · next word \(Int((n * 100).rounded()))% (all)" }
+        if let x = (o["exact"] as? NSNumber)?.doubleValue { return "\(lat) · corrected \(Int((x * 100).rounded()))%" }
         return lat
     }
 }

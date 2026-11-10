@@ -321,8 +321,8 @@ class Ghost:
         return p["instructions_fullword"] if cfg["format"] == "fullword" else p["instructions_short"] if cfg["instructions"] == "short" else p["instructions"]
 
     def inherits(self, style):
-        """True when the style has no prompt of its own and uses general's."""
-        return style != "general" and "instructions" not in self.styles[style]
+        """True when the style has no examples of its own and uses general's whole prompt."""
+        return style != "general" and "shots" not in self.styles[style]
 
     def default_prompt(self, style="general", cfg=None):
         """The shipped prompt of a style: {"instructions", "examples": [{"text", "completion", "app"?}]}. A style without its
@@ -334,7 +334,10 @@ class Ghost:
             return {"instructions": self.default_instructions(cfg),
                     "examples": [{"text": s["text"], "completion": s["completion"], "app": s["app"]} for s in self.prompt["shots"][: cfg["shots"]]]}
         st = self.styles[style]
-        return {"instructions": st["instructions"], "examples": [{"text": s["text"], "completion": s["completion"]} for s in st["shots"]]}
+        own = [{"text": s["text"], "completion": s["completion"]} for s in st["shots"]]
+        base = self.prompt_for("general", cfg)["examples"] if st.get("base") == "general" else []   # the mixed examples teach the format
+        return {"instructions": st.get("instructions") or self.default_instructions(cfg),     # general's instructions by default
+                "examples": base + own}
 
     def prompt_for(self, style="general", cfg=None):
         """The prompt in use: the user's version (instructions, and examples if they changed them), else the shipped one."""
@@ -383,7 +386,7 @@ class Ghost:
         r = link.call(op="prewarm", profile=name)
         return {"ok": r.get("ok", False), "profile": name, "prewarmed": r.get("prewarmed", False)}
 
-    def request(self, app, text, opts=None, style="general", prompt=None):
+    def request(self, app, text, opts=None, style="general", prompt=None, keep_app=False):
         """The generate request for this text, and the context `finish` needs; (None, ctx) when there is nothing to ask.
         `style`: a writing style (general = `app` is sent as is; others send their own label). `prompt`: try this prompt
         instead of the one in use (benchmarks)."""
@@ -391,7 +394,7 @@ class Ghost:
         cfg = self.config(opts)
         if style not in self.styles:
             style = "general"
-        if style != "general":
+        if style != "general" and not keep_app:          # benchmarks keep each case's own app label
             app = self.style_label(style)
         tail, est, trimmed = trim_tail(text, max(16, cfg["textBudget"]))
         ctx = {"cfg": cfg, "app": app, "text": text, "tail": tail, "est": est, "trimmed": trimmed, "t0": t0, "style": style,
@@ -431,10 +434,10 @@ class Ghost:
                 "tokens": {**tok, "text_est": ctx["est"], "budget": cfg["textBudget"], "trimmed": ctx["trimmed"],
                            "text_chars_in": len(text), "text_chars_used": len(ctx["tail"])}}
 
-    def predict(self, link, app, text, opts=None, stream=None, style="general", prompt=None):
+    def predict(self, link, app, text, opts=None, stream=None, style="general", prompt=None, keep_app=False):
         """Blocking: one suggestion for `text`. Registers the profile when predictd does not know it (first use, or the daemon
         restarted)."""
-        req, ctx = self.request(app, text, opts, style, prompt)
+        req, ctx = self.request(app, text, opts, style, prompt, keep_app)
         if req is None:
             return {"ok": True, "suggestion": "", "partial": "", "timing": {"total_ms": ctx["trim_ms"]}}
         if stream:

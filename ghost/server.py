@@ -10,14 +10,18 @@
                      entry), {"name": ..., "reset": true} restores the shipped one
     GET  /history?name=predict-chat  -> {"versions": [{"hash", "saved_at", "prompt", "result"}]}: the last saved versions
     POST /tokens     {"name", "prompt"?}  ->  {"instructions": n, "prompt": n (instructions + examples as sent), "ms": est.}
-    POST /bench      {"name", "prompt"?}  ->  benchmark result of that prompt (default: the one in use) on the style's cases
-                     (evaluate.py); stored by the prompt's hash, so history entries show it
+    POST /bench      {"name", "prompt"?, "scope": "all" | "user"}  ->  {"job"}: benchmark that prompt (default: the one in use)
+                     on the suite, per category (evaluate.py), and/or on the user's cases; runs in the background
+    GET  /bench?job= -> {"state": "running" | "done" | "error", "done", "total", "result"}: progress, then the result, which is
+                     also stored by the prompt's hash (history entries show it)
+    GET  /cases?name=  -> {"cases": [{"text", "rest"}]}: the user's own benchmark cases for a prompt
+    POST /cases      {"name", "cases": [...]} saves them
     GET  /health     -> {"ok", "port", "model": true if predictd answers}     POST /shutdown
 
 127.0.0.1 only. Requests on one `stream` replace each other (the older one answers {"ok": false, "error": "cancelled"}).
 Exits after `serverIdleExitSec` without requests. Started by `pred start` / `pred serve`.
 """
-import json, queue, threading, time, urllib.parse
+import json, queue, threading, time, urllib.parse, uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from . import evaluate, predictd
@@ -34,6 +38,7 @@ def serve(port=None, socket_path=predictd.SOCK, quiet=False):
     port = port or ghost.cfg["serverPort"]
     pool, last = queue.LifoQueue(), [time.monotonic()]
     bench_lock = threading.Lock()
+    jobs = {}                                            # benchmark jobs by id
     first = predictd.start(socket_path)
     ghost.ensure_profile(first, pin=True)
     pool.put(first)
@@ -99,9 +104,10 @@ def serve(port=None, socket_path=predictd.SOCK, quiet=False):
                 "title": ghost.style_title(key) if kind == "predict" else {"fix": "Proofread", "rewrite": "Rewrite"}[key],
                 "prompt": p, "default": d, "custom": ghost.user.get(name) is not None, "hash": prompt_hash(p),
                 "default_hash": prompt_hash(d), "result": ghost.user.result(name, p), "default_result": ghost.user.result(name, d),
+                "user_result": ghost.user.result(name, p, "user"), "user_cases": len(ghost.user.cases(name)),
                 "labels": ["Typed text", "Continuation"] if kind == "predict" else ["Input", "Output"],
                 "inherits": kind == "predict" and ghost.inherits(key) and ghost.user.get(name) is None,
-                "note": (("Uses General's prompt until you change it here. " if kind == "predict" and ghost.inherits(key) else "")
+                "note": (("Starts with General's examples, then examples of its own. " if kind == "predict" and ghost.styles.get(key, {}).get("base") == "general" else "")
                          + (f"{{words}} becomes the number of words to suggest ({ghost.cfg['words']})." if kind == "predict"
                             else "The model gets one paragraph at a time."))}
 
@@ -138,27 +144,46 @@ def serve(port=None, socket_path=predictd.SOCK, quiet=False):
         return with_link(count)
 
     def bench(req):
+        """Start a benchmark job; GET /bench?job= reports progress and the result."""
         name = req.get("name", "")
         kind, key = parse(name)
         prompt = clean(req["prompt"]) if req.get("prompt") else current(name)
+        scope = "user" if req.get("scope") == "user" else "all"
+        user_cases = ghost.user.cases(name)
+        if scope == "user" and not user_cases:
+            return {"ok": False, "error": "no cases of your own yet"}
         if not bench_lock.acquire(blocking=False):
             return {"ok": False, "error": "a benchmark is already running"}
-        try:
-            def run(ln):
-                if kind == "predict":
-                    res = evaluate.bench_style(ghost, ln, key, prompt)
-                else:
-                    res = evaluate.bench_proofread(proof, ln, key, prompt)
-                if ghost.pinned:                         # give the cache back to the prompt in use
-                    ln.call(op="prewarm", profile=ghost.pinned)
-                return res
-            res = with_link(run)
-            if "error" in res and res.get("ok") is False:
-                return res
-            ghost.user.save_result(name, prompt, res)
-            return {"ok": True, "name": name, "hash": prompt_hash(prompt), "result": res}
-        finally:
-            bench_lock.release()
+        job = uuid.uuid4().hex[:12]
+        jobs[job] = {"state": "running", "done": 0, "total": 0, "name": name, "hash": prompt_hash(prompt)}
+
+        def progress(done, total):
+            jobs[job].update(done=done, total=total)
+
+        def work():
+            try:
+                def run(ln):
+                    if kind == "predict":
+                        res = evaluate.bench_prompt(ghost, ln, key, prompt, user_cases, scope, progress)
+                    else:
+                        res = evaluate.bench_proofread(proof, ln, key, prompt, user_cases, scope, progress)
+                    if ghost.pinned:                     # give the cache back to the prompt in use
+                        ln.call(op="prewarm", profile=ghost.pinned)
+                    return res
+                res = with_link(run)
+                if res.get("ok") is False or res.get("error"):
+                    jobs[job].update(state="error", error=res.get("error", "failed"))
+                    return
+                ghost.user.save_result(name, prompt, res)
+                jobs[job].update(state="done", result=res)
+            except Exception as e:
+                jobs[job].update(state="error", error=f"{type(e).__name__}: {e}")
+            finally:
+                bench_lock.release()
+                for old in [j for j, v in jobs.items() if v["state"] != "running"][:-20]:
+                    jobs.pop(old, None)
+        threading.Thread(target=work, daemon=True).start()
+        return {"ok": True, "job": job}
 
     def model_up():
         try:
@@ -190,13 +215,20 @@ def serve(port=None, socket_path=predictd.SOCK, quiet=False):
                     return self.reply({"ok": True, "port": port, "model": model_up()})
                 if url.path == "/prompts":
                     return self.reply({"ok": True, "prompts": catalog(), "styles": [{"name": s, "title": ghost.style_title(s)} for s in ghost.style_names()]})
+                if url.path == "/bench":
+                    j = jobs.get((q.get("job") or [""])[0])
+                    return self.reply({"ok": True, **j} if j else {"ok": False, "error": "unknown job"})
+                if url.path == "/cases":
+                    name = (q.get("name") or [""])[0]
+                    parse(name)
+                    return self.reply({"ok": True, "name": name, "cases": ghost.user.cases(name)})
                 if url.path == "/history":
                     name = (q.get("name") or [""])[0]
                     parse(name)
                     return self.reply({"ok": True, "name": name, "versions": ghost.user.history(name)})
             except ValueError as e:
                 return self.reply({"ok": False, "error": str(e)}, 400)
-            self.reply({"ok": False, "error": "GET /health, /prompts or /history?name="}, 404)
+            self.reply({"ok": False, "error": "GET /health, /prompts, /history?name=, /cases?name= or /bench?job="}, 404)
 
         def do_POST(self):
             last[0] = time.monotonic()
@@ -223,8 +255,11 @@ def serve(port=None, socket_path=predictd.SOCK, quiet=False):
                     r = tokens(req)
                 elif self.path == "/bench":
                     r = bench(req)
+                elif self.path == "/cases":
+                    parse(req.get("name", ""))
+                    r = {"ok": True, "cases": ghost.user.set_cases(req["name"], req.get("cases"))}
                 else:
-                    return self.reply({"ok": False, "error": "POST /predict, /warm, /proofread, /prompts, /tokens or /bench"}, 404)
+                    return self.reply({"ok": False, "error": "POST /predict, /warm, /proofread, /prompts, /tokens, /bench or /cases"}, 404)
             except (ValueError, OSError) as e:
                 return self.reply({"ok": False, "error": str(e)}, 400)
             self.reply(r)

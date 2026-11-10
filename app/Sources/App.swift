@@ -29,7 +29,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         Pref.migrate()
         Pref.register()
         status = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        status.button?.image = NSImage(systemSymbolName: "character.cursor.ibeam", accessibilityDescription: "Homeword")
+        let icon = NSImage(named: "MenuBarIcon") ?? NSImage(systemSymbolName: "house", accessibilityDescription: nil)
+        icon?.isTemplate = true                                 // black on transparent: macOS tints it for the menu bar
+        icon?.accessibilityDescription = "Homeword"
+        status.button?.image = icon
         let menu = NSMenu()
         menu.delegate = self
         status.menu = menu

@@ -1,5 +1,7 @@
 # Homeword: the Mac app (prototype)
 
+<img src="Icon/icon.svg" width="96" align="right" alt="Homeword icon">
+
 Homeword is a menu bar app that suggests your next words and proofreads selected text in every app. It uses only Apple's
 on-device model through the local engine, so your words never leave home (the Mac).
 
@@ -106,20 +108,28 @@ Code); the host is used in memory only. Built-in tables: `Sources/Styles.swift`.
 **Prompts.** A list of the prompts: Suggestions (General, Chat, Email, Work documents, Academic, Code) and Proofreading (Proofread,
 Rewrite); a dot marks your version. For the selected one:
 
-- Instructions and examples, editable (up to 12 examples; the model imitates them more than the instructions). In suggestion
-  prompts `{words}` becomes the number of words to suggest, and a continuation starts with the rest of an unfinished word (no
-  space), or a space after a whole word.
-- Characters, tokens of the instructions and of the whole prompt as sent, and its cost: about 0.55 ms per token on every
-  suggestion.
+- Instructions, and the examples in a two-box editor: typed text on the left, its continuation on the right, paired by line
+  number (line 3 left goes with line 3 right). Both boxes have the same height, scroll together and show line numbers; the line
+  being edited is highlighted and underlined in both. Spaces at the start or end of a line are shaded, because they matter. Up to 12
+  examples; the model imitates them more than the instructions. In suggestion prompts `{words}` becomes the number of words to
+  suggest, and a continuation starts with the rest of an unfinished word (no space), or a space after a whole word.
+- Examples count, characters, tokens of the instructions and of the whole prompt as sent, and its cost: about 0.55 ms per token
+  on every request.
 - Save (⌘S) applies it to the next request; Revert drops unsaved edits; Reset to Default restores the shipped prompt.
-- **Benchmark**: Run tests the draft (or the saved prompt), Run Default the shipped one, on that style's cases: 14 synthetic texts
-  per style ("does it guess what was typed next?") or 12 sentences with known mistakes for proofreading. The table shows latency
-  p50, next word right, words right (mean matching leading words), word completions right and shown; for proofreading, fully
-  corrected and word match; for rewriting, latency and length only. Suggestions pause while it runs (~5-10 s).
+- **Your test cases**: the same two-box editor (typed text | what comes next; for proofreading, text | corrected text). Saved per
+  prompt as you type, on this Mac, outside the repo.
+- **Benchmark**: the suite from `bench/` (164 texts: `bench/cases.json` and `bench/styles.json`), each tagged with a category:
+  Chat, Email, Work documents, Academic, Code, General, Terminal. Run Full Benchmark runs the draft (or the saved prompt) on all of
+  them plus your cases; Run Your Cases runs only yours; Run Default runs the shipped prompt for comparison. A progress bar counts
+  the cases (a full run takes about a minute; suggestions pause meanwhile). The results table has a row per category, All (ours),
+  and Your cases as its own row: cases, next word right, words right (mean matching leading words), word completions right, shown
+  and latency p50, with the difference to the default prompt in green or red. Proofreading: fully corrected and word match on 12
+  sentences with known mistakes; rewriting: length and latency only.
 - **Saved versions**: the last 20 per prompt, with their benchmark results. Load puts one back in the editor.
 
-Chat, Email, Academic and Code start as General's prompt ("Same as General"), because General's mixed examples predicted their cases
-at least as well as prompts written for them (bench/RESULTS.md); Work documents has its own. Changing one makes it its own prompt.
+Every suggestion type has its own examples. Chat, Email, Academic and Code start with General's six mixed examples, then two of
+their own: on the benchmark this beat six examples written only for the style, because the mixed ones teach the answer format
+(bench/RESULTS.md). Work documents has its own instructions and examples.
 Prompts and history are kept by the engine in `~/.config/input-predictor/` (`prompts.json`, `prompt-history.json`), outside the
 repo, so `pred try` and the agent integrations use them too.
 
@@ -156,7 +166,8 @@ Tab presses.
 |---|---|
 | `Sources/App.swift` | entry, menu bar item and menu, shortcuts, permissions, the Settings window |
 | `Sources/SettingsView.swift` | the Settings tabs: General, Apps, Statistics, Engine |
-| `Sources/PromptsView.swift` | the Prompts tab: editor, token counts, benchmark, saved versions |
+| `Sources/PromptsView.swift` | the Prompts tab: editor, token counts, test cases, benchmark per category, saved versions |
+| `Sources/PairedLinesEditor.swift` | the two-box, line-paired editor (examples and test cases) |
 | `Sources/Styles.swift` | writing styles: built-in tables by bundle ID and web host, the user's choices |
 | `Sources/Hotkeys.swift` | shortcuts: matching, display, the recorder |
 | `Sources/Predictor.swift` | the suggestion loop: read the field, pick the style, ask, check the text is unchanged, show, follow, accept |
@@ -168,6 +179,12 @@ Tab presses.
 | `Sources/Metrics.swift` | the metrics file and the summary |
 
 Design notes for this version: [DESIGN.md](DESIGN.md).
+
+## Icon
+
+`Icon/icon.svg` (the app icon: a house holding a line of text, the cursor and the suggested words) and `Icon/menubar.svg` (the menu
+bar version, black on transparent: macOS tints it as a template image). `build.sh` renders them with AppKit (`Icon/svg2png.swift`)
+into `AppIcon.icns` (16 to 1024 px, via `iconutil`) and `MenuBarIcon.png` / `@2x`. Edit the SVGs and rebuild.
 
 ## Developing
 

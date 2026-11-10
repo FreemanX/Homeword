@@ -53,7 +53,12 @@ struct GeneralTab: View {
                     Text("Below the cursor").tag("below")
                     Text("Next to the cursor").tag("beside")
                 }
-                Stepper("Start after \(minChars) characters", value: $minChars, in: 1...20)
+                HStack {                                        // the value right next to its stepper
+                    Text("Start suggesting after")
+                    Spacer()
+                    Text("\(minChars) character\(minChars == 1 ? "" : "s")").monospacedDigit().foregroundStyle(.secondary)
+                    Stepper("", value: $minChars, in: 1...20).labelsHidden()
+                }
                 Toggle("Support Chrome-based browsers and Electron apps", isOn: $chromium)
                 Text("Tab inserts the highlighted word, Esc dismisses. Typing the suggestion's next letters keeps it. The writing style "
                      + "follows the app you type in (Apps tab).")

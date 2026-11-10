@@ -1,12 +1,34 @@
 {
-  "_doc": "Writing styles of the typing policy besides general (prompt.json). Per style: title (shown to users), label (the App: line of the template), and optionally its own prompt: instructions ({words} = the words knob) and shots (text typed so far -> completion: the rest of an unfinished word with no space, or a leading space after a finished word). A style without its own prompt uses general's (the user's version of it, if any). Measured on bench/styles.json: general's prompt predicted chat, email, academic and code cases as well as or better than prompts written for those styles; work documents did better with their own (bench/RESULTS.md). Synthetic text only.",
+  "_doc": "Writing styles of the typing policy besides general (prompt.json). Per style: title (shown to users), label (the App: line of the template), shots (its own examples: text typed so far -> completion: the rest of an unfinished word with no space, or a leading space after a finished word), optionally base: general (general's examples come first, then these) and instructions ({words} = the words knob; without, general's). Measured on the benchmark suite (bench/RESULTS.md): general's 6 mixed examples + 2 in the style's register beat 6 style-only examples for chat, email, academic and code; work does best with its own prompt. Synthetic text only, none of it in the benchmark cases.",
   "chat": {
     "title": "Chat",
-    "label": "chat"
+    "label": "chat",
+    "base": "general",
+    "shots": [
+      {
+        "text": "sounds good, see you at the cof",
+        "completion": "fee place around noon"
+      },
+      {
+        "text": "I'm so sorry, I totally forg",
+        "completion": "ot to reply to your message"
+      }
+    ]
   },
   "email": {
     "title": "Email",
-    "label": "mail"
+    "label": "mail",
+    "base": "general",
+    "shots": [
+      {
+        "text": "Thank you for reaching out. I am happy to help with your ques",
+        "completion": "tion about the new pricing plans"
+      },
+      {
+        "text": "I hope this email finds you well. I am writing to ask about the status of my or",
+        "completion": "der from last week"
+      }
+    ]
   },
   "work": {
     "title": "Work documents",
@@ -41,10 +63,32 @@
   },
   "academic": {
     "title": "Academic",
-    "label": "paper"
+    "label": "paper",
+    "base": "general",
+    "shots": [
+      {
+        "text": "In this study, we examine the impact of remote work on employee produc",
+        "completion": "tivity across several industries"
+      },
+      {
+        "text": "The data suggest a strong association between air pollution and respiratory dis",
+        "completion": "eases in urban populations"
+      }
+    ]
   },
   "code": {
     "title": "Code",
-    "label": "code"
+    "label": "code",
+    "base": "general",
+    "shots": [
+      {
+        "text": "    # Skip hidden files and directories when walking the tr",
+        "completion": "ee to avoid scanning caches"
+      },
+      {
+        "text": "// TODO: replace this linear search with a hash map once the list gets lar",
+        "completion": "ger than a few hundred items"
+      }
+    ]
   }
 }

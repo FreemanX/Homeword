@@ -31,7 +31,8 @@ a prototype menu bar Mac app (any text field, a writing style per app, proofread
 - `bench/`: `run.py` (fixed 80-case benchmark), `human_pty.py` (drives `pred try` like a typist), `compare.py`, `gen_cases.py` +
   `corpus.md` → `cases.json`, `machine.py`, `try_pty_test.py` (smoke test), `integration_latency.py` (keystroke → ghost in a real
   terminal app via tmux), `openai_compare.py` (native protocol vs OpenAI API on the typing workload), `styles.json` + `run.py
-  --styles` (cases and benchmark per writing style, also run by Homeword), `app_metrics.py` (summary of Homeword's usage metrics),
+  --styles` (the suite: cases.json + styles.json, 164 cases in 7 categories; every style's prompt reported per category, also run
+  by Homeword's Prompts tab with the user's own cases), `app_metrics.py` (summary of Homeword's usage metrics),
   `baselines/` (shared results), `RESULTS.md`.
 - `integrations/pi/ghost-editor.ts`: pi extension (a `CustomEditor` subclass drawing the ghost in the fake cursor and padding).
 - `integrations/claude-code/`: Claude Code mod (`prompt.edit` hook + `$.prompt.fill` decorations; Tab/→ through two commands bound in
@@ -41,7 +42,7 @@ a prototype menu bar Mac app (any text field, a writing style per app, proofread
   the configurable proofread/rewrite shortcuts), a non-activating panel shows the suggestion. Settings: General, Apps (style per
   app), Prompts (editor, benchmark, history), Statistics, Engine. Metrics in `~/Library/Application Support/Homeword/metrics.jsonl`:
   counts and timings only, never text. Keep it that way. User-facing text avoids internal terms (policy, profile, predictd): say
-  engine, writing style, prompt. Design notes: `app/DESIGN.md`.
+  engine, writing style, prompt. Design notes: `app/DESIGN.md`. Icons: `app/Icon/*.svg`, rendered by `build.sh` with AppKit.
 
 ## Build and run
 
@@ -115,7 +116,8 @@ Policy (ghost, typing):
 - Benchmarks must not see the user's prompts or config overrides: scripts use `Ghost(user=False)`, spawned `pred` processes get
   `PRED_NO_USER=1`, a spawned predictd `--user-config ""`. `integration_latency.py` drives the running engine, which uses them.
 - Writing styles: the general prompt (prompt.json) is the one all earlier baselines used; keep its profile unchanged unless you mean
-  to break comparability. A style gets its own prompt only when it beats general's on its cases (`run.py --styles`).
+  to break comparability. Change a style's prompt only when it beats the current one on its category (`run.py --styles`); style-only
+  examples lost to general's mixed ones, so styles keep general's 6 examples first (`"base": "general"`).
 
 ## Repo rules
 

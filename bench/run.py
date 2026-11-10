@@ -171,19 +171,25 @@ def run_typing(c, aux, ghost, cases, key_ms, nkeys=12, ncases=8):
 
 
 def run_styles(a, c, ghost, proc):
-    from ghost.evaluate import bench_proofread, bench_style
+    """Every writing style's prompt on the whole suite (bench/cases.json + bench/styles.json), reported per category."""
+    from ghost.evaluate import CATEGORIES, bench_proofread, bench_prompt
     from ghost.proofread import Proofreader
     results = {}
-    print(f"{'prompt':18} {'cases':>5} {'p50 ms':>7} {'p90 ms':>7}  quality")
+    cats = [k for k, _ in CATEGORIES]
+    print("next word right per category (cases), latency p50 over all cases")
+    print(f"{'prompt':18}" + "".join(f"{k:>10}" for k in cats) + f"{'all':>8}{'p50':>8}")
     for st in ghost.style_names():
-        r = results["predict-" + st] = bench_style(ghost, c, st)
-        print(f"{'predict-' + st:18} {r['cases']:5} {r['latency_p50']:7} {r['latency_p90']:7}  next word {r['next_word']:.0%}, words right "
-              f"{r['words_right']:.2f}, completions {r['completions']:.0%}, shown {r['shown']:.0%}")
+        r = results["predict-" + st] = bench_prompt(ghost, c, st)
+        by = {x["name"]: x for x in r["categories"]}
+        print(f"{'predict-' + st:18}" + "".join(f"{by[k]['next_word']:>9.0%} " if k in by else f"{'-':>10}" for k in cats)
+              + f"{r['overall']['next_word']:>7.0%} {r['overall']['latency_p50']:>5} ms")
+    print("cases:" + " " * 12 + "".join(f"{x['cases']:>10}" for x in r["categories"]))
     proof = Proofreader(ghost.cfg)
     for mode in ("fix", "rewrite"):
         r = results["proofread-" + mode] = bench_proofread(proof, c, mode)
-        q = f"exact {r['exact']:.0%}, word match {r['word_match']:.2f}" if mode == "fix" else f"length ratio {r['length_ratio']}"
-        print(f"{'proofread-' + mode:18} {r['cases']:5} {r['latency_p50']:7} {r['latency_p90']:7}  {q}")
+        o = r["overall"]
+        q = f"fully corrected {o['exact']:.0%}, word match {o['word_match']:.2f}" if mode == "fix" else f"length ratio {o['length_ratio']}"
+        print(f"{'proofread-' + mode:18} {o['cases']} cases, p50 {o['latency_p50']} ms, {q}")
     res = HERE / "results"
     res.mkdir(exist_ok=True)
     path = res / f"{datetime.datetime.now():%Y%m%d-%H%M%S}-{a.label}-styles.json"
@@ -208,8 +214,8 @@ def main():
     ap.add_argument("--key-ms", type=float, default=150)
     ap.add_argument("--cases", default=str(HERE / "cases.json"))
     ap.add_argument("--limit", type=int, default=0)
-    ap.add_argument("--styles", action="store_true", help="benchmark every writing style and proofreading on bench/styles.json "
-                    "with the shipped prompts (the numbers the Mac app's Prompts tab shows)")
+    ap.add_argument("--styles", action="store_true", help="every writing style's shipped prompt on the whole suite (cases.json + "
+                    "styles.json), per category, and proofreading (what Homeword's Prompts tab runs)")
     a = ap.parse_args()
     proc, sock = None, a.socket
     if a.spawn:

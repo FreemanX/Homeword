@@ -8,7 +8,10 @@ Files, in the directory of the `userPrompts` knob (default ~/.config/input-predi
 writes there is theirs):
   prompts.json          {name: prompt}: the overrides in use (an older form, {name: "instructions"}, still loads)
   prompt-history.json   {"versions": {name: [{"hash", "saved_at", "prompt"}]}, "results": {hash: {name: result}}}: the last
-                        `HISTORY` saved versions per prompt, and benchmark results by prompt content hash
+                        `HISTORY` saved versions per prompt, and benchmark results by prompt content hash (a run on the user's
+                        cases only is kept under "<name>#user", so it does not replace a full run)
+  test-cases.json       {name: [{"text", "rest"}]}: the user's own benchmark cases per prompt (rest = what comes next, or the
+                        expected output for proofreading)
 A changed prompt makes a new predictd profile (profiles are named by a hash of their content), so the change applies to the next
 request; the first one after it is uncached.
 """
@@ -17,6 +20,7 @@ import hashlib, json, os, tempfile, threading, time
 MAX_CHARS = 6000                          # instructions + examples + input must fit the 8192-token window
 MAX_EXAMPLES = 12
 HISTORY = 20
+MAX_CASES = 200
 
 
 def prompt_hash(prompt):
@@ -64,6 +68,7 @@ class UserPrompts:
     def __init__(self, path):
         self.path = os.path.expanduser(path) if path else None
         self.history_path = os.path.join(os.path.dirname(self.path), "prompt-history.json") if self.path else None
+        self.cases_path = os.path.join(os.path.dirname(self.path), "test-cases.json") if self.path else None
         self.lock = threading.Lock()
         self.stamp, self.data = None, {}
 
@@ -135,15 +140,44 @@ class UserPrompts:
             h = self._history()
             return [{**v, "result": h["results"].get(v["hash"], {}).get(name)} for v in reversed(h["versions"].get(name, []))]
 
-    def result(self, name, prompt):
+    def result(self, name, prompt, scope="all"):
         with self.lock:
-            return self._history()["results"].get(prompt_hash(prompt), {}).get(name)
+            return self._history()["results"].get(prompt_hash(prompt), {}).get(name if scope == "all" else name + "#user")
 
     def save_result(self, name, prompt, result):
         if not self.history_path:
             return
         with self.lock:
             h = self._history()
-            h["results"].setdefault(prompt_hash(prompt), {})[name] = result
+            h["results"].setdefault(prompt_hash(prompt), {})[name if result.get("scope") == "all" else name + "#user"] = result
             self._prune(h)
             _write(self.history_path, h)
+
+    # -- the user's own benchmark cases, per prompt
+
+    def cases(self, name):
+        with self.lock:
+            d = _read(self.cases_path) if self.cases_path else None
+            return (d or {}).get(name, []) if isinstance(d, dict) else []
+
+    def set_cases(self, name, cases):
+        """Save the user's cases for a prompt: pairs with both sides non-empty (the text keeps its spaces: they matter)."""
+        if not self.cases_path:
+            raise ValueError("no user prompt file configured")
+        clean_cases = []
+        for c in cases or []:
+            if not isinstance(c, dict) or not isinstance(c.get("text"), str) or not isinstance(c.get("rest"), str):
+                raise ValueError("each case needs text and rest")
+            if c["text"].strip() and c["rest"].strip():
+                clean_cases.append({"text": c["text"], "rest": c["rest"]})
+        if len(clean_cases) > MAX_CASES:
+            raise ValueError(f"at most {MAX_CASES} cases")
+        with self.lock:
+            d = _read(self.cases_path)
+            d = d if isinstance(d, dict) else {}
+            if clean_cases:
+                d[name] = clean_cases
+            else:
+                d.pop(name, None)
+            _write(self.cases_path, d)
+        return clean_cases
