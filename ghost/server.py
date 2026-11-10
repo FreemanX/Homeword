@@ -2,6 +2,8 @@
 
     POST /predict    {"app": "chat", "text": "See you tomor", "stream": "pi", "opts": {...}}  ->  the ghost answer (see policy.py)
     POST /proofread  {"text": "...", "mode": "fix" | "rewrite"}  ->  {"text", "changed", "changes", "timing", ...} (proofread.py)
+    GET  /prompts    -> {"prompts": [{"name", "title", "text", "default", "custom", "note"}]}: the instructions, editable (prompts.py)
+    POST /prompts    {"name": "typing", "text": "..."} saves the user's version, {"name": ..., "reset": true} restores the default
     GET  /health     POST /shutdown
 
 127.0.0.1 only. Requests on one `stream` replace each other (the older one answers {"ok": false, "error": "cancelled"}).
@@ -12,12 +14,13 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from . import predictd
 from .policy import Ghost
-from .proofread import Proofreader
+from .proofread import INSTRUCTIONS, Proofreader
+from .prompts import NAMES
 
 
 def serve(port=None, socket_path=predictd.SOCK, quiet=False):
     ghost = Ghost()
-    proof = Proofreader(ghost.cfg)
+    proof = Proofreader(ghost.cfg, ghost.user)
     port = port or ghost.cfg["serverPort"]
     pool, last = queue.LifoQueue(), [time.monotonic()]
     first = predictd.start(socket_path)
@@ -37,6 +40,19 @@ def serve(port=None, socket_path=predictd.SOCK, quiet=False):
             except queue.Empty:
                 return
 
+    titles = {"typing": "Input prediction", "proofread-fix": "Proofread", "proofread-rewrite": "Rewrite"}
+    notes = {"typing": "{words} becomes the number of words to suggest. The model also sees 6 examples (ghost/prompt.json).",
+             "proofread-fix": "The model also sees 3 examples (ghost/proofread.py).",
+             "proofread-rewrite": "The model also sees 2 examples (ghost/proofread.py)."}
+
+    def prompts():
+        out = []
+        for n in NAMES:
+            default = ghost.default_instructions(ghost.cfg) if n == "typing" else INSTRUCTIONS[n.split("-", 1)[1]]
+            out.append({"name": n, "title": titles[n], "text": ghost.user.get(n, default), "default": default,
+                        "custom": ghost.user.custom(n), "note": notes[n]})
+        return out
+
     class Handler(BaseHTTPRequestHandler):
         def reply(self, obj, code=200):
             body = json.dumps(obj).encode()
@@ -47,7 +63,10 @@ def serve(port=None, socket_path=predictd.SOCK, quiet=False):
             self.wfile.write(body)
 
         def do_GET(self):
-            self.reply({"ok": True} if self.path == "/health" else {"ok": False, "error": "GET /health"}, 200 if self.path == "/health" else 404)
+            last[0] = time.monotonic()
+            if self.path == "/prompts":
+                return self.reply({"ok": True, "prompts": prompts()})
+            self.reply({"ok": True} if self.path == "/health" else {"ok": False, "error": "GET /health or /prompts"}, 200 if self.path == "/health" else 404)
 
         def do_POST(self):
             last[0] = time.monotonic()
@@ -56,12 +75,18 @@ def serve(port=None, socket_path=predictd.SOCK, quiet=False):
                 self.reply({"ok": True})
                 threading.Thread(target=server.shutdown, daemon=True).start()
                 return
-            if self.path not in ("/predict", "/proofread"):
-                return self.reply({"ok": False, "error": "POST /predict or /proofread"}, 404)
+            if self.path not in ("/predict", "/proofread", "/prompts"):
+                return self.reply({"ok": False, "error": "POST /predict, /proofread or /prompts"}, 404)
             try:
                 req = json.loads(body or b"{}")
             except ValueError:
                 return self.reply({"ok": False, "error": "body is not JSON"}, 400)
+            if self.path == "/prompts":                      # no model involved
+                try:
+                    ghost.user.set(req.get("name", ""), "" if req.get("reset") else req.get("text", ""))
+                except (ValueError, OSError) as e:
+                    return self.reply({"ok": False, "error": str(e)}, 400)
+                return self.reply({"ok": True, "prompts": prompts()})
             r = {"ok": False, "error": "predictd unavailable"}
             for attempt in (0, 1):
                 try:

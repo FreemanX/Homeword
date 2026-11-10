@@ -21,8 +21,9 @@ prototype menu bar Mac app (any text field, plus proofreading of the selection).
   OpenAI-compatible chat API there (`/v1/models`, `/v1/chat/completions`: streaming, tool calls returned to the caller, JSON schema;
   docs/OPENAI.md). The context window is 8192 tokens.
 - **Policy** `ghost/` (Python, standard library only): the typing predictor and the proofreader. `policy.py` (profile from
-  `prompt.json`, trim, generate, assemble), `proofread.py` (fix or rewrite a text, word diff), `config.json` (their knobs),
-  `predictd.py` (generic predictd client), `server.py` (HTTP `127.0.0.1:47321`, `POST /predict` and `POST /proofread`, for
+  `prompt.json`, trim, generate, assemble), `proofread.py` (fix or rewrite a text, per paragraph, word diff), `prompts.py`
+  (the user's own instructions, in `~/.config/input-predictor/prompts.json`), `config.json` (their knobs), `predictd.py`
+  (generic predictd client), `server.py` (HTTP `127.0.0.1:47321`: `POST /predict`, `POST /proofread`, `GET`/`POST /prompts`, for
   non-Python apps).
 - `bin/pred`: CLI on the policy. `pred try` (interactive line editor, Enter = new round with stats), `pred ask`, `pred serve`,
   `pred start|stop|status` (predictd + ghost server).
@@ -137,6 +138,10 @@ cursor). Test Claude Code with a throwaway `CLAUDE_CONFIG_DIR` holding the keybi
 - zsh: never name a loop variable `path` (it is tied to `PATH`).
 - A freshly compiled binary is slow on its very first launch; `build.sh` runs it once.
 - `python3` may be a wrapper on some machines; any Python 3.9+ works.
+- Mac app: no SwiftUI `@State` (a macro on macOS 27 SDKs; its plugin ships with Xcode only, and `app/build.sh` uses the command
+  line tools): keep view state in `ObservableObject`s. Check UI with `--args -show <tab>` / `-demoProofread file` and a window
+  screenshot (`screencapture -l <window id>`), never a full-screen one.
+- Importing `bench/run.py` used to start a benchmark; it now has a `__main__` guard. Keep scripts importable.
 
 ## Open questions and future work
 

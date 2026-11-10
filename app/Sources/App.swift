@@ -19,7 +19,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let tap = KeyTap()
     private let predictor = Predictor()
     private let proofreader = Proofreader()
-    private var windows: [String: NSWindow] = [:]
+    private var settings: NSWindow?
+    private let nav = SettingsNav()
     private var tapRunning = false, axTrusted = false, askedListen = false
     private var permissionTimer: Timer?
 
@@ -40,6 +41,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         Services.shared.onChange = { [weak self] in self?.updateIcon() }
         Services.shared.check()
         startTap(prompt: true)
+
+        // for development: `open InputPredictor.app --args -show prompts` opens a Settings tab, `-demoProofread file` runs the
+        // proofread panel on a file's text (no selection, Replace disabled)
+        let args = UserDefaults(suiteName: UserDefaults.argumentDomain)
+        if let tab = args?.string(forKey: "show") { showSettings(tab: tab) }
+        if let path = args?.string(forKey: "demoProofread"), let text = try? String(contentsOfFile: path, encoding: .utf8) {
+            proofreader.demo(text: text, mode: args?.string(forKey: "demoMode") ?? "fix")
+        }
     }
 
     func applicationWillTerminate(_ note: Notification) { Metrics.shared.flushKeys() }
@@ -107,7 +116,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(NSMenuItem(title: "Services: \(Services.shared.state.rawValue)", action: Services.shared.state == .running ? nil : #selector(startServices), keyEquivalent: ""))
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "Statistics…", action: #selector(showStats), keyEquivalent: ""))
-        menu.addItem(NSMenuItem(title: "Settings…", action: #selector(showSettings), keyEquivalent: ","))
+        menu.addItem(NSMenuItem(title: "Settings…", action: #selector(showSettingsGeneral), keyEquivalent: ","))
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "Quit InputPredictor", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
         for item in menu.items where item.action != nil && item.action != #selector(NSApplication.terminate(_:)) { item.target = self }
@@ -126,119 +135,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent")!)
     }
     @objc private func startServices() { Services.shared.start(force: true) }
-    @objc private func showSettings() {
-        show("settings", title: "InputPredictor Settings", view: SettingsView(openStats: { [weak self] in self?.showStats() }))
-    }
-    @objc private func showStats() { show("stats", title: "InputPredictor Statistics", view: StatsView()) }
+    @objc private func showSettingsGeneral() { showSettings(tab: "general") }
+    @objc private func showStats() { showSettings(tab: "stats") }
 
-    private func show<V: View>(_ id: String, title: String, view: V) {
-        let w = windows[id] ?? {
-            let w = NSWindow(contentViewController: NSHostingController(rootView: view))
-            w.title = title
-            w.styleMask = [.titled, .closable, .miniaturizable]
+    private func showSettings(tab: String) {
+        nav.tab = tab
+        let w = settings ?? {
+            let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 640, height: 560), styleMask: [.titled, .closable, .miniaturizable],
+                             backing: .buffered, defer: false)
+            w.title = "InputPredictor"
+            w.contentView = NSHostingView(rootView: SettingsView(nav: nav))
             w.isReleasedWhenClosed = false
-            windows[id] = w
+            w.center()
+            settings = w
             return w
         }()
-        if id == "stats" { w.contentViewController = NSHostingController(rootView: view) }   // fresh numbers
-        w.center()
         NSApp.activate()
         w.makeKeyAndOrderFront(nil)
     }
-}
-
-// MARK: settings and statistics windows
-
-struct SettingsView: View {
-    @AppStorage(Pref.predictions) var predictions = true
-    @AppStorage(Pref.proofreading) var proofreading = true
-    @AppStorage(Pref.minChars) var minChars = 3
-    @AppStorage(Pref.position) var position = "below"
-    @AppStorage(Pref.chromium) var chromium = true
-    @AppStorage(Pref.excluded) var excluded = Pref.defaultExcluded
-    @AppStorage(Pref.server) var server = "http://127.0.0.1:47321"
-    var openStats: () -> Void
-
-    var body: some View {
-        Form {
-            Section("Input prediction") {
-                Toggle("Predict while typing", isOn: $predictions)
-                Picker("Pop-up position", selection: $position) {
-                    Text("Below the cursor").tag("below")
-                    Text("Next to the cursor").tag("beside")
-                }
-                Stepper("Start after \(minChars) characters", value: $minChars, in: 1...20)
-                Toggle("Better support in Chrome-based browsers (turns on their accessibility mode)", isOn: $chromium)
-                Text("Tab inserts the next word, Esc dismisses. Typing the suggestion's next letters keeps the rest.")
-                    .font(.caption).foregroundStyle(.secondary)
-            }
-            Section("Proofreading") {
-                Toggle("Proofread and rewrite the selection", isOn: $proofreading)
-                Text("⌃⌥P fixes typos and grammar, ⌃⌥R rewrites more clearly; both keep your meaning. Return replaces the selection.")
-                    .font(.caption).foregroundStyle(.secondary)
-            }
-            Section("Never predict in these apps (bundle IDs, one per line)") {
-                TextEditor(text: $excluded).font(.system(.caption, design: .monospaced)).frame(height: 110)
-            }
-            Section("Services") {
-                TextField("Policy server", text: $server)
-                HStack {
-                    Button("Start services") { Services.shared.start(force: true) }
-                    Button("Open Accessibility settings") {
-                        NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!)
-                    }
-                }
-            }
-            Section("Metrics (counts and timings only, never your text)") {
-                HStack {
-                    Button("Show statistics…", action: openStats)
-                    Button("Reveal file") { NSWorkspace.shared.activateFileViewerSelecting([Metrics.shared.url]) }
-                    Button("Reset") { Metrics.shared.reset() }
-                }
-            }
-        }
-        .formStyle(.grouped)
-        .frame(width: 520)
-        .padding(.vertical, 8)
-    }
-}
-
-struct StatsView: View {
-    let s = MetricsSummary(Metrics.shared.load())
-
-    var body: some View {
-        Form {
-            Section("Predictions") {
-                row("Suggestions shown", "\(s.shown)")
-                row("Accepted (at least one word)", s.shown > 0 ? "\(s.accepted) (\(pct(s.accepted, s.shown)))" : "–")
-                row("Words accepted", "\(s.acceptedWords)")
-                row("Characters inserted by Tab", s.keys > 0 ? "\(s.acceptedChars) (\(pct(s.acceptedChars, s.keys + s.acceptedChars)) of the text)" : "\(s.acceptedChars)")
-                row("Characters typed along a suggestion", "\(s.typedAlong)")
-                row("Key → pop-up, p50 / p90", ms(MetricsSummary.pct(s.latencies, 50)) + " / " + ms(MetricsSummary.pct(s.latencies, 90)))
-                row("Model time, p50", ms(MetricsSummary.pct(s.models, 50)))
-                row("Answers with nothing to show / errors", "\(s.empty) / \(s.errors)")
-            }
-            if !s.perApp.isEmpty {
-                Section("By app") {
-                    ForEach(s.perApp.sorted { $0.value.shown > $1.value.shown }.prefix(8), id: \.key) { app, v in
-                        row(app, "\(v.shown) shown, \(pct(v.accepted, v.shown)) accepted")
-                    }
-                }
-            }
-            Section("Proofreading") {
-                row("Requests", "\(s.proofreads)")
-                row("Replaced / copied / cancelled / failed", "\(s.replaced) / \(s.copied) / \(s.cancelled) / \(s.failed)")
-                row("Answer time, p50", ms(MetricsSummary.pct(s.proofLatencies, 50)))
-            }
-        }
-        .formStyle(.grouped)
-        .frame(width: 480)
-        .padding(.vertical, 8)
-    }
-
-    private func row(_ k: String, _ v: String) -> some View {
-        HStack { Text(k); Spacer(); Text(v).monospacedDigit().foregroundStyle(.secondary) }
-    }
-    private func pct(_ a: Int, _ b: Int) -> String { b > 0 ? "\(Int((Double(a) / Double(b) * 100).rounded()))%" : "–" }
-    private func ms(_ x: Double?) -> String { x.map { "\(Int($0)) ms" } ?? "–" }
 }

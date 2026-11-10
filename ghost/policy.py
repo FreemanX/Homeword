@@ -15,6 +15,8 @@ the suggestion.
 """
 import copy, hashlib, json, os, re, threading, time
 
+from .prompts import UserPrompts
+
 HERE = os.path.dirname(os.path.realpath(__file__))
 CONFIG = os.path.join(HERE, "config.json")
 PROMPT = os.path.join(HERE, "prompt.json")
@@ -65,6 +67,35 @@ def trim_tail(text, budget):
         if cut < len(window) and not window[cut - 1].isspace():
             cut += 1
     return window[cut:], cost, not whole
+
+
+def norm_word(w):
+    return w.strip(STRIP + "([{“‘").lower()
+
+
+def cut_repeat(text, partial, comp, n, window):
+    """Cut comp before the first word that would complete an n-gram already in the last `window` words of text (or earlier in
+    comp). The model likes to echo recent phrases, and accepting the echo again and again loops ("timeline changes timeline
+    adjustments timeline changes ..."). The completion of an unfinished word (`partial` + first piece) is always kept.
+    Returns (comp, cut)."""
+    ctx = [norm_word(w) for w in text.split()[-window:]]
+    if partial and ctx:
+        ctx.pop()                                               # the unfinished word is completed by the first piece
+    spans = [(m.start(), m.end()) for m in re.finditer(r"\S+", comp)]
+    words = [norm_word(comp[a:b]) for a, b in spans]
+    if partial and words:
+        words[0] = norm_word(partial + comp[spans[0][0]:spans[0][1]])
+    seq = ctx + words
+    seen = {tuple(seq[i:i + n]) for i in range(len(ctx) - n + 1)}
+    for j in range(len(words)):
+        p = len(ctx) + j
+        if p < n - 1:
+            continue
+        g = tuple(seq[p - n + 1:p + 1])
+        if g in seen and all(g) and not (partial and j == 0):
+            return comp[:spans[j][0]].rstrip(), True
+        seen.add(g)
+    return comp, False
 
 
 def sentence_end(s):
@@ -136,7 +167,7 @@ def assemble(text, completion, app, cfg, truncated, speller):
     """Turn the model's raw continuation into the ghost to show after `text`."""
     lenient = app in cfg["lenientApps"]
     a = {"shown": "", "raw": "", "partial": "", "first_word": "", "dropped_partial": False, "sentence_end": False, "glued": False,
-         "respaced": False, "valid": True, "suppressed": None, "words": 0, "misspelled": 0}
+         "respaced": False, "valid": True, "suppressed": None, "words": 0, "misspelled": 0, "repeat_cut": False}
     comp = completion.replace("\n", " ")
     partial = trailing_partial(text)
     a["partial"] = partial
@@ -213,10 +244,19 @@ def assemble(text, completion, app, cfg, truncated, speller):
             comp = " " + comp
     else:
         a["first_word"] = comp.split()[0] if comp.split() else ""
+        # a new word must be a word too ("adjustments" + tab + "ments"); lowercase only, so names and acronyms pass
+        w = norm_word(a["first_word"])
+        if w and w == a["first_word"].strip(STRIP + "([{“‘") and not lenient and not speller.ok(w):
+            a["valid"] = False
+    if cfg.get("repeatNgram", 0) > 0 and comp.strip():
+        comp, a["repeat_cut"] = cut_repeat(text, partial if a["glued"] else "", comp, cfg["repeatNgram"], cfg.get("repeatWindow", 60))
+        a["words"] = len(comp.split())
     a["misspelled"] = sum(1 for t in (partial + comp).split() if not speller.ok(t.strip(",.;:!?\"'()[]{}")))
     a["shown"] = comp
-    if a["glued"] and not a["valid"] and cfg["invalidPolicy"] == "drop" and not lenient:
+    if not a["valid"] and cfg["invalidPolicy"] == "drop" and not lenient:
         a["shown"], a["suppressed"] = "", "invalid_word"
+    elif a["repeat_cut"] and not comp.strip():
+        a["shown"], a["suppressed"] = "", "repetition"
     return a
 
 
@@ -227,7 +267,9 @@ class Ghost:
         self.cfg = json.load(open(config))
         self.cfg.update(overrides or {})
         self.prompt = json.load(open(prompt))
+        self.user = UserPrompts(self.cfg.get("userPrompts", "~/.config/input-predictor/prompts.json"))
         self.registered = set()
+        self.pinned = None                                      # the profile predictd keeps warm for us
         self.lock = threading.Lock()
 
     def config(self, opts=None):
@@ -239,11 +281,16 @@ class Ghost:
         t = self.prompt.get("template", "App: {app}\nText: {text}")
         return t.replace("{app}", app).replace("{text}", text)
 
+    def default_instructions(self, cfg):
+        """The instructions prompt.json gives this configuration (`{words}` not yet filled in)."""
+        p = self.prompt
+        return p["instructions_fullword"] if cfg["format"] == "fullword" else p["instructions_short"] if cfg["instructions"] == "short" else p["instructions"]
+
     def profile(self, cfg):
         """The predictd profile for this configuration: instructions + examples. Its name is a hash of its content, so a
         request that changes the prompt (other `shots`, `instructions`, ...) gets its own profile instead of a stale one."""
         p, full, structured = self.prompt, cfg["format"] == "fullword", cfg["output"] == "structured"
-        ins = p["instructions_fullword"] if full else p["instructions_short"] if cfg["instructions"] == "short" else p["instructions"]
+        ins = self.user.get("typing", self.default_instructions(cfg))       # the user's own, if they set one
         examples = []
         for s in p["shots"][: cfg["shots"]]:
             comp = s["completion"]
@@ -258,11 +305,14 @@ class Ghost:
     def ensure_profile(self, link, cfg=None, pin=False, force=False):
         prof = self.profile(cfg or self.cfg)
         with self.lock:
-            if force or prof["name"] not in self.registered:
+            # re-send when the pinned profile changes too (a prompt edited and reset): profile.set of a known profile is free
+            if force or prof["name"] not in self.registered or (pin and self.pinned != prof["name"]):
                 r = link.call(op="profile.set", pin=pin, **prof)
                 if not r.get("ok"):
                     raise RuntimeError(f"profile.set failed: {r.get('error')}")
                 self.registered.add(prof["name"])
+                if pin:
+                    self.pinned = prof["name"]
         return prof["name"]
 
     def request(self, app, text, opts=None):
@@ -299,7 +349,7 @@ class Ghost:
         t, tok = resp.get("timing", {}), resp.get("tokens", {})
         return {"id": resp.get("id"), "ok": True, "suggestion": a["shown"], "raw_suggestion": a["raw"], "model_completion": completion,
                 "partial": a["partial"], "first_word": a["first_word"], "sentence_end": a["sentence_end"], "truncated": truncated,
-                "dropped_partial": a["dropped_partial"], "glued": a["glued"], "respaced": a["respaced"], "valid": a["valid"],
+                "dropped_partial": a["dropped_partial"], "glued": a["glued"], "respaced": a["respaced"], "repeat_cut": a["repeat_cut"], "valid": a["valid"],
                 "suppressed": a["suppressed"], "words": a["words"], "misspelled": a["misspelled"],
                 "timing": {"trim_ms": ctx["trim_ms"], "wait_ms": t.get("wait_ms", 0), "model_ms": t.get("model_ms", 0),
                            "assemble_ms": asm_ms, "daemon_ms": t.get("total_ms", 0),

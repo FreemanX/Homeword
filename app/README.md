@@ -8,8 +8,11 @@ model:
   Same interaction as `pred try` and the agent integrations.
 - **Proofreading**: select text and press **⌃⌥P** to fix typos, spelling, grammar and punctuation, or **⌃⌥R** to rewrite it more
   clearly. Both keep the meaning and intent. A panel next to the selection shows the changes (removed words struck through,
-  new ones in green). **Return** replaces the selection, **⌘C** copies the result, **Esc** cancels. The app being edited keeps its
-  undo.
+  new ones in green) or the clean result, and scrolls for long texts. **Return** replaces the selection, **⌘C** copies the
+  result, **Esc** cancels. The app being edited keeps its undo. A warning appears when a paragraph came back much shorter than
+  it was (the model dropped something): check before replacing. Long texts take about 1 s per paragraph.
+- **Prompts**: the instructions the model gets for prediction, proofreading and rewriting can be edited in Settings → Prompts,
+  each with a reset to its default.
 - **Metrics** for improving the app: latency, acceptance, keystrokes saved, proofreading outcomes. Counts and timings only, never
   text (below).
 
@@ -76,6 +79,9 @@ Terminals and password managers are excluded by default (Settings → "Never pre
 
 ## Settings
 
+Menu → Settings… (⌘,) opens one window with four tabs: General (the table below), Prompts, Statistics and Services (the policy
+server's address and state, Start Services, the Accessibility state).
+
 | Setting | Default | What it does |
 |---|---|---|
 | Predict while typing | on | the input prediction; also in the menu |
@@ -88,7 +94,14 @@ Terminals and password managers are excluded by default (Settings → "Never pre
 
 The app sends a context label with each request, chosen by bundle ID (`mail`, `chat`, `code`, else `notes`: `appLabel` in
 `Sources/Services.swift`). The typing policy's knobs (words, tokens, spelling, ...) are in `ghost/config.json`
-([docs/CONFIG.md](../docs/CONFIG.md)), and the proofreading prompts are in `ghost/proofread.py`.
+([docs/CONFIG.md](../docs/CONFIG.md)).
+
+**Prompts.** Settings → Prompts shows the instructions for Input prediction, Proofread and Rewrite. Edit one and Save (⌘S): the
+next request uses it. Revert drops unsaved edits; Reset to Default restores the shipped prompt (a dot in the tab marks a custom
+one). In the typing prompt `{words}` becomes the number of words to suggest. The prompts are kept by the policy server (`GET`/`POST
+/prompts`) in `~/.config/input-predictor/prompts.json`, outside the repo, so `pred try` and the agent integrations use them too.
+The few-shot examples stay as shipped (`ghost/prompt.json`, `ghost/proofread.py`). A prompt that drops the examples' answer format
+(the rest of the word first, then the next words) makes predictions worse: Reset to Default when in doubt.
 
 ## Metrics
 
@@ -111,7 +124,8 @@ Tab presses.
 
 | File | What |
 |---|---|
-| `Sources/App.swift` | entry, menu bar item and menu, hotkeys, the Settings and Statistics windows |
+| `Sources/App.swift` | entry, menu bar item and menu, hotkeys, permissions, the Settings window |
+| `Sources/SettingsView.swift` | the Settings tabs: General, Prompts, Statistics, Services |
 | `Sources/Predictor.swift` | the prediction loop: read the field, ask, check the text is unchanged, show, follow, accept |
 | `Sources/SuggestionPanel.swift` | the pop-up: a borderless panel that never takes focus |
 | `Sources/Proofreader.swift` | selection → `/proofread` → the diff panel → paste |
@@ -120,9 +134,21 @@ Tab presses.
 | `Sources/Services.swift` | preferences, app labels, the HTTP client, starting the services |
 | `Sources/Metrics.swift` | the metrics file and the summary |
 
+## Developing
+
+`app/build.sh` compiles with the command line tools' `swiftc`. On macOS 27 SDKs SwiftUI's `@State` is a macro whose plugin
+ships only with Xcode, so the views keep their state in `ObservableObject`s (`@StateObject`, `@ObservedObject`, `@AppStorage`
+compile without it). Launch arguments for checking the UI without a target app:
+
+```sh
+open app/build/InputPredictor.app --args -show prompts          # general, prompts, stats, services
+open app/build/InputPredictor.app --args -demoProofread file.txt [-demoMode rewrite]   # the panel on a file's text; Replace is off
+```
+
 ## Known limits
 
 - Prototype. Single-line `NSTextField`s in some apps report no caret rect: the pop-up sits under the field.
+- Proofreading a long text shows a spinner until all paragraphs are done (about 1 s each); no progress per paragraph yet.
 - Synthetic typing goes to the focused app. If focus moves between the Tab press and the insertion, the word lands there.
 - After a proofread, the first keystroke's request is uncached: the proofreading profile took the model's one prefix cache (~0.3 s
   extra once).

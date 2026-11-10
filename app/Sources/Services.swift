@@ -83,6 +83,15 @@ final class Services {
         return task
     }
 
+    /// GET a JSON object (completion on the main thread).
+    func get(_ path: String, done: @escaping ([String: Any]?, String?) -> Void) {
+        guard let url = URL(string: base + path) else { return done(nil, "bad URL") }
+        session.dataTask(with: URLRequest(url: url, timeoutInterval: 5)) { data, _, error in
+            let obj = data.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
+            DispatchQueue.main.async { done(obj, obj == nil ? (error?.localizedDescription ?? "no answer") : nil) }
+        }.resume()
+    }
+
     func check() {
         guard let url = URL(string: base + "/health") else { return }
         session.dataTask(with: URLRequest(url: url, timeoutInterval: 2)) { data, _, _ in

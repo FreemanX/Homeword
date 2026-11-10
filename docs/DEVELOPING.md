@@ -21,7 +21,8 @@ build.sh                        swiftc -O -> ./predictd (git-ignored)
 ghost/                          policies (Python, standard library only): typing prediction, proofreading
   predictd.py                     generic client for predictd, reusable by any Python policy
   policy.py                       typing: profile from prompt.json, trim, generate, assemble
-  proofread.py                    proofreading: fix or rewrite a text, word diff
+  proofread.py                    proofreading: fix or rewrite a text, paragraph by paragraph, word diff
+  prompts.py                      the user's versions of the instructions (outside the repo)
   server.py                       HTTP front end for non-Python apps (127.0.0.1:47321: /predict, /proofread)
   config.json  prompt.json        policy knobs and prompt
 bin/pred                        CLI: try, ask, serve, start, stop, status

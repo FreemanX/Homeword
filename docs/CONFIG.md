@@ -78,10 +78,13 @@ greedy, `top_p`/`seed` → `topP`/`seed`, `response_format` → `schema`, `tool_
 | `output` | plain | `plain`, or `structured` (a one-field schema; shows off the mechanism) | structured is ~200 ms slower |
 | `guardrails` | permissive | the profile's guardrails | |
 | `serverPort`, `serverIdleExitSec` | 47321, 1800 | the ghost HTTP server's port and idle exit | |
-| `proofreadMaxInputTokens` | 2500 | the longest text `/proofread` accepts (estimated tokens) | the window is 8192: prefix + input + an answer of about the same length |
+| `repeatNgram`, `repeatWindow` | 3, 60 | never complete a run of `repeatNgram` words already in the last `repeatWindow` words: the suggestion is cut before it (nothing shown: `suppressed: repetition`); 0 = off | stops the model echoing recent phrases, which loops when accepted again and again; also cuts an intended repeat |
+| `userPrompts` | `~/.config/input-predictor/prompts.json` | the user's versions of the instructions (typing and proofreading), edited in the Mac app or by `POST /prompts` | outside the repo; a changed prompt is a new profile, so the next request is uncached |
+| `proofreadMaxInputTokens` | 2500 | the longest paragraph `/proofread` accepts (estimated tokens); a text is proofread one paragraph per request | the window is 8192: prefix + input + an answer of about the same length |
 | `proofreadGuardrails` | permissive | the proofreading profiles' guardrails | `default` refuses more texts and is ~100 ms slower |
 
-The proofreading prompts (instructions and examples per mode) are constants in `ghost/proofread.py`.
+The proofreading prompts (instructions and examples per mode) are constants in `ghost/proofread.py`. All three instructions (typing,
+proofread, rewrite) can be overridden per user without touching the repo: `userPrompts` above.
 
 Every typing knob except `serverPort` and `serverIdleExitSec` (read when the server starts) also works per request:
 `pred ask "text" --opts '{"words":8}'`, `pred try --opts ...`, or `opts` in a ghost HTTP request.

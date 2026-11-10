@@ -12,7 +12,14 @@ final class ProofreadModel: ObservableObject {
     @Published var corrected = ""
     @Published var changes: [[String: String]] = []
     @Published var message = ""
+    @Published var showResult = false       // the clean result instead of the marked-up changes
+    @Published var width: CGFloat = 460
+    @Published var textHeight: CGFloat = 60
+    @Published var seconds = 0.0
+    @Published var warnings: [String] = []
+    var demo = false
     var changed: Bool { corrected != original }
+    var edits: Int { changes.filter { $0["op"] != "equal" }.count }
 }
 
 struct ProofreadView: View {
@@ -23,30 +30,52 @@ struct ProofreadView: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
                 Text(model.mode == "fix" ? "Proofread" : "Rewrite").font(.headline)
+                if model.phase == .result {
+                    Text(model.changed ? "\(model.edits) change\(model.edits == 1 ? "" : "s") · \(String(format: "%.1f", model.seconds)) s" : "no changes needed")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
                 Spacer()
                 if model.phase == .working { ProgressView().controlSize(.small) }
+                if model.phase == .result && model.changed {
+                    Picker("", selection: $model.showResult) {
+                        Text("Changes").tag(false)
+                        Text("Result").tag(true)
+                    }
+                    .pickerStyle(.segmented).labelsHidden().fixedSize()
+                }
             }
             switch model.phase {
             case .working:
-                Text("Asking the on-device model…").foregroundStyle(.secondary)
+                Text("Asking the on-device model… (\(model.original.count) characters)").foregroundStyle(.secondary)
             case .failed:
-                Text(model.message).foregroundStyle(.red)
+                Text(model.message).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true)
             case .result:
                 ScrollView {
-                    Text(diffText()).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
+                    Group {
+                        if model.showResult { Text(model.corrected) } else { Text(diffText()) }
+                    }
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.trailing, 12)                         // room for the scroll bar
                 }
-                .frame(maxHeight: 260)
-                if !model.changed { Text("No changes needed.").foregroundStyle(.secondary) }
+                .scrollIndicators(.visible)
+                .frame(height: model.textHeight)
+                ForEach(model.warnings, id: \.self) { w in
+                    Label(w.prefix(1).uppercased() + w.dropFirst(), systemImage: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.orange).font(.callout)
+                }
             }
             HStack {
+                if model.demo { Text("demo: Replace is off").font(.caption).foregroundStyle(.secondary) }
                 Spacer()
                 Button("Cancel", action: cancel).keyboardShortcut(.cancelAction)
                 Button("Copy", action: copy).keyboardShortcut("c", modifiers: .command).disabled(model.phase != .result)
-                Button("Replace", action: replace).keyboardShortcut(.defaultAction).disabled(model.phase != .result || !model.changed)
+                Button("Replace", action: replace).keyboardShortcut(.defaultAction)
+                    .disabled(model.phase != .result || !model.changed || model.demo)
             }
         }
         .padding(14)
-        .frame(width: 460)
+        .frame(width: model.width)
     }
 
     /// The corrected text with what changed marked: removed words struck through in red, new words in green.
@@ -87,6 +116,7 @@ final class Proofreader {
     private var targetPid: pid_t = 0, targetBundle = ""
     private var startedAt = CACurrentMediaTime(), answeredAt = CACurrentMediaTime()
     private var task: URLSessionDataTask?
+    private var anchor: CGRect?
 
     init() {
         panel = KeyPanel(contentRect: NSRect(x: 0, y: 0, width: 460, height: 160), styleMask: [.titled, .nonactivatingPanel, .fullSizeContentView],
@@ -97,8 +127,11 @@ final class Proofreader {
         panel.level = .floating
         panel.hidesOnDeactivate = false
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-        panel.contentView = NSHostingView(rootView: ProofreadView(model: model, replace: { [weak self] in self?.replace() },
-                                                                  copy: { [weak self] in self?.copy() }, cancel: { [weak self] in self?.close("cancelled") }))
+        for b in [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton] { panel.standardWindowButton(b)?.isHidden = true }
+        let host = NSHostingView(rootView: ProofreadView(model: model, replace: { [weak self] in self?.replace() },
+                                                         copy: { [weak self] in self?.copy() }, cancel: { [weak self] in self?.close("cancelled") }))
+        host.safeAreaRegions = []                                   // no empty strip where the hidden title bar is
+        panel.contentView = host
     }
 
     var enabled: Bool { Pref.d.bool(forKey: Pref.proofreading) }
@@ -129,8 +162,21 @@ final class Proofreader {
         }
     }
 
+    /// For development: run on a given text, with no target app (Replace is disabled, nothing is logged).
+    func demo(text: String, mode: String) {
+        if panel.isVisible { close("cancelled") }
+        startedAt = CACurrentMediaTime()
+        model.demo = true
+        begin(mode: mode, text, 0, "", nil, nil)
+    }
+
     private func begin(mode: String, _ text: String, _ pid: pid_t, _ bundle: String, _ rect: CGRect?, _ sel: SelectionSnapshot?) {
         selection = sel
+        model.showResult = false
+        model.warnings = []
+        model.width = text.count > 360 ? 640 : 480
+        model.textHeight = 60
+        anchor = rect
         targetPid = pid
         targetBundle = bundle
         model.mode = mode
@@ -149,8 +195,11 @@ final class Proofreader {
             }
             self.model.corrected = out
             self.model.changes = (r["changes"] as? [[String: Any]] ?? []).map { $0.compactMapValues { $0 as? String } }
+            self.model.seconds = self.answeredAt - self.startedAt
+            self.model.warnings = r["warnings"] as? [String] ?? []
+            self.model.textHeight = self.textHeight()
             self.model.phase = .result
-            self.resize()
+            self.place(near: self.anchor)
         }
     }
 
@@ -172,6 +221,17 @@ final class Proofreader {
         }
         panel.setFrameOrigin(origin)
         panel.makeKeyAndOrderFront(nil)
+    }
+
+    /// Height of the longer of the two views (the changes show removed words too), capped at 60% of the screen; beyond that it scrolls.
+    private func textHeight() -> CGFloat {
+        let marked = model.changes.map { c in c["op"] == "equal" ? (c["b"] ?? "") : (c["a"] ?? "") + (c["b"] ?? "") }.joined()
+        let text = marked.count > model.corrected.count ? marked : model.corrected
+        let font = NSFont.boldSystemFont(ofSize: NSFont.systemFontSize)      // bold: inserted words are, so measure generously
+        let h = (text as NSString).boundingRect(with: NSSize(width: model.width - 28 - 14, height: .greatestFiniteMagnitude),
+                                                options: [.usesLineFragmentOrigin, .usesFontLeading], attributes: [.font: font]).height
+        let screen = (NSScreen.main?.visibleFrame.height ?? 800) * 0.6
+        return min(max(ceil(h) + 8, 24), screen)
     }
 
     private func resize() {
@@ -204,6 +264,7 @@ final class Proofreader {
     private func close(_ outcome: String) {
         task?.cancel()
         panel.orderOut(nil)
+        if model.demo { model.demo = false; return }
         let changed = model.changes.filter { $0["op"] != "equal" }.count
         let failed = model.phase == .failed
         Metrics.shared.log("proofread", ["app": targetBundle, "mode": model.mode, "outcome": failed ? "failed" : model.phase == .working ? "cancelled" : outcome,

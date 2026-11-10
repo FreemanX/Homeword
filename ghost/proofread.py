@@ -11,6 +11,8 @@ display.
 """
 import difflib, hashlib, json, os, re, threading, time
 
+from .prompts import UserPrompts
+
 INSTRUCTIONS = {
     "fix": "You proofread text. Fix spelling mistakes, typos, grammar and punctuation. Keep the meaning, the tone, the language, "
            "the formatting and the line breaks. Change as little as possible: do not rephrase correct sentences, do not add or "
@@ -54,14 +56,15 @@ def diff(a, b):
 
 
 class Proofreader:
-    def __init__(self, cfg=None):
+    def __init__(self, cfg=None, user=None):
         self.cfg = cfg or json.load(open(CONFIG))
+        self.user = user or UserPrompts(self.cfg.get("userPrompts", "~/.config/input-predictor/prompts.json"))
         self.registered = set()
         self.lock = threading.Lock()
 
     def profile(self, mode):
         examples = [{"prompt": a, "response": b} for a, b in EXAMPLES[mode]]
-        d = {"instructions": INSTRUCTIONS[mode], "examples": examples, "guardrails": self.cfg.get("proofreadGuardrails", "permissive")}
+        d = {"instructions": self.user.get("proofread-" + mode, INSTRUCTIONS[mode]), "examples": examples, "guardrails": self.cfg.get("proofreadGuardrails", "permissive")}
         return {"name": f"proofread-{mode}-" + hashlib.sha1(json.dumps(d, sort_keys=True).encode()).hexdigest()[:8], **d}
 
     def ensure_profile(self, link, mode, force=False):
@@ -78,32 +81,48 @@ class Proofreader:
         t0 = time.perf_counter()
         if mode not in INSTRUCTIONS:
             return {"ok": False, "error": f"mode must be one of {sorted(INSTRUCTIONS)}"}
-        core = text.strip()
-        if not core:
+        if not text.strip():
             return {"ok": True, "text": text, "changed": False, "changes": [{"op": "equal", "a": text, "b": text}]}
+        # one paragraph per request: the model then never sees (and drops) repeated passages, never hits the token cap on a long
+        # text, and each request stays small; the profile's prefix is cached across them
+        parts = re.split(r"(\n[ \t]*\n\s*)", text)            # paragraphs at even indices, separators at odd ones
         limit = self.cfg.get("proofreadMaxInputTokens", 2500)
-        if est_tokens(core) > limit:
-            return {"ok": False, "error": f"the selection is too long (about {int(est_tokens(core))} tokens, at most {limit})"}
-        lead, trail = text[: len(text) - len(text.lstrip())], text[len(text.rstrip()):]
+        longest = max(est_tokens(p.strip()) for p in parts[::2])
+        if longest > limit:
+            return {"ok": False, "error": f"a paragraph is too long (about {int(longest)} tokens, at most {limit})"}
         name = self.ensure_profile(link, mode)
-        req = {"op": "generate", "profile": name, "prompt": core, "maxTokens": int(est_tokens(core) * 1.6) + 40,
-               "sampling": "greedy", "stream": stream}
-        resp = link.call(timeout=120, **req)
-        if resp.get("error") == "unknown_profile":            # predictd restarted
-            self.registered.discard(name)
-            self.ensure_profile(link, mode)
+        out, model_ms, tokens, truncated, warnings = [], 0.0, {"in": 0, "cached": 0, "out": 0}, False, []
+        for i, part in enumerate(parts):
+            if i % 2 or not part.strip():
+                out.append(part)
+                continue
+            core = part.strip()
+            req = {"op": "generate", "profile": name, "prompt": core, "maxTokens": int(est_tokens(core) * 1.6) + 40,
+                   "sampling": "greedy", "stream": stream}
             resp = link.call(timeout=120, **req)
-        if not resp.get("ok"):
-            err = resp.get("error")
-            return {"ok": False, "error": "the model declined this text" if err == "guardrail" else err}
-        out = PREAMBLE.sub("", resp.get("text", "")).strip()
-        if len(out) > 1 and out[0] == out[-1] and out[0] in "\"'“" and core[0] not in "\"'“":   # quotes the model added
-            out = out[1:-1].strip()
-        if not out:
-            return {"ok": False, "error": "the model returned nothing"}
-        result = lead + out + trail
-        t = resp.get("timing", {})
+            if resp.get("error") == "unknown_profile":        # predictd restarted
+                self.registered.discard(name)
+                self.ensure_profile(link, mode)
+                resp = link.call(timeout=120, **req)
+            if not resp.get("ok"):
+                err = resp.get("error")
+                return {"ok": False, "error": "the model declined this text" if err == "guardrail" else err}
+            fixed = PREAMBLE.sub("", resp.get("text", "")).strip()
+            if len(fixed) > 1 and fixed[0] == fixed[-1] and fixed[0] in "\"'“" and core[0] not in "\"'“":   # quotes the model added
+                fixed = fixed[1:-1].strip()
+            if not fixed:
+                return {"ok": False, "error": "the model returned nothing"}
+            # a fix keeps about the same length, a rewrite may shorten; much less means the model dropped content
+            if len(fixed) < len(core) * (0.8 if mode == "fix" else 0.4):
+                warnings.append(f"paragraph {i // 2 + 1} came back much shorter: check it before replacing")
+            truncated = truncated or resp.get("finish") == "length"
+            model_ms += resp.get("timing", {}).get("model_ms", 0)
+            for k in tokens:
+                tokens[k] += resp.get("tokens", {}).get(k, 0)
+            out.append(part[: len(part) - len(part.lstrip())] + fixed + part[len(part.rstrip()):])
+        result = "".join(out)
+        if truncated:
+            warnings.append("the answer was cut off: check the end before replacing")
         return {"ok": True, "text": result, "changed": result != text, "changes": diff(text, result), "mode": mode,
-                "truncated": resp.get("finish") == "length",
-                "timing": {"model_ms": t.get("model_ms", 0), "total_ms": (time.perf_counter() - t0) * 1000},
-                "tokens": resp.get("tokens", {})}
+                "truncated": truncated, "warnings": warnings, "paragraphs": len(parts[::2]),
+                "timing": {"model_ms": model_ms, "total_ms": (time.perf_counter() - t0) * 1000}, "tokens": tokens}

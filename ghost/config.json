@@ -14,11 +14,14 @@
   "seed": -1,
   "shots": 6,
   "instructions": "short",
+  "repeatNgram": 3,
+  "repeatWindow": 60,
   "format": "suffix",
   "output": "plain",
   "guardrails": "permissive",
   "proofreadMaxInputTokens": 2500,
   "proofreadGuardrails": "permissive",
+  "userPrompts": "~/.config/input-predictor/prompts.json",
   "serverPort": 47321,
   "serverIdleExitSec": 1800
 }

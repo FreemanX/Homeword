@@ -183,7 +183,7 @@ of its content) and pins it. Then, per keystroke:
 |---|---|---|
 | 1 trim | Keep the tail of the text that fits `textBudget` tokens, cut on a word boundary (char estimate: 4.8 chars/token prose, 2.9 code/shell, 1.6 CJK). | `textBudget` |
 | 2 ask | `generate` on its profile with prompt `App: <app>\nText: <tail>`, `maxTokens`, sampling; plain text, or a one-field schema with `output: structured`. | `maxTokens`, `sampling`, `output` |
-| 3 assemble | Turn the answer into the ghost (below); words are checked with predictd's `spell` op, batched once per answer. | `words`, `oneSentence`, `invalidPolicy`, `lenientApps`, `spellCheck`, `spellLanguage`, `format` |
+| 3 assemble | Turn the answer into the ghost (below); words are checked with predictd's `spell` op, batched once per answer. | `words`, `oneSentence`, `invalidPolicy`, `lenientApps`, `spellCheck`, `spellLanguage`, `format`, `repeatNgram`, `repeatWindow` |
 
 The model is asked for the **rest** of the unfinished word, then the next words ("suffix" format): for `...is fail` it answers
 `ing despite correct preparation`.
@@ -194,15 +194,22 @@ flowchart TD
     cut --> sent["stop at the first sentence end<br/>oneSentence, not in lenientApps"]
     sent --> cap["keep the unfinished word + up to words more"]
     cap --> mid{"text ends mid-word?"}
-    mid -- no --> show["suggestion"]
+    mid -- no --> nw{"first new word lowercase<br/>and not a word?"}
+    nw -- yes --> none
+    nw -- no --> rep
     mid -- yes --> word{"typed part + first piece<br/>is a word?"}
-    word -- yes --> show
+    word -- yes --> rep
     word -- no --> sep{"is the piece a new word?<br/>flag, path, quote, capital,<br/>or a word after a finished word"}
-    sep -- yes --> space["insert the missing space"] --> show
+    sep -- yes --> space["insert the missing space"] --> rep
     sep -- no --> drop{"invalidPolicy drop and<br/>app not lenient?"}
     drop -- yes --> none["no ghost<br/>suppressed: invalid_word"]
-    drop -- no --> show
+    drop -- no --> rep
+    rep["cut before a word that repeats<br/>a 3-word run of the recent text"] --> show["suggestion"]
 ```
+
+The repetition cut keeps the completion of an unfinished word; when nothing is left the answer is `suppressed: repetition`.
+Without it the model echoes recent phrases ("timeline changes timeline adjustments"), and accepting the echo with Tab feeds it
+back, in a loop. Replaying the 240 recorded answers of the steady baselines changed one suggestion (a real echo of the input).
 
 Days and months also count as words in their capitalised form. Sentence ends ignore abbreviations ("e.g.", "Dr."), initials and
 numbers, and the rule is off for `lenientApps` (terminal, code), where `.` and `!` are syntax.
@@ -257,16 +264,27 @@ ghost/config.json for one request), or `Ghost.predict()` in Python:
 `ghost/proofread.py` fixes (`mode: "fix"`: spelling, typos, grammar, punctuation, as few changes as possible) or rewrites
 (`mode: "rewrite"`: clearer, same meaning, intent, tone and about the same length) a text. It is an occasional policy, so it does not
 pin: one profile per mode (instructions + 2-3 examples, about 200-250 tokens), registered on first use. The first request after
-typing pays an uncached prefix, and the typing profile pays one on the next keystroke.
+typing pays an uncached prefix, and the typing profile pays one on the next keystroke. A text is proofread **one paragraph per
+request** (paragraphs are separated by blank lines): asked for a whole text with a repeated passage, the model returned the first
+copy only, and a long text could hit the token cap. Paragraph requests share the cached prefix, so the total time stays the same.
 
 | Step | What happens |
 |---|---|
-| 1 check | empty text answers unchanged; more than `proofreadMaxInputTokens` (estimated) is refused |
-| 2 ask | `generate` on the mode's profile with the trimmed text as the prompt, greedy, `maxTokens` ≈ 1.6 × the input's tokens + 40 |
-| 3 clean | drop a preamble ("Here is the corrected text:") and quotes the model added; put back the input's leading and trailing whitespace |
-| 4 diff | a word-level edit script for display |
+| 1 check | empty text answers unchanged; a paragraph over `proofreadMaxInputTokens` (estimated) is refused |
+| 2 ask | per paragraph: `generate` on the mode's profile with the paragraph as the prompt, greedy, `maxTokens` ≈ 1.6 × its tokens + 40 |
+| 3 clean | drop a preamble ("Here is the corrected text:") and quotes the model added; keep the original whitespace around each paragraph |
+| 4 check | warn when a paragraph comes back much shorter (under 80% for fix, 40% for rewrite) or was cut by the token cap |
+| 5 diff | a word-level edit script for display |
 
 `POST 127.0.0.1:47321/proofread` with `{"text": "...", "mode": "fix"}` answers `text`, `changed`, `changes` (`[{"op": "equal" |
 "replace" | "insert" | "delete", "a": old, "b": new}]`), `truncated` (the answer hit the token cap), `timing` (`model_ms`,
-`total_ms`) and `tokens`. A refusal answers `ok: false` with `error: "the model declined this text"`. A paragraph takes about
-0.5-1 s.
+`total_ms`), `tokens`, `paragraphs` and `warnings` (show them before replacing). A refusal answers `ok: false` with `error: "the
+model declined this text"`. A paragraph takes about 0.5-1 s (a 4-paragraph, 180-word email: 3.6 s).
+
+### User prompts
+
+The instructions of both policies can be replaced per user (`ghost/prompts.py`), in a file outside the repo (`userPrompts` knob).
+`GET /prompts` lists `typing`, `proofread-fix` and `proofread-rewrite` with the current text, the default, whether it is custom
+and a note; `POST /prompts {"name", "text"}` saves one, `{"name", "reset": true}` restores the default. The examples stay as
+shipped. A changed prompt is a new profile (named by its content hash), so it applies to the next request; the typing policy
+re-pins whenever its profile changes.
