@@ -18,14 +18,16 @@ belongs in a policy; if every policy would need it (warm caches, cancelling, tok
 ```
 predictd.swift  predictd.json   mechanism: the model host (profiles, sessions, generate, keep-alive, socket + HTTP)
 build.sh                        swiftc -O -> ./predictd (git-ignored)
-ghost/                          policy: the typing predictor (Python, standard library only)
+ghost/                          policies (Python, standard library only): typing prediction, proofreading
   predictd.py                     generic client for predictd, reusable by any Python policy
-  policy.py                       profile from prompt.json, trim, generate, assemble
-  server.py                       HTTP front end for non-Python apps (127.0.0.1:47321)
+  policy.py                       typing: profile from prompt.json, trim, generate, assemble
+  proofread.py                    proofreading: fix or rewrite a text, word diff
+  server.py                       HTTP front end for non-Python apps (127.0.0.1:47321: /predict, /proofread)
   config.json  prompt.json        policy knobs and prompt
 bin/pred                        CLI: try, ask, serve, start, stop, status
 integrations/pi/                application: pi extension (TypeScript)
 integrations/claude-code/       application: Claude Code mod (TypeScript)
+app/                            application: menu bar Mac app, system-wide prediction and proofreading (Swift)
 bench/                          benchmarks of the ghost policy, cases, baselines, RESULTS.md
 docs/                           these documents
 ```
@@ -79,17 +81,19 @@ ghost.ensure_profile(link, pin=True)
 print(ghost.predict(link, "chat", "See you tomor")["suggestion"])   # row for coffee at the
 ```
 
-### The two sample applications
+### The sample applications
 
-| | pi | Claude Code |
-|---|---|---|
-| Extension point | `ctx.ui.setEditorComponent`: a `CustomEditor` subclass replaces the prompt editor | a mod: `prompt.edit` hook sees every edit |
-| Request | `fetch` with an `AbortController` | `$.http.fetch` from a `$.clock.after` timer, so typing is never held up |
-| Drawing | `render()` writes the ghost into the editor's fake cursor cell and the padding after it | `$.prompt.fill` with a dim `virtualText` decoration at the end of the draft |
-| Keys | `handleInput` sees Tab and → first | Tab and → at the end of the draft never reach a hook: they are bound to two slash commands in keybindings.json |
-| Source | [integrations/pi](../integrations/pi/README.md) | [integrations/claude-code](../integrations/claude-code/README.md) |
+| | pi | Claude Code | Mac app |
+|---|---|---|---|
+| Extension point | `ctx.ui.setEditorComponent`: a `CustomEditor` subclass replaces the prompt editor | a mod: `prompt.edit` hook sees every edit | none: Accessibility reads the focused field of any app, a session event tap sees every key |
+| Request | `fetch` with an `AbortController` | `$.http.fetch` from a `$.clock.after` timer, so typing is never held up | `URLSession`; the field is re-read before showing, so an answer for stale text is dropped |
+| Drawing | `render()` writes the ghost into the editor's fake cursor cell and the padding after it | `$.prompt.fill` with a dim `virtualText` decoration at the end of the draft | a borderless, non-activating panel below or next to the caret rect (`AXBoundsForRange`) |
+| Keys | `handleInput` sees Tab and → first | Tab and → at the end of the draft never reach a hook: they are bound to two slash commands in keybindings.json | the event tap consumes Tab and Esc while a suggestion shows; accepted words are typed as synthetic key events |
+| Source | [integrations/pi](../integrations/pi/README.md) | [integrations/claude-code](../integrations/claude-code/README.md) | [app](../app/README.md) |
 
-Both send `app: "coding agent prompt"`, which is not an example label: the model treats it as chat-like prose.
+pi and Claude Code send `app: "coding agent prompt"`, which is not an example label: the model treats it as chat-like prose. The
+Mac app maps the frontmost app's bundle ID to `mail`, `chat`, `code` or `notes`. The Mac app also uses the proofreading policy
+(`POST /proofread`) on the selection, and logs usage metrics (counts and timings, no text) that `bench/app_metrics.py` summarises.
 
 ### Ideas for the next applications
 
@@ -97,15 +101,16 @@ Both send `app: "coding agent prompt"`, which is not an example label: the model
   so the value is in commit messages, quoted strings and comments; send `app: "terminal"` (the prompt has a few `terminal` examples; add more).
 - **Other terminal agents**: anything with a prompt-editor hook works like the samples. Codex has no extension point for its prompt
   box today (it would need a patch).
-- **System-wide Mac app**: a menu bar app reads the focused text field and caret through the Accessibility API, draws the ghost in a
-  borderless overlay window and accepts with a global key, or an input method (InputMethodKit). Open questions: Accessibility
-  permission, conflicts with macOS's own inline predictions and autocorrect, and whether the on-device model may be used at all on
-  a managed Mac (check the policy first).
+- **Mac app, next steps**: inline ghost text instead of a pop-up needs an input method (InputMethodKit), which owns the marked text
+  in every app; per-app examples in prompt.json for the labels the app sends; tuning from the collected metrics (acceptance by app,
+  latency tail). Still open: whether the on-device model may be used on a managed Mac (check the policy first).
 
 ## A new policy on predictd
 
 A policy registers its own profile and calls `generate`; it shares the daemon (and the warm cache) with the ghost policy. Any
 language works: the socket protocol is one JSON object per line, and `ghost/predictd.py` is a ready Python client.
+`ghost/proofread.py` is a complete second policy in about 100 lines: one unpinned profile per mode, one `generate` sized to the
+input, clean-up of the answer, a word diff, and an HTTP route in `ghost/server.py`.
 
 ```python
 from ghost import predictd

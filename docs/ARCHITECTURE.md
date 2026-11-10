@@ -5,9 +5,10 @@ The project is split by one rule: **separate mechanism from policy.**
 - **Mechanism: `predictd`** (Swift) hosts Apple's on-device model and nothing else. It keeps named system prompts ("profiles"),
   keeps one of them warm, and generates plain or structured output with the limits the caller asks for. It assumes nothing about
   what the text is for.
-- **Policy: `ghost/`** (Python) is the typing predictor: what to ask while someone types, and how to turn the answer into ghost text.
-  It is one client of the mechanism; a summariser, a commit-message writer or a triage bot would be others, side by side.
-- **Applications** use a policy: `pred try` imports it, pi and Claude Code reach it over HTTP.
+- **Policies: `ghost/`** (Python). The typing predictor decides what to ask while someone types and how to turn the answer into
+  ghost text. The proofreader fixes or rewrites a selected text. Each is one client of the mechanism; a summariser, a
+  commit-message writer or a triage bot would be others, side by side.
+- **Applications** use a policy: `pred try` imports it, pi, Claude Code and the Mac app reach it over HTTP.
 
 ```mermaid
 flowchart TB
@@ -16,12 +17,14 @@ flowchart TB
         try["pred try"]
         pi["pi extension"]
         cc["Claude Code mod"]
-        next["shell completer, Mac app<br/>future"]:::future
+        mac["Mac app<br/>menu bar, any text field"]
+        next["shell completer<br/>future"]:::future
     end
     subgraph policy["Policies"]
         direction LR
-        srv["ghost server<br/>HTTP 127.0.0.1:47321"]
+        srv["policy server<br/>HTTP 127.0.0.1:47321<br/>/predict, /proofread"]
         lib["ghost.policy (Python)<br/>prompt, trim, assemble"]
+        pr["ghost.proofread (Python)<br/>fix, rewrite, diff"]
         other["other policies<br/>future"]:::future
     end
     subgraph mech["Mechanism"]
@@ -31,9 +34,12 @@ flowchart TB
     try --> lib
     pi --> srv
     cc --> srv
+    mac --> srv
     next -.-> srv
     srv --> lib
+    srv --> pr
     lib -->|"profile.set, generate, spell"| predictd
+    pr -->|"profile.set, generate"| predictd
     other -.-> predictd
     predictd --> fm
     classDef future stroke-dasharray: 5 5
@@ -245,3 +251,22 @@ ghost/config.json for one request), or `Ghost.predict()` in Python:
 | `timing` | `trim_ms`, `wait_ms`, `model_ms`, `assemble_ms`, `daemon_ms`, `total_ms`, `session` (the cache state) |
 | `tokens` | `in`, `cached`, `out` from predictd, plus the trim details |
 | `ok:false` | `error: "cancelled"` when a newer request on the stream replaced this one: ignore it |
+
+## proofread: the proofreading policy
+
+`ghost/proofread.py` fixes (`mode: "fix"`: spelling, typos, grammar, punctuation, as few changes as possible) or rewrites
+(`mode: "rewrite"`: clearer, same meaning, intent, tone and about the same length) a text. It is an occasional policy, so it does not
+pin: one profile per mode (instructions + 2-3 examples, about 200-250 tokens), registered on first use. The first request after
+typing pays an uncached prefix, and the typing profile pays one on the next keystroke.
+
+| Step | What happens |
+|---|---|
+| 1 check | empty text answers unchanged; more than `proofreadMaxInputTokens` (estimated) is refused |
+| 2 ask | `generate` on the mode's profile with the trimmed text as the prompt, greedy, `maxTokens` ≈ 1.6 × the input's tokens + 40 |
+| 3 clean | drop a preamble ("Here is the corrected text:") and quotes the model added; put back the input's leading and trailing whitespace |
+| 4 diff | a word-level edit script for display |
+
+`POST 127.0.0.1:47321/proofread` with `{"text": "...", "mode": "fix"}` answers `text`, `changed`, `changes` (`[{"op": "equal" |
+"replace" | "insert" | "delete", "a": old, "b": new}]`), `truncated` (the answer hit the token cap), `timing` (`model_ms`,
+`total_ms`) and `tokens`. A refusal answers `ok: false` with `error: "the model declined this text"`. A paragraph takes about
+0.5-1 s.

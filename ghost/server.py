@@ -1,7 +1,8 @@
-"""HTTP front end of the ghost policy, for apps that are not written in Python (the pi extension, the Claude Code mod).
+"""HTTP front end of the policies, for apps that are not written in Python (the pi extension, the Claude Code mod, the Mac app).
 
-    POST /predict  {"app": "chat", "text": "See you tomor", "stream": "pi", "opts": {...}}  ->  the ghost answer (see policy.py)
-    GET  /health   POST /shutdown
+    POST /predict    {"app": "chat", "text": "See you tomor", "stream": "pi", "opts": {...}}  ->  the ghost answer (see policy.py)
+    POST /proofread  {"text": "...", "mode": "fix" | "rewrite"}  ->  {"text", "changed", "changes", "timing", ...} (proofread.py)
+    GET  /health     POST /shutdown
 
 127.0.0.1 only. Requests on one `stream` replace each other (the older one answers {"ok": false, "error": "cancelled"}).
 Exits after `serverIdleExitSec` without requests. Started by `pred start` / `pred serve`.
@@ -11,10 +12,12 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from . import predictd
 from .policy import Ghost
+from .proofread import Proofreader
 
 
 def serve(port=None, socket_path=predictd.SOCK, quiet=False):
     ghost = Ghost()
+    proof = Proofreader(ghost.cfg)
     port = port or ghost.cfg["serverPort"]
     pool, last = queue.LifoQueue(), [time.monotonic()]
     first = predictd.start(socket_path)
@@ -53,8 +56,8 @@ def serve(port=None, socket_path=predictd.SOCK, quiet=False):
                 self.reply({"ok": True})
                 threading.Thread(target=server.shutdown, daemon=True).start()
                 return
-            if self.path != "/predict":
-                return self.reply({"ok": False, "error": "POST /predict"}, 404)
+            if self.path not in ("/predict", "/proofread"):
+                return self.reply({"ok": False, "error": "POST /predict or /proofread"}, 404)
             try:
                 req = json.loads(body or b"{}")
             except ValueError:
@@ -67,13 +70,17 @@ def serve(port=None, socket_path=predictd.SOCK, quiet=False):
                     r = {"ok": False, "error": f"predictd unavailable: {e}"}
                     break
                 try:
-                    r = ghost.predict(ln, req.get("app", ""), req.get("text", ""), req.get("opts"), stream=req.get("stream", "ghost-http"))
+                    if self.path == "/proofread":
+                        r = proof.run(ln, req.get("text", ""), req.get("mode", "fix"))
+                    else:
+                        r = ghost.predict(ln, req.get("app", ""), req.get("text", ""), req.get("opts"), stream=req.get("stream", "ghost-http"))
                     pool.put(ln)
                     break
                 except (OSError, ConnectionError):           # predictd went away (idle exit): reconnect, it restarts on demand
                     ln.close()
                     drain()                                  # the other pooled connections are dead too
                     ghost.registered.clear()
+                    proof.registered.clear()
                 except Exception as e:                       # a timeout or a refused profile: answer, and drop the connection
                     ln.close()
                     r = {"ok": False, "error": f"{type(e).__name__}: {e}"}

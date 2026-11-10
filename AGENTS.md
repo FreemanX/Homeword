@@ -9,8 +9,8 @@ Context for an AI agent (or a human) who develops, benchmarks or extends this pr
 
 A research prototype of a typing predictor on Apple's on-device language model (FoundationModels framework, macOS 27): given the app
 and the text typed so far, show a gray "ghost" with the rest of the unfinished word plus up to 5 more words, within one sentence. The
-owner works experiment-first: measure, then decide. It runs in `pred try` and in two coding agents (pi, Claude Code); a system-wide
-surface is not designed yet.
+owner works experiment-first: measure, then decide. It runs in `pred try`, in two coding agents (pi, Claude Code) and in a
+prototype menu bar Mac app (any text field, plus proofreading of the selection).
 
 **Design principle: separate mechanism from policy.** The owner asked for this explicitly; keep it when changing anything.
 
@@ -20,17 +20,22 @@ surface is not designed yet.
   `stats`. Newline-delimited JSON on `/tmp/predictd-<uid>.sock`, the same over HTTP on `127.0.0.1:47320`, plus an
   OpenAI-compatible chat API there (`/v1/models`, `/v1/chat/completions`: streaming, tool calls returned to the caller, JSON schema;
   docs/OPENAI.md). The context window is 8192 tokens.
-- **Policy** `ghost/` (Python, standard library only): the typing predictor. `policy.py` (profile from `prompt.json`, trim,
-  generate, assemble), `config.json` (its knobs), `predictd.py` (generic predictd client), `server.py` (HTTP `127.0.0.1:47321`,
-  `POST /predict`, for non-Python apps).
+- **Policy** `ghost/` (Python, standard library only): the typing predictor and the proofreader. `policy.py` (profile from
+  `prompt.json`, trim, generate, assemble), `proofread.py` (fix or rewrite a text, word diff), `config.json` (their knobs),
+  `predictd.py` (generic predictd client), `server.py` (HTTP `127.0.0.1:47321`, `POST /predict` and `POST /proofread`, for
+  non-Python apps).
 - `bin/pred`: CLI on the policy. `pred try` (interactive line editor, Enter = new round with stats), `pred ask`, `pred serve`,
   `pred start|stop|status` (predictd + ghost server).
 - `bench/`: `run.py` (fixed 80-case benchmark), `human_pty.py` (drives `pred try` like a typist), `compare.py`, `gen_cases.py` +
   `corpus.md` → `cases.json`, `machine.py`, `try_pty_test.py` (smoke test), `integration_latency.py` (keystroke → ghost in a real
-  terminal app via tmux), `openai_compare.py` (native protocol vs OpenAI API on the typing workload), `baselines/` (shared results), `RESULTS.md`.
+  terminal app via tmux), `openai_compare.py` (native protocol vs OpenAI API on the typing workload), `app_metrics.py` (summary of
+  the Mac app's usage metrics), `baselines/` (shared results), `RESULTS.md`.
 - `integrations/pi/ghost-editor.ts`: pi extension (a `CustomEditor` subclass drawing the ghost in the fake cursor and padding).
 - `integrations/claude-code/`: Claude Code mod (`prompt.edit` hook + `$.prompt.fill` decorations; Tab/→ through two commands bound in
   `keybindings.json`, since keys that do nothing at the end of the draft never reach the hook). Validate with `claude plugin validate`.
+- `app/`: menu bar Mac app (Swift, AppKit + SwiftUI, `app/build.sh`). Accessibility reads the focused field and caret, a session
+  event tap sees keys (consumes Tab/Esc while a suggestion shows, ⌃⌥P/⌃⌥R proofread), a non-activating panel shows the suggestion.
+  Metrics in `~/Library/Application Support/InputPredictor/metrics.jsonl`: counts and timings only, never text. Keep it that way.
 
 ## Build and run
 
@@ -120,8 +125,9 @@ Policy (ghost, typing):
 
 ## Testing the integrations
 
-Drive the real apps in tmux (they render to a terminal; nothing else shows the ghost). Clear a Claude Code draft with `C-e` then `C-u`
-(`C-u` only kills before the cursor). Test Claude Code with a throwaway `CLAUDE_CONFIG_DIR` holding the keybindings, never by editing
+Drive the real apps in tmux (they render to a terminal; nothing else shows the ghost). The Mac app needs the Accessibility
+permission, which only the owner can grant, and again after every ad-hoc signed rebuild: batch changes before asking. Clear a
+Claude Code draft with `C-e` then `C-u` (`C-u` only kills before the cursor). Test Claude Code with a throwaway `CLAUDE_CONFIG_DIR` holding the keybindings, never by editing
 `~/.claude/keybindings.json`: that binds Tab and → in every session, including ones without the mod. Agent sandboxes may block
 `claude`/`pi` (they use `sandbox-exec` themselves); run them in a tmux session the agent owns.
 
@@ -133,8 +139,9 @@ Drive the real apps in tmux (they render to a terminal; nothing else shows the g
 
 ## Open questions and future work
 
-- Product surface: pi and Claude Code integrations exist; a system-wide input method is undecided (Apple Intelligence is MDM-restricted
-  on managed Macs: check policy first). Key bindings (Tab = one word, → = all) need user testing.
+- Product surface: pi, Claude Code and a menu bar Mac app (pop-up, not inline) exist; inline ghost text system-wide would need an input
+  method (InputMethodKit). Apple Intelligence is MDM-restricted on managed Macs: check policy first. Key bindings (Tab = one word,
+  → = all) need user testing; the Mac app's metrics are the place to measure acceptance.
 - Energy cost of a model request on almost every keystroke (needs `powermetrics`, i.e. sudo: ask the owner).
 - Quality on the owner's real typing (keep that data local and out of git); the 80 cases are a small proxy.
 - Known misses: an abbreviation the spell checker accepts ("fri") gets split from the model's next word when the model ignores it;

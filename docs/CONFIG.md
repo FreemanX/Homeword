@@ -78,8 +78,12 @@ greedy, `top_p`/`seed` → `topP`/`seed`, `response_format` → `schema`, `tool_
 | `output` | plain | `plain`, or `structured` (a one-field schema; shows off the mechanism) | structured is ~200 ms slower |
 | `guardrails` | permissive | the profile's guardrails | |
 | `serverPort`, `serverIdleExitSec` | 47321, 1800 | the ghost HTTP server's port and idle exit | |
+| `proofreadMaxInputTokens` | 2500 | the longest text `/proofread` accepts (estimated tokens) | the window is 8192: prefix + input + an answer of about the same length |
+| `proofreadGuardrails` | permissive | the proofreading profiles' guardrails | `default` refuses more texts and is ~100 ms slower |
 
-Every knob except `serverPort` and `serverIdleExitSec` (read when the server starts) also works per request:
+The proofreading prompts (instructions and examples per mode) are constants in `ghost/proofread.py`.
+
+Every typing knob except `serverPort` and `serverIdleExitSec` (read when the server starts) also works per request:
 `pred ask "text" --opts '{"words":8}'`, `pred try --opts ...`, or `opts` in a ghost HTTP request.
 Knobs that change the prompt (`shots`, `instructions`, `format`, `output`, `guardrails`, `words`) make a different profile
 (named by the hash of its content), registered on first use: the first request with them is uncached.
@@ -114,8 +118,9 @@ restart `pred` clients (the profile name changes with the content) and re-run th
 |---|---|---|
 | pi | env `GHOST_PORT`, `GHOST_APP`, `PRED_CLI` | 47321, `coding agent prompt`, the repo's `bin/pred` |
 | Claude Code | constants `URL`, `APP` at the top of `hooks/register.ts` | `http://127.0.0.1:47321/predict`, `coding agent prompt` |
+| Mac app | Settings window (UserDefaults domain `dev.inputpredictor.menubar`): predictions, pop-up position, minimum characters, excluded apps, Chrome-based browsers, proofreading, server URL; `appLabel` in `app/Sources/Services.swift` | see [app/README.md](../app/README.md) |
 
-Both send at most the last 2000 characters; the policy trims further to `textBudget`.
+All three send at most the last 2000 characters; the policy trims further to `textBudget`.
 
 ## Recipes
 

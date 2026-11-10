@@ -17,6 +17,8 @@
   "format": "suffix",
   "output": "plain",
   "guardrails": "permissive",
+  "proofreadMaxInputTokens": 2500,
+  "proofreadGuardrails": "permissive",
   "serverPort": 47321,
   "serverIdleExitSec": 1800
 }

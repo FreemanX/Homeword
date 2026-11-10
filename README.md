@@ -8,10 +8,11 @@ It is built in three layers, keeping **mechanism and policy apart**:
 - **predictd**: a model host, mechanism only. It keeps named system prompts ("profiles") with their prefix cache warm and
   generates plain or structured output with the limits each caller asks for. It knows nothing about typing. It also speaks the
   **OpenAI chat API**, so agent harnesses can use the on-device model directly.
-- **ghost**: the typing-prediction policy (Python). It owns the prompt and examples, the context trimming and the rules that turn
-  the model's answer into a ghost (word glue, spelling, one sentence, five words).
-- **Applications**: `pred try` in a terminal, ghost text in the pi and Claude Code prompt boxes, later a shell completer or a
-  system-wide Mac app. Other policies (summarise, commit messages, triage) can share the same predictd.
+- **ghost**: the policies (Python). Typing prediction owns the prompt and examples, the context trimming and the rules that turn
+  the model's answer into a ghost (word glue, spelling, one sentence, five words). Proofreading fixes or rewrites a selected text.
+- **Applications**: `pred try` in a terminal, ghost text in the pi and Claude Code prompt boxes, and a menu bar Mac app that
+  predicts in any text field and proofreads the selection. Other policies (summarise, commit messages, triage) can share the same
+  predictd.
 
 ```mermaid
 flowchart TB
@@ -20,11 +21,12 @@ flowchart TB
         try["pred try"]
         pi["pi extension"]
         cc["Claude Code mod"]
-        next["shell, Mac app<br/>future"]:::future
+        mac["Mac app"]
+        next["shell completer<br/>future"]:::future
     end
     subgraph policy["Policy"]
         direction LR
-        ghost["ghost<br/>typing predictor<br/>HTTP :47321"]
+        ghost["ghost<br/>typing prediction, proofreading<br/>HTTP :47321"]
         other["other policies<br/>future"]:::future
     end
     subgraph mech["Mechanism"]
@@ -35,6 +37,7 @@ flowchart TB
     try --> ghost
     pi --> ghost
     cc --> ghost
+    mac --> ghost
     next -.-> ghost
     ghost --> predictd
     other -.-> predictd
@@ -60,6 +63,7 @@ bin/pred start                # predictd + the ghost HTTP server in the backgrou
 bin/pred status               # daemon, profiles, policy knobs;  bin/pred stop
 
 curl -s 127.0.0.1:47321/predict -d '{"app":"chat","text":"See you tomor"}'          # the typing policy
+curl -s 127.0.0.1:47321/proofread -d '{"text":"i dont no","mode":"fix"}'           # the proofreading policy
 curl -s 127.0.0.1:47320/ -d '{"op":"profile.set","name":"haiku","instructions":"Answer with a haiku."}'
 curl -s 127.0.0.1:47320/ -d '{"profile":"haiku","prompt":"Autumn in the city","maxTokens":40}'   # the raw mechanism
 curl -s 127.0.0.1:47320/v1/chat/completions -d '{"model":"apple-on-device","messages":[{"role":"user","content":"Hi!"}]}'
@@ -95,6 +99,18 @@ needs two entries in `keybindings.json`, which apply to every session: read [int
 before installing it.
 
 Last keystroke → ghost on screen, human-like typing in tmux (Apple M4 Pro, macOS 27.2): pi 117-156 ms p50, Claude Code 157-161 ms p50.
+
+### Mac app: any text field, plus proofreading
+
+A menu bar app (prototype). While you type in any app, a pop-up below the text cursor shows the next words; Tab inserts the next
+word, Esc dismisses. Select text and press ⌃⌥P to fix typos and grammar, or ⌃⌥R to rewrite it, keeping its meaning; Return
+replaces the selection. It logs latency and acceptance metrics (no text) for tuning. Needs the Accessibility permission.
+
+```sh
+app/build.sh && open app/build/InputPredictor.app
+```
+
+Details, permissions and metrics: [app](app/README.md).
 
 ## Use the on-device model from any agent harness
 

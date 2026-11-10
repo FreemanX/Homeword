@@ -16,3 +16,4 @@ __pycache__/
 .DS_Store
 # written by Claude Code when it loads the mod (editor types)
 /integrations/claude-code/.claude-plugin/types/
+/app/build/
