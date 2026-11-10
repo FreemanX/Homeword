@@ -25,14 +25,16 @@ a prototype menu bar Mac app (any text field, a writing style per app, proofread
   a text, per paragraph, word diff), `prompts.py` (the user's prompts, history and benchmark results, in
   `~/.config/input-predictor/`), `evaluate.py` (scoring, per-style benchmarks), `config.json` (knobs; user overrides in
   `~/.config/input-predictor/config.json`), `predictd.py` (generic predictd client), `server.py` (HTTP `127.0.0.1:47321`:
-  `/predict`, `/warm`, `/proofread`, `/prompts`, `/history`, `/tokens`, `/bench`, for non-Python apps).
+  `/predict`, `/warm`, `/proofread`, `/prompts`, `/history`, `/tokens`, `/bench`, `/cases`, `/settings`, for non-Python
+  apps).
 - `bin/pred`: CLI on the policy. `pred try` (interactive line editor, Enter = new round with stats), `pred ask`, `pred serve`,
   `pred start|stop|status` (predictd + ghost server).
 - `bench/`: `run.py` (fixed 80-case benchmark), `human_pty.py` (drives `pred try` like a typist), `compare.py`, `gen_cases.py` +
   `corpus.md` → `cases.json`, `machine.py`, `try_pty_test.py` (smoke test), `integration_latency.py` (keystroke → ghost in a real
   terminal app via tmux), `openai_compare.py` (native protocol vs OpenAI API on the typing workload), `styles.json` + `run.py
-  --styles` (the suite: cases.json + styles.json, 164 cases in 7 categories; every style's prompt reported per category, also run
-  by Homeword's Prompts tab with the user's own cases), `app_metrics.py` (summary of Homeword's usage metrics),
+  --styles` (the suite: cases.json + styles.json, 200 cases in 7 categories, at least 25 each; every style's prompt reported per
+  category, also run by Homeword's Prompts tab with the user's own cases), `styles-dev.json` (tuning cases for the style prompts,
+  never reported), `app_metrics.py` (summary of Homeword's usage metrics),
   `baselines/` (shared results), `RESULTS.md`.
 - `integrations/pi/ghost-editor.ts`: pi extension (a `CustomEditor` subclass drawing the ghost in the fake cursor and padding).
 - `integrations/claude-code/`: Claude Code mod (`prompt.edit` hook + `$.prompt.fill` decorations; Tab/→ through two commands bound in
@@ -98,9 +100,10 @@ Policy (ghost, typing):
 
 ## Benchmarking rules
 
-- Before a run, make sure nothing else uses the model: `bin/pred stop` (also stops the ghost server), quit any open `pred try` and
-  pi/Claude Code sessions with the integrations (they restart the services), no other
-  `predictd` (`pgrep -fl predictd`). Results taken with a concurrent user are invalid (cache misses, different outputs).
+- Before a run, make sure nothing else uses the model: quit Homeword (it restarts the engine on its own), `bin/pred stop` (also
+  stops the ghost server), quit any open `pred try` and pi/Claude Code sessions with the integrations (they restart the services),
+  no other `predictd` (`pgrep -fl predictd`). Results taken with a concurrent user are invalid (cache misses, different outputs).
+  `run.py --spawn` refuses to start while another predictd runs and warns (`concurrent_daemon` in the result) if one appeared.
 - Fixed benchmark: `cd bench && python3 -I run.py --spawn --label <name> [--config '{...}'] [--daemon-config '{...}']` (private
   predictd; `--config` overrides the policy, `--daemon-config` predictd).
   Typing: `SEED=1 python3 -I bench/human_pty.py` and `ACCEPT=1 ...` (Tab when the ghost is right). Both save to `bench/results/`.
@@ -116,8 +119,10 @@ Policy (ghost, typing):
 - Benchmarks must not see the user's prompts or config overrides: scripts use `Ghost(user=False)`, spawned `pred` processes get
   `PRED_NO_USER=1`, a spawned predictd `--user-config ""`. `integration_latency.py` drives the running engine, which uses them.
 - Writing styles: the general prompt (prompt.json) is the one all earlier baselines used; keep its profile unchanged unless you mean
-  to break comparability. Change a style's prompt only when it beats the current one on its category (`run.py --styles`); style-only
-  examples lost to general's mixed ones, so styles keep general's 6 examples first (`"base": "general"`).
+  to break comparability. Choose a style's prompt on `bench/styles-dev.json`, then confirm on its category of the suite
+  (`run.py --styles`); 25-30 cases per category means one case is 3-4 points, so a single-set win of one or two cases is noise
+  (a round tuned on 16 cases did not hold up). Examples must never appear in the suite or the tuning cases:
+  `python3 -I ghost/evaluate.py --check` (the benchmark also skips such cases). Code-only examples lost to mixed ones.
 
 ## Repo rules
 
@@ -150,7 +155,7 @@ cursor). Test Claude Code with a throwaway `CLAUDE_CONFIG_DIR` holding the keybi
 - A freshly compiled binary is slow on its very first launch; `build.sh` runs it once.
 - `python3` may be a wrapper on some machines; any Python 3.9+ works.
 - Mac app: no SwiftUI `@State` (a macro on macOS 27 SDKs; its plugin ships with Xcode only, and `app/build.sh` uses the command
-  line tools): keep view state in `ObservableObject`s. Check UI with `--args -show <tab>` / `-demoProofread file` and a window
+  line tools): keep view state in `ObservableObject`s. Check UI with `--args -show <tab>` / `-demoProofread file` / `-infoTip <text prefix>` (opens that ⓘ popover) and a window
   screenshot (`screencapture -l <window id>`), never a full-screen one.
 - Importing `bench/run.py` used to start a benchmark; it now has a `__main__` guard. Keep scripts importable.
 

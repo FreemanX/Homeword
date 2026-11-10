@@ -1,113 +1,547 @@
 {
-  "_doc": "Benchmark cases per writing style (the Mac app's Prompts tab and run.py --styles). text = typed so far (may end mid-word), rest = what was typed next. Synthetic text, no personal data. Changing a case breaks comparability with earlier results.",
+  "_doc": "Benchmark cases per category, added to bench/cases.json in the suite (ghost/evaluate.py; run.py --styles and Homeword's Prompts tab), at least 25 per category with cases.json. text = typed so far (may end mid-word), rest = what was typed next. Synthetic text, no personal data, none of it in any prompt's examples or in the tuning cases (styles-dev.json); the benchmark also skips a case that matches an example of the prompt it runs. \"proofread\": sentences with known mistakes. Changing a case breaks comparability with earlier results.",
   "general": [
-    {"text": "Ideas for the weekend: go for a long walk by the river, finish the book I star", "rest": "ted last month, and call grandma."},
-    {"text": "Shopping list: apples, oat milk, coffee beans, and something for dess", "rest": "ert on Saturday."},
-    {"text": "Remember to water the plants and take out the recyc", "rest": "ling before Thursday morning."},
-    {"text": "The movie was better than I expected, especially the last half ", "rest": "hour with the big twist."},
-    {"text": "Packing for the trip: passport, charger, sunglasses and a warm jack", "rest": "et for the evenings."},
-    {"text": "I need to book a dentist appoint", "rest": "ment for sometime next week."},
-    {"text": "Things to fix in the apartment: the leaking kitchen tap and the broken", "rest": " light in the hallway."},
-    {"text": "Started learning Spanish this month and I can already order food in a resta", "rest": "urant without help."},
-    {"text": "The new bakery around the corner makes the best croiss", "rest": "ants I have ever had."},
-    {"text": "Goals for this year: run a half marathon, read twenty books and spend less time on my ", "rest": "phone in the evenings."},
-    {"text": "It rained all day so we stayed inside and played board ga", "rest": "mes with the kids."},
-    {"text": "Note to self: the car needs an oil change before the long dri", "rest": "ve to the coast."},
-    {"text": "Birthday gift ideas for Sam: a good cookbook, concert tick", "rest": "ets, or a new backpack."},
-    {"text": "We should plant tomatoes and basil in the garden as soon as the weather gets", "rest": " warmer."}
+    {
+      "text": "Ideas for the weekend: go for a long walk by the river, finish the book I star",
+      "rest": "ted last month, and call grandma."
+    },
+    {
+      "text": "Shopping list: apples, oat milk, coffee beans, and something for dess",
+      "rest": "ert on Saturday."
+    },
+    {
+      "text": "Remember to water the plants and take out the recyc",
+      "rest": "ling before Thursday morning."
+    },
+    {
+      "text": "The movie was better than I expected, especially the last half ",
+      "rest": "hour with the big twist."
+    },
+    {
+      "text": "Packing for the trip: passport, charger, sunglasses and a warm jack",
+      "rest": "et for the evenings."
+    },
+    {
+      "text": "I need to book a dentist appoint",
+      "rest": "ment for sometime next week."
+    },
+    {
+      "text": "Things to fix in the apartment: the leaking kitchen tap and the broken",
+      "rest": " light in the hallway."
+    },
+    {
+      "text": "Started learning Spanish this month and I can already order food in a resta",
+      "rest": "urant without help."
+    },
+    {
+      "text": "The new bakery around the corner makes the best croiss",
+      "rest": "ants I have ever had."
+    },
+    {
+      "text": "Goals for this year: run a half marathon, read twenty books and spend less time on my ",
+      "rest": "phone in the evenings."
+    },
+    {
+      "text": "It rained all day so we stayed inside and played board ga",
+      "rest": "mes with the kids."
+    },
+    {
+      "text": "Note to self: the car needs an oil change before the long dri",
+      "rest": "ve to the coast."
+    },
+    {
+      "text": "Birthday gift ideas for Sam: a good cookbook, concert tick",
+      "rest": "ets, or a new backpack."
+    },
+    {
+      "text": "We should plant tomatoes and basil in the garden as soon as the weather gets",
+      "rest": " warmer."
+    }
   ],
   "chat": [
-    {"text": "lol I can't believe you actually fin", "rest": "ished the whole pizza by yourself"},
-    {"text": "hey are you still coming tonight? we're meeting at the bar around ", "rest": "eight"},
-    {"text": "sorry, just saw your message, I was in meet", "rest": "ings all morning"},
-    {"text": "omg congrats on the new job!! when do you sta", "rest": "rt?"},
-    {"text": "can you send me the link to that article you mentio", "rest": "ned yesterday?"},
-    {"text": "running late, the train is delayed again, start without", "rest": " me"},
-    {"text": "did you see the game last night? that last minute goal was cra", "rest": "zy"},
-    {"text": "no worries, take your ti", "rest": "me, there's no rush at all"},
-    {"text": "I'm heading to the store, do you need anyth", "rest": "ing?"},
-    {"text": "happy friday everyone! any plans for the week", "rest": "end?"},
-    {"text": "thanks for the help earlier, the fix wor", "rest": "ked perfectly"},
-    {"text": "let's grab coffee next week, I'm free on tues", "rest": "day or wednesday afternoon"},
-    {"text": "just got home, I'm so tired, going straight to ", "rest": "bed"},
-    {"text": "who's bringing snacks to the movie night on satur", "rest": "day?"}
+    {
+      "text": "lol I can't believe you actually fin",
+      "rest": "ished the whole pizza by yourself"
+    },
+    {
+      "text": "hey are you still coming tonight? we're meeting at the bar around ",
+      "rest": "eight"
+    },
+    {
+      "text": "sorry, just saw your message, I was in meet",
+      "rest": "ings all morning"
+    },
+    {
+      "text": "omg congrats on the new job!! when do you sta",
+      "rest": "rt?"
+    },
+    {
+      "text": "can you send me the link to that article you mentio",
+      "rest": "ned yesterday?"
+    },
+    {
+      "text": "running late, the train is delayed again, start without",
+      "rest": " me"
+    },
+    {
+      "text": "did you see the game last night? that last minute goal was cra",
+      "rest": "zy"
+    },
+    {
+      "text": "no worries, take your ti",
+      "rest": "me, there's no rush at all"
+    },
+    {
+      "text": "I'm heading to the store, do you need anyth",
+      "rest": "ing?"
+    },
+    {
+      "text": "happy friday everyone! any plans for the week",
+      "rest": "end?"
+    },
+    {
+      "text": "thanks for the help earlier, the fix wor",
+      "rest": "ked perfectly"
+    },
+    {
+      "text": "let's grab coffee next week, I'm free on tues",
+      "rest": "day or wednesday afternoon"
+    },
+    {
+      "text": "just got home, I'm so tired, going straight to ",
+      "rest": "bed"
+    },
+    {
+      "text": "who's bringing snacks to the movie night on satur",
+      "rest": "day?"
+    }
   ],
   "email": [
-    {"text": "Dear Mr. Patel, thank you for your interest in our services. I would be happy to schedule a call to discuss your requi", "rest": "rements in more detail."},
-    {"text": "Hi Tom, I hope you had a great weekend. I wanted to check in on the status of the quarterly re", "rest": "port before Friday's deadline."},
-    {"text": "Please let me know if you have any questions or if there is anything else I can help you wi", "rest": "th."},
-    {"text": "I am writing to confirm our meeting on Wednesday at 3 PM in the main conference ro", "rest": "om."},
-    {"text": "Thank you for your patience while we looked into this is", "rest": "sue with your account."},
-    {"text": "As discussed in our call, I have attached the revised timeline and the updated bud", "rest": "get for your review."},
-    {"text": "Unfortunately, the shipment has been delayed due to unexpected problems with our supp", "rest": "lier."},
-    {"text": "I would like to request two days of annual leave on the 14th and 15th of next mon", "rest": "th."},
-    {"text": "We are pleased to inform you that your application has been appro", "rest": "ved."},
-    {"text": "Could you please review the attached document and share your feedback by the end of the ", "rest": "week?"},
-    {"text": "Apologies for the late reply, I was out of the office for most of last", "rest": " week."},
-    {"text": "Best regards, and thank you again for your hel", "rest": "p with the event."},
-    {"text": "Just a friendly reminder that the registration for the conference closes this Fri", "rest": "day."},
-    {"text": "I have cc'd my colleague Anna, who will be your main point of cont", "rest": "act going forward."}
+    {
+      "text": "Dear Mr. Patel, thank you for your interest in our services. I would be happy to schedule a call to discuss your requi",
+      "rest": "rements in more detail."
+    },
+    {
+      "text": "Hi Tom, I hope you had a great weekend. I wanted to check in on the status of the quarterly re",
+      "rest": "port before Friday's deadline."
+    },
+    {
+      "text": "Please let me know if you have any questions or if there is anything else I can help you wi",
+      "rest": "th."
+    },
+    {
+      "text": "I am writing to confirm our meeting on Wednesday at 3 PM in the main conference ro",
+      "rest": "om."
+    },
+    {
+      "text": "Thank you for your patience while we looked into this is",
+      "rest": "sue with your account."
+    },
+    {
+      "text": "As discussed in our call, I have attached the revised timeline and the updated bud",
+      "rest": "get for your review."
+    },
+    {
+      "text": "Unfortunately, the shipment has been delayed due to unexpected problems with our supp",
+      "rest": "lier."
+    },
+    {
+      "text": "I would like to request two days of annual leave on the 14th and 15th of next mon",
+      "rest": "th."
+    },
+    {
+      "text": "We are pleased to inform you that your application has been appro",
+      "rest": "ved."
+    },
+    {
+      "text": "Could you please review the attached document and share your feedback by the end of the ",
+      "rest": "week?"
+    },
+    {
+      "text": "Apologies for the late reply, I was out of the office for most of last",
+      "rest": " week."
+    },
+    {
+      "text": "Best regards, and thank you again for your hel",
+      "rest": "p with the event."
+    },
+    {
+      "text": "Just a friendly reminder that the registration for the conference closes this Fri",
+      "rest": "day."
+    },
+    {
+      "text": "I have cc'd my colleague Anna, who will be your main point of cont",
+      "rest": "act going forward."
+    },
+    {
+      "text": "Thank you for the update. Could you also send the revised slides before the cli",
+      "rest": "ent meeting?"
+    },
+    {
+      "text": "I am happy to share that our team has reached its quarterly tar",
+      "rest": "get two weeks early."
+    }
   ],
   "work": [
-    {"text": "The purpose of this document is to define the scope and objectives of the data migra", "rest": "tion project."},
-    {"text": "Key performance indicators include customer retention, average response time and net promoter sc", "rest": "ore."},
-    {"text": "The proposed solution reduces infrastructure costs by consolidating three legacy sys", "rest": "tems into one platform."},
-    {"text": "All team members are expected to complete the security training by the end of the qua", "rest": "rter."},
-    {"text": "The vendor will be responsible for installation, maintenance and technical sup", "rest": "port for the first year."},
-    {"text": "Action items from the meeting: update the roadmap, review the hiring plan and prepare the board present", "rest": "ation."},
-    {"text": "Customer feedback indicates that the onboarding process is too long and confus", "rest": "ing for new users."},
-    {"text": "We recommend a phased rollout, starting with a small group of internal ", "rest": "users in the first month."},
-    {"text": "The budget for the next fiscal year includes funding for two additional engin", "rest": "eers and a product designer."},
-    {"text": "This policy applies to all employees, contractors and temporary staff working on company prem", "rest": "ises."},
-    {"text": "In the second phase, we will integrate the payment system with the existing account", "rest": "ing software."},
-    {"text": "The main dependencies are the new authentication service and the updated data ", "rest": "pipeline."},
-    {"text": "Overall, the project is on track, although the testing phase may take longer than plan", "rest": "ned."},
-    {"text": "Please refer to the appendix for a detailed breakdown of the estimated co", "rest": "sts."}
+    {
+      "text": "The purpose of this document is to define the scope and objectives of the data migra",
+      "rest": "tion project."
+    },
+    {
+      "text": "Key performance indicators include customer retention, average response time and net promoter sc",
+      "rest": "ore."
+    },
+    {
+      "text": "The proposed solution reduces infrastructure costs by consolidating three legacy sys",
+      "rest": "tems into one platform."
+    },
+    {
+      "text": "All team members are expected to complete the security training by the end of the qua",
+      "rest": "rter."
+    },
+    {
+      "text": "The vendor will be responsible for installation, maintenance and technical sup",
+      "rest": "port for the first year."
+    },
+    {
+      "text": "Action items from the meeting: update the roadmap, review the hiring plan and prepare the board present",
+      "rest": "ation."
+    },
+    {
+      "text": "Customer feedback indicates that the onboarding process is too long and confus",
+      "rest": "ing for new users."
+    },
+    {
+      "text": "We recommend a phased rollout, starting with a small group of internal ",
+      "rest": "users in the first month."
+    },
+    {
+      "text": "The budget for the next fiscal year includes funding for two additional engin",
+      "rest": "eers and a product designer."
+    },
+    {
+      "text": "This policy applies to all employees, contractors and temporary staff working on company prem",
+      "rest": "ises."
+    },
+    {
+      "text": "In the second phase, we will integrate the payment system with the existing account",
+      "rest": "ing software."
+    },
+    {
+      "text": "The main dependencies are the new authentication service and the updated data ",
+      "rest": "pipeline."
+    },
+    {
+      "text": "Overall, the project is on track, although the testing phase may take longer than plan",
+      "rest": "ned."
+    },
+    {
+      "text": "Please refer to the appendix for a detailed breakdown of the estimated co",
+      "rest": "sts."
+    },
+    {
+      "text": "The migration plan describes how existing customer data will be moved to the new plat",
+      "rest": "form."
+    },
+    {
+      "text": "Each department is responsible for reviewing its budget and submitting a forecast by the end of the mon",
+      "rest": "th."
+    },
+    {
+      "text": "The report highlights three areas for improvement: onboarding, documentation and internal commun",
+      "rest": "ication."
+    },
+    {
+      "text": "To ensure compliance, all contracts must be stored in the central document reposi",
+      "rest": "tory."
+    },
+    {
+      "text": "The steering committee will meet monthly to review progress and approve major deci",
+      "rest": "sions."
+    },
+    {
+      "text": "Our recommendation is to postpone the launch until the security audit is comp",
+      "rest": "leted."
+    },
+    {
+      "text": "The table below summarizes the costs and benefits of each opt",
+      "rest": "ion."
+    },
+    {
+      "text": "Employees can request remote work arrangements through the HR por",
+      "rest": "tal."
+    },
+    {
+      "text": "The pilot will run for eight weeks in two regions before a wider roll",
+      "rest": "out."
+    },
+    {
+      "text": "Key risks include vendor delays, budget overruns and staff turn",
+      "rest": "over."
+    },
+    {
+      "text": "The new dashboard gives managers real-time visibility into sales performance across all ",
+      "rest": "regions."
+    }
   ],
   "academic": [
-    {"text": "The aim of this study is to investigate the relationship between social media use and adolescent well-be", "rest": "ing."},
-    {"text": "Data were collected through semi-structured interviews with twenty-four partic", "rest": "ipants."},
-    {"text": "A linear regression model was used to estimate the effect of income on educational attain", "rest": "ment."},
-    {"text": "Consistent with prior work, we observed a strong positive correlation between the two vari", "rest": "ables."},
-    {"text": "One limitation of this study is the relatively small sample size, which may limit the generaliz", "rest": "ability of the findings."},
-    {"text": "The experimental results demonstrate that the proposed algorithm outperforms existing base", "rest": "lines on all three datasets."},
-    {"text": "In the following section, we review the relevant literature on climate adapta", "rest": "tion in urban areas."},
-    {"text": "These results have important implications for the design of future interven", "rest": "tions."},
-    {"text": "The samples were stored at minus eighty degrees Celsius until further anal", "rest": "ysis."},
-    {"text": "To the best of our knowledge, this is the first study to examine this question in a longitudinal ", "rest": "setting."},
-    {"text": "The theoretical framework draws on concepts from behavioral economics and cognitive psych", "rest": "ology."},
-    {"text": "Statistical significance was assessed using a two-tailed t-test with an alpha level of", "rest": " 0.05."},
-    {"text": "Future work should explore whether these effects persist over longer time per", "rest": "iods."},
-    {"text": "We thank the anonymous reviewers for their helpful comments on an earlier version of this manu", "rest": "script."}
+    {
+      "text": "The aim of this study is to investigate the relationship between social media use and adolescent well-be",
+      "rest": "ing."
+    },
+    {
+      "text": "Data were collected through semi-structured interviews with twenty-four partic",
+      "rest": "ipants."
+    },
+    {
+      "text": "A linear regression model was used to estimate the effect of income on educational attain",
+      "rest": "ment."
+    },
+    {
+      "text": "Consistent with prior work, we observed a strong positive correlation between the two vari",
+      "rest": "ables."
+    },
+    {
+      "text": "One limitation of this study is the relatively small sample size, which may limit the generaliz",
+      "rest": "ability of the findings."
+    },
+    {
+      "text": "The experimental results demonstrate that the proposed algorithm outperforms existing base",
+      "rest": "lines on all three datasets."
+    },
+    {
+      "text": "In the following section, we review the relevant literature on climate adapta",
+      "rest": "tion in urban areas."
+    },
+    {
+      "text": "These results have important implications for the design of future interven",
+      "rest": "tions."
+    },
+    {
+      "text": "The samples were stored at minus eighty degrees Celsius until further anal",
+      "rest": "ysis."
+    },
+    {
+      "text": "To the best of our knowledge, this is the first study to examine this question in a longitudinal ",
+      "rest": "setting."
+    },
+    {
+      "text": "The theoretical framework draws on concepts from behavioral economics and cognitive psych",
+      "rest": "ology."
+    },
+    {
+      "text": "Statistical significance was assessed using a two-tailed t-test with an alpha level of",
+      "rest": " 0.05."
+    },
+    {
+      "text": "Future work should explore whether these effects persist over longer time per",
+      "rest": "iods."
+    },
+    {
+      "text": "We thank the anonymous reviewers for their helpful comments on an earlier version of this manu",
+      "rest": "script."
+    },
+    {
+      "text": "The questionnaire was adapted from a validated instrument used in previous resea",
+      "rest": "rch."
+    },
+    {
+      "text": "Descriptive statistics for all variables are presented in Ta",
+      "rest": "ble 1."
+    },
+    {
+      "text": "The study was conducted in accordance with the Declaration of Hels",
+      "rest": "inki."
+    },
+    {
+      "text": "Our analysis reveals significant regional differences in access to health ca",
+      "rest": "re."
+    },
+    {
+      "text": "We controlled for age, gender and socioeconomic status in all reg",
+      "rest": "ression models."
+    },
+    {
+      "text": "The literature on this topic can be broadly divided into two stra",
+      "rest": "nds."
+    },
+    {
+      "text": "Missing data were handled using multiple imputa",
+      "rest": "tion."
+    },
+    {
+      "text": "Table 3 reports the coefficients and standard errors for each spec",
+      "rest": "ification."
+    },
+    {
+      "text": "This finding suggests that the relationship between income and happiness is non-lin",
+      "rest": "ear."
+    },
+    {
+      "text": "Students in the treatment group showed greater gains in mathematics achieve",
+      "rest": "ment."
+    },
+    {
+      "text": "The theoretical contribution of this paper is twofold. First, we extend existing mod",
+      "rest": "els of decision making."
+    }
   ],
   "code": [
-    {"text": "    # Retry the request up to three times before giving ", "rest": "up and raising an error"},
-    {"text": "// Convert the timestamp to UTC before compar", "rest": "ing it with the deadline"},
-    {"text": "feat: add pagination support to the search end", "rest": "point"},
-    {"text": "    \"\"\"Return the number of active users in the given date ran", "rest": "ge.\"\"\""},
-    {"text": "I think we should move this logic into a separate service so it can be tested indepen", "rest": "dently."},
-    {"text": "refactor: extract the validation logic into its own mod", "rest": "ule"},
-    {"text": "// FIXME: this breaks when the list is em", "rest": "pty"},
-    {"text": "Could you add a unit test for the error case? Right now only the happy path is cov", "rest": "ered."},
-    {"text": "    # Cache the result so we don't hit the database on every req", "rest": "uest"},
-    {"text": "docs: update the README with installation instruc", "rest": "tions for Windows"},
-    {"text": "This looks good to me, just one small comment about the variable na", "rest": "ming."},
-    {"text": "// The callback is invoked on the main thread after the download fin", "rest": "ishes"},
-    {"text": "test: cover the edge case where the input file is miss", "rest": "ing"},
-    {"text": "    # Sort by priority first, then by creation ", "rest": "time"}
+    {
+      "text": "    # Retry the request up to three times before giving ",
+      "rest": "up and raising an error"
+    },
+    {
+      "text": "// Convert the timestamp to UTC before compar",
+      "rest": "ing it with the deadline"
+    },
+    {
+      "text": "feat: add pagination support to the search end",
+      "rest": "point"
+    },
+    {
+      "text": "    \"\"\"Return the number of active users in the given date ran",
+      "rest": "ge.\"\"\""
+    },
+    {
+      "text": "I think we should move this logic into a separate service so it can be tested indepen",
+      "rest": "dently."
+    },
+    {
+      "text": "refactor: extract the validation logic into its own mod",
+      "rest": "ule"
+    },
+    {
+      "text": "// FIXME: this breaks when the list is em",
+      "rest": "pty"
+    },
+    {
+      "text": "Could you add a unit test for the error case? Right now only the happy path is cov",
+      "rest": "ered."
+    },
+    {
+      "text": "    # Cache the result so we don't hit the database on every req",
+      "rest": "uest"
+    },
+    {
+      "text": "docs: update the README with installation instruc",
+      "rest": "tions for Windows"
+    },
+    {
+      "text": "This looks good to me, just one small comment about the variable na",
+      "rest": "ming."
+    },
+    {
+      "text": "// The callback is invoked on the main thread after the download fin",
+      "rest": "ishes"
+    },
+    {
+      "text": "test: cover the edge case where the input file is miss",
+      "rest": "ing"
+    },
+    {
+      "text": "    # Sort by priority first, then by creation ",
+      "rest": "time"
+    },
+    {
+      "text": "    # Wait for the worker threads to finish before shutting down the ex",
+      "rest": "ecutor"
+    },
+    {
+      "text": "// Escape the user input before inserting it into the HTML temp",
+      "rest": "late"
+    },
+    {
+      "text": "ci: run the integration tests only on the main bra",
+      "rest": "nch"
+    },
+    {
+      "text": "Have you measured the performance impact of this change on large in",
+      "rest": "puts?"
+    },
+    {
+      "text": "    \"\"\"Raise a ValueError if the email address is not val",
+      "rest": "id.\"\"\""
+    },
+    {
+      "text": "style: format the code with the new linter con",
+      "rest": "figuration"
+    }
+  ],
+  "terminal": [
+    {
+      "text": "git checkout -b feature/user-prof",
+      "rest": "ile-page"
+    },
+    {
+      "text": "npm install --save-dev typesc",
+      "rest": "ript"
+    },
+    {
+      "text": "grep -rn \"TODO\" src/ --include=*.p",
+      "rest": "y"
+    },
+    {
+      "text": "docker ps -a --filter status=exi",
+      "rest": "ted"
+    },
+    {
+      "text": "pip install -r requirem",
+      "rest": "ents.txt"
+    },
+    {
+      "text": "cd ~/projects && git pull origin ma",
+      "rest": "in"
+    }
   ],
   "proofread": [
-    {"text": "i think we should of left earlier, the traffic was terible.", "expected": "I think we should have left earlier, the traffic was terrible."},
-    {"text": "Their going to announce the results tomorow morning.", "expected": "They're going to announce the results tomorrow morning."},
-    {"text": "The report contain several error that needs to be fixed before friday.", "expected": "The report contains several errors that need to be fixed before Friday."},
-    {"text": "Can you send me the file's when you get a chance.", "expected": "Can you send me the files when you get a chance?"},
-    {"text": "We recieved you're message and will respond shortly.", "expected": "We received your message and will respond shortly."},
-    {"text": "Its been a long week, im looking forward to the weekend.", "expected": "It's been a long week, I'm looking forward to the weekend."},
-    {"text": "The meeting was postponed becuase the manager was sick.", "expected": "The meeting was postponed because the manager was sick."},
-    {"text": "She dont know weather the flight is on time.", "expected": "She doesn't know whether the flight is on time."},
-    {"text": "Please make sure to double check the adress before sending the package.", "expected": "Please make sure to double-check the address before sending the package."},
-    {"text": "There is alot of people waiting outside the store.", "expected": "There are a lot of people waiting outside the store."},
-    {"text": "I has finished the presentation, let me know what you thinks.", "expected": "I have finished the presentation, let me know what you think."},
-    {"text": "The new policy effects everyone in the department.", "expected": "The new policy affects everyone in the department."}
+    {
+      "text": "i think we should of left earlier, the traffic was terible.",
+      "expected": "I think we should have left earlier, the traffic was terrible."
+    },
+    {
+      "text": "Their going to announce the results tomorow morning.",
+      "expected": "They're going to announce the results tomorrow morning."
+    },
+    {
+      "text": "The report contain several error that needs to be fixed before friday.",
+      "expected": "The report contains several errors that need to be fixed before Friday."
+    },
+    {
+      "text": "Can you send me the file's when you get a chance.",
+      "expected": "Can you send me the files when you get a chance?"
+    },
+    {
+      "text": "We recieved you're message and will respond shortly.",
+      "expected": "We received your message and will respond shortly."
+    },
+    {
+      "text": "Its been a long week, im looking forward to the weekend.",
+      "expected": "It's been a long week, I'm looking forward to the weekend."
+    },
+    {
+      "text": "The meeting was postponed becuase the manager was sick.",
+      "expected": "The meeting was postponed because the manager was sick."
+    },
+    {
+      "text": "She dont know weather the flight is on time.",
+      "expected": "She doesn't know whether the flight is on time."
+    },
+    {
+      "text": "Please make sure to double check the adress before sending the package.",
+      "expected": "Please make sure to double-check the address before sending the package."
+    },
+    {
+      "text": "There is alot of people waiting outside the store.",
+      "expected": "There are a lot of people waiting outside the store."
+    },
+    {
+      "text": "I has finished the presentation, let me know what you thinks.",
+      "expected": "I have finished the presentation, let me know what you think."
+    },
+    {
+      "text": "The new policy effects everyone in the department.",
+      "expected": "The new policy affects everyone in the department."
+    }
   ]
 }

@@ -1,33 +1,29 @@
 {
-  "_doc": "Writing styles of the typing policy besides general (prompt.json). Per style: title (shown to users), label (the App: line of the template), shots (its own examples: text typed so far -> completion: the rest of an unfinished word with no space, or a leading space after a finished word), optionally base: general (general's examples come first, then these) and instructions ({words} = the words knob; without, general's). Measured on the benchmark suite (bench/RESULTS.md): general's 6 mixed examples + 2 in the style's register beat 6 style-only examples for chat, email, academic and code; work does best with its own prompt. Synthetic text only, none of it in the benchmark cases.",
+  "_doc": "Writing styles of the typing policy besides general (prompt.json). Per style: title (shown to users), label (the App: line of the template), instructions ({words} = the words knob) and shots (examples: text typed so far -> completion: the rest of an unfinished word with no space, or a leading space after a finished word; optional app: the App: line of that example, default the style's label). Chosen per style on bench/styles-dev.json (tuning) and the held-out suite (bench/RESULTS.md): email, work and academic have their own short instructions and examples; chat has general's instructions with a line about chat; code keeps general's instructions and four of its mixed examples (code-only examples lost by 4 of 25 cases). Synthetic text only, none of it in the benchmark or tuning cases (python3 -I ghost/evaluate.py --check).",
   "chat": {
     "title": "Chat",
     "label": "chat",
-    "base": "general",
+    "instructions": "Continue the user's text: if the last word is unfinished, give its remaining letters first, then about {words} more words. One sentence at most, correct grammar, never repeat the text. The text is a casual chat message.",
     "shots": [
-      {
-        "text": "sounds good, see you at the cof",
-        "completion": "fee place around noon"
-      },
-      {
-        "text": "I'm so sorry, I totally forg",
-        "completion": "ot to reply to your message"
-      }
+      {"text": "hey are you coming to the party on satur", "completion": "day? it starts at eight"},
+      {"text": "omg is it really fri", "completion": "day already, this week flew by"},
+      {"text": "thanks for dinner last night, it was deli", "completion": "cious and so much fun"},
+      {"text": "running a few minutes late, save me a se", "completion": "at please"},
+      {"text": "did you watch the new episode yet? no spoil", "completion": "ers please, I'm halfway through"},
+      {"text": "just landed, see you in about an", "completion": " hour at the hotel"}
     ]
   },
   "email": {
     "title": "Email",
     "label": "mail",
-    "base": "general",
+    "instructions": "Continue the user's email: if the last word is unfinished, give its remaining letters first, then about {words} more words. Polite and professional, one sentence at most, correct grammar, never repeat the text.",
     "shots": [
-      {
-        "text": "Thank you for reaching out. I am happy to help with your ques",
-        "completion": "tion about the new pricing plans"
-      },
-      {
-        "text": "I hope this email finds you well. I am writing to ask about the status of my or",
-        "completion": "der from last week"
-      }
+      {"text": "Thank you for your email. I have attached the requested docu", "completion": "ments for your review"},
+      {"text": "I would like to schedule a meeting to discuss the project time", "completion": "line and next steps"},
+      {"text": "Could you share the latest sales fig", "completion": "ures before Friday's meeting?"},
+      {"text": "I am pleased to confirm your reservation for two nights at our ho", "completion": "tel in Lisbon"},
+      {"text": "Unfortunately, I will not be able to attend the confer", "completion": "ence due to a prior commitment"},
+      {"text": "I hope you are doing well and had a great", "completion": " weekend with your family"}
     ]
   },
   "work": {
@@ -35,60 +31,38 @@
     "label": "document",
     "instructions": "Continue the user's work document: if the last word is unfinished, give its remaining letters first, then about {words} more words. Formal, precise and professional, one sentence at most, never repeat the text.",
     "shots": [
-      {
-        "text": "The goal of this project is to reduce the time it takes to onboard new custom",
-        "completion": "ers from two weeks to three days"
-      },
-      {
-        "text": "Based on the results of the pilot, we recommend expanding the program to all reg",
-        "completion": "ional offices in the next quarter"
-      },
-      {
-        "text": "The main risk is that the migration may cause a short service interrup",
-        "completion": "tion during the switchover window"
-      },
-      {
-        "text": "Next steps: finalize the budget, confirm the vendor, and sched",
-        "completion": "ule the kickoff meeting with all stakeholders"
-      },
-      {
-        "text": "This document describes the requirements for the new ",
-        "completion": "reporting system and its main use cases"
-      },
-      {
-        "text": "Revenue grew by twelve percent compared to the previous",
-        "completion": " year, driven mainly by new subscriptions"
-      }
+      {"text": "The goal of this project is to reduce the time it takes to onboard new custom", "completion": "ers from two weeks to three days"},
+      {"text": "Based on the results of the pilot, we recommend expanding the program to all reg", "completion": "ional offices in the next quarter"},
+      {"text": "The main risk is that the migration may cause a short service interrup", "completion": "tion during the switchover window"},
+      {"text": "Next steps: finalize the budget, confirm the vendor, and sched", "completion": "ule the kickoff meeting with all stakeholders"},
+      {"text": "This document describes the requirements for the new ", "completion": "reporting system and its main use cases"},
+      {"text": "Revenue grew by twelve percent compared to the previous", "completion": " year, driven mainly by new subscriptions"}
     ]
   },
   "academic": {
     "title": "Academic",
     "label": "paper",
-    "base": "general",
+    "instructions": "Continue the user's academic writing: if the last word is unfinished, give its remaining letters first, then about {words} more words. Formal and precise, one sentence at most, correct grammar, never repeat the text.",
     "shots": [
-      {
-        "text": "In this study, we examine the impact of remote work on employee produc",
-        "completion": "tivity across several industries"
-      },
-      {
-        "text": "The data suggest a strong association between air pollution and respiratory dis",
-        "completion": "eases in urban populations"
-      }
+      {"text": "In this study, we examine the impact of remote work on employee produc", "completion": "tivity across several industries"},
+      {"text": "The data suggest a strong association between air pollution and respiratory dis", "completion": "eases in urban populations"},
+      {"text": "A systematic review of the literature was conducted to identify relev", "completion": "ant studies published since 2010"},
+      {"text": "Our findings contribute to a growing body of research on lang", "completion": "uage acquisition in early childhood"},
+      {"text": "However, these results should be interpreted with ", "completion": "caution given the small sample size"},
+      {"text": "The model was trained on a large corpus of annotated", "completion": " texts from multiple domains"}
     ]
   },
   "code": {
     "title": "Code",
     "label": "code",
-    "base": "general",
+    "instructions": "Continue the user's text: if the last word is unfinished, give its remaining letters first, then about {words} more words. One sentence at most, correct grammar, never repeat the text.",
     "shots": [
-      {
-        "text": "    # Skip hidden files and directories when walking the tr",
-        "completion": "ee to avoid scanning caches"
-      },
-      {
-        "text": "// TODO: replace this linear search with a hash map once the list gets lar",
-        "completion": "ger than a few hundred items"
-      }
+      {"app": "mail", "text": "I will send you the docu", "completion": "ment by the end of the day"},
+      {"app": "chat", "text": "We are thinking about booking a flight to Lis", "completion": "bon for the first week of June"},
+      {"app": "terminal", "text": "git commit -m \"fix: handle empty list in the pars", "completion": "er when no arguments are given"},
+      {"app": "essay", "text": "The history of the Roman Empire is a fascin", "completion": "ating story of power and ambition"},
+      {"text": "    # Skip hidden files and directories when walking the tr", "completion": "ee to avoid scanning caches"},
+      {"text": "// TODO: replace this linear search with a hash map once the list gets lar", "completion": "ger than a few hundred items"}
     ]
   }
 }

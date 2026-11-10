@@ -279,6 +279,21 @@ def load_config(path=CONFIG, user=True):
     return cfg
 
 
+def save_user_config(updates):
+    """Write knobs to the user's overrides (user_dir()/config.json), keeping the others there."""
+    from .prompts import _read, _write
+    path = os.path.join(user_dir(), "config.json")
+    d = _read(path)
+    d = d if isinstance(d, dict) else {}
+    d.update(updates)
+    _write(path, d)
+
+
+def tokens_for_words(words):
+    """The output cap for `words` suggested words: the unfinished word's rest + the words, ~1.2 tokens per word (5 -> 6)."""
+    return words + -(-words // 5)
+
+
 class Ghost:
     """The policy. `overrides` change config.json for this instance; per-request `opts` change it for one request.
     `user=False` ignores the user's config overrides and prompts (benchmarks run on the shipped ones)."""
@@ -334,10 +349,8 @@ class Ghost:
             return {"instructions": self.default_instructions(cfg),
                     "examples": [{"text": s["text"], "completion": s["completion"], "app": s["app"]} for s in self.prompt["shots"][: cfg["shots"]]]}
         st = self.styles[style]
-        own = [{"text": s["text"], "completion": s["completion"]} for s in st["shots"]]
-        base = self.prompt_for("general", cfg)["examples"] if st.get("base") == "general" else []   # the mixed examples teach the format
-        return {"instructions": st.get("instructions") or self.default_instructions(cfg),     # general's instructions by default
-                "examples": base + own}
+        examples = [{k: s[k] for k in ("text", "completion", "app") if k in s} for s in st["shots"]]   # app: else the style's label
+        return {"instructions": st.get("instructions") or self.default_instructions(cfg), "examples": examples}
 
     def prompt_for(self, style="general", cfg=None):
         """The prompt in use: the user's version (instructions, and examples if they changed them), else the shipped one."""

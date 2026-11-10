@@ -4,11 +4,13 @@
                      answer (policy.py); `context`: a writing style (general, chat, email, work, academic, code; default general)
     POST /warm       {"context": "chat"}: the user is about to type in this style: pin and prewarm its prompt
     POST /proofread  {"text": "...", "mode": "fix" | "rewrite"}  ->  {"text", "changed", "changes", "warnings", ...} (proofread.py)
-    GET  /prompts    -> {"prompts": [{"name", "group", "title", "prompt", "default", "custom", "hash", "result", ...}]}: every
-                     prompt (prediction per style, proofreading per mode), the one in use and the shipped one (prompts.py)
+    GET  /prompts    -> {"prompts": [{"name", "group", "title", "prompt", "default", "custom", "hash", "result", "suite_cases",
+                     ...}]}: every prompt (prediction per style, proofreading per mode), the one in use and the shipped one
+                     (prompts.py), and the size of the benchmark it runs on
     POST /prompts    {"name": "predict-chat", "prompt": {"instructions", "examples"}} saves the user's version (and a history
                      entry), {"name": ..., "reset": true} restores the shipped one
     GET  /history?name=predict-chat  -> {"versions": [{"hash", "saved_at", "prompt", "result"}]}: the last saved versions
+                     (results from another version of the suite are left out: they are not comparable)
     POST /tokens     {"name", "prompt"?}  ->  {"instructions": n, "prompt": n (instructions + examples as sent), "ms": est.}
     POST /bench      {"name", "prompt"?, "scope": "all" | "user"}  ->  {"job"}: benchmark that prompt (default: the one in use)
                      on the suite, per category (evaluate.py), and/or on the user's cases; runs in the background
@@ -16,6 +18,8 @@
                      also stored by the prompt's hash (history entries show it)
     GET  /cases?name=  -> {"cases": [{"text", "rest"}]}: the user's own benchmark cases for a prompt
     POST /cases      {"name", "cases": [...]} saves them
+    GET  /settings   -> {"words", "maxTokens"}      POST /settings {"words": 1-10}: how many words to suggest, saved to the user's
+                     config overrides (maxTokens follows: words + 1 per 5 words)
     GET  /health     -> {"ok", "port", "model": true if predictd answers}     POST /shutdown
 
 127.0.0.1 only. Requests on one `stream` replace each other (the older one answers {"ok": false, "error": "cancelled"}).
@@ -25,7 +29,7 @@ import json, queue, threading, time, urllib.parse, uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from . import evaluate, predictd
-from .policy import Ghost
+from .policy import Ghost, save_user_config, tokens_for_words
 from .prompts import clean, prompt_hash
 from .proofread import Proofreader
 
@@ -97,19 +101,32 @@ def serve(port=None, socket_path=predictd.SOCK, quiet=False):
         kind, key = parse(name)
         return ghost.default_prompt(key) if kind == "predict" else proof.default_prompt(key)
 
+    suite = evaluate.suite()
+    sizes = {"predict": (len(suite), len({c["category"] for c in suite})), "proofread": (len(evaluate.load_cases()["proofread"]), 1)}
+
+    suite_ids = {"predict": evaluate.suite_id(), "fix": evaluate.suite_id("fix"), "rewrite": evaluate.suite_id("rewrite")}
+
+    def result(name, prompt, scope="all"):
+        """A stored benchmark result, unless it ran on another version of the suite (a user-cases run has no suite part)."""
+        kind, key = parse(name)
+        r = ghost.user.result(name, prompt, scope)
+        if r and scope == "all" and r.get("suite") != suite_ids["predict" if kind == "predict" else key]:
+            return None
+        return r
+
     def entry(name):
         kind, key = parse(name)
         p, d = current(name), default(name)
         return {"name": name, "group": "prediction" if kind == "predict" else "proofreading",
                 "title": ghost.style_title(key) if kind == "predict" else {"fix": "Proofread", "rewrite": "Rewrite"}[key],
                 "prompt": p, "default": d, "custom": ghost.user.get(name) is not None, "hash": prompt_hash(p),
-                "default_hash": prompt_hash(d), "result": ghost.user.result(name, p), "default_result": ghost.user.result(name, d),
+                "default_hash": prompt_hash(d), "result": result(name, p), "default_result": result(name, d),
                 "user_result": ghost.user.result(name, p, "user"), "user_cases": len(ghost.user.cases(name)),
                 "labels": ["Typed text", "Continuation"] if kind == "predict" else ["Input", "Output"],
+                "suite_cases": sizes[kind][0], "suite_categories": sizes[kind][1],
                 "inherits": kind == "predict" and ghost.inherits(key) and ghost.user.get(name) is None,
-                "note": (("Starts with General's examples, then examples of its own. " if kind == "predict" and ghost.styles.get(key, {}).get("base") == "general" else "")
-                         + (f"{{words}} becomes the number of words to suggest ({ghost.cfg['words']})." if kind == "predict"
-                            else "The model gets one paragraph at a time."))}
+                "note": (f"{{words}} becomes the number of words to suggest ({ghost.cfg['words']})." if kind == "predict"
+                         else "The model gets one paragraph at a time.")}
 
     def catalog():
         return [entry("predict-" + s) for s in ghost.style_names()] + [entry("proofread-fix"), entry("proofread-rewrite")]
@@ -222,10 +239,15 @@ def serve(port=None, socket_path=predictd.SOCK, quiet=False):
                     name = (q.get("name") or [""])[0]
                     parse(name)
                     return self.reply({"ok": True, "name": name, "cases": ghost.user.cases(name)})
+                if url.path == "/settings":
+                    return self.reply({"ok": True, "words": ghost.cfg["words"], "maxTokens": ghost.cfg["maxTokens"]})
                 if url.path == "/history":
                     name = (q.get("name") or [""])[0]
                     parse(name)
-                    return self.reply({"ok": True, "name": name, "versions": ghost.user.history(name)})
+                    sid = suite_ids["predict" if name.startswith("predict-") else name.partition("-")[2]]
+                    versions = [{**v, "result": v["result"] if (v.get("result") or {}).get("suite") == sid else None}
+                                for v in ghost.user.history(name)]
+                    return self.reply({"ok": True, "name": name, "versions": versions})
             except ValueError as e:
                 return self.reply({"ok": False, "error": str(e)}, 400)
             self.reply({"ok": False, "error": "GET /health, /prompts, /history?name=, /cases?name= or /bench?job="}, 404)
@@ -255,11 +277,18 @@ def serve(port=None, socket_path=predictd.SOCK, quiet=False):
                     r = tokens(req)
                 elif self.path == "/bench":
                     r = bench(req)
+                elif self.path == "/settings":
+                    w = req.get("words")
+                    if not isinstance(w, int) or not 1 <= w <= 10:
+                        raise ValueError("words must be a whole number from 1 to 10")
+                    ghost.cfg.update(words=w, maxTokens=tokens_for_words(w))   # {words} is in the prompts: new profiles
+                    save_user_config({"words": w, "maxTokens": ghost.cfg["maxTokens"]})
+                    r = {"ok": True, "words": w, "maxTokens": ghost.cfg["maxTokens"]}
                 elif self.path == "/cases":
                     parse(req.get("name", ""))
                     r = {"ok": True, "cases": ghost.user.set_cases(req["name"], req.get("cases"))}
                 else:
-                    return self.reply({"ok": False, "error": "POST /predict, /warm, /proofread, /prompts, /tokens, /bench or /cases"}, 404)
+                    return self.reply({"ok": False, "error": "POST /predict, /warm, /proofread, /prompts, /tokens, /bench, /cases or /settings"}, 404)
             except (ValueError, OSError) as e:
                 return self.reply({"ok": False, "error": str(e)}, 400)
             self.reply(r)

@@ -170,6 +170,23 @@ def run_typing(c, aux, ghost, cases, key_ms, nkeys=12, ncases=8):
     return rows, sent_n, superseded, aux.call(op="stats")
 
 
+def other_daemons(proc):
+    """predictd processes besides this run's private one. Another model host evicts this run's cache (one cached session per
+    system) and makes the results invalid, e.g. the shared engine started by Homeword or an integration during the run."""
+    if not proc:
+        return []
+    out = subprocess.run(["pgrep", "-x", "predictd"], capture_output=True, text=True).stdout.split()
+    return [p for p in out if p != str(proc.pid)]
+
+
+def concurrency_note(proc):
+    others = other_daemons(proc)
+    if others:
+        print(f"WARNING: another predictd ran during this run (pid {', '.join(others)}): results are invalid, quit Homeword and the "
+              "integrations, run bin/pred stop and repeat")
+    return bool(others)
+
+
 def run_styles(a, c, ghost, proc):
     """Every writing style's prompt on the whole suite (bench/cases.json + bench/styles.json), reported per category."""
     from ghost.evaluate import CATEGORIES, bench_proofread, bench_prompt
@@ -195,7 +212,9 @@ def run_styles(a, c, ghost, proc):
     path = res / f"{datetime.datetime.now():%Y%m%d-%H%M%S}-{a.label}-styles.json"
     mach = machine_info()
     print("machine:", describe(mach))
-    json.dump({"label": a.label, "scenario": "styles", "machine": mach, "policy": ghost.cfg, "results": results}, open(path, "w"), indent=1)
+    concurrent = concurrency_note(proc)
+    json.dump({"label": a.label, "scenario": "styles", "machine": mach, "policy": ghost.cfg, "results": results,
+               "concurrent_daemon": concurrent}, open(path, "w"), indent=1)
     print("saved", path)
     if proc:
         proc.terminate()
@@ -219,6 +238,10 @@ def main():
     a = ap.parse_args()
     proc, sock = None, a.socket
     if a.spawn:
+        running = subprocess.run(["pgrep", "-x", "predictd"], capture_output=True, text=True).stdout.split()
+        if running:
+            sys.exit(f"another predictd is running (pid {', '.join(running)}): it would evict this run's cache. Quit Homeword and "
+                     "the integrations, run bin/pred stop, then retry")
         cfg = json.load(open(HERE.parent / "predictd.json"))
         cfg["httpPort"] = 0                                 # private daemon: leave the shared HTTP port to the main one
         cfg.update(json.loads(a.daemon_config))
@@ -273,6 +296,7 @@ def main():
     path = res / f"{datetime.datetime.now():%Y%m%d-%H%M%S}-{a.label}.json"
     mach = machine_info()
     print("machine:", describe(mach))
+    S["concurrent_daemon"] = concurrency_note(proc)
     json.dump({"label": a.label, "scenario": a.scenario, "machine": mach, "opts": opts, "policy": ghost.cfg, "daemon": stats, "summary": S, "rows": rows}, open(path, "w"), indent=1, default=str)
     print("\nsaved", path)
     if proc:

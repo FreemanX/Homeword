@@ -42,6 +42,7 @@ struct PromptEntry {
     let custom: Bool, inherits: Bool
     let result: [String: Any]?, defaultResult: [String: Any]?, userResult: [String: Any]?
     let labels: [String]
+    let suiteCases: Int, suiteCategories: Int
 
     init(_ d: [String: Any]) {
         name = d["name"] as? String ?? ""
@@ -56,6 +57,8 @@ struct PromptEntry {
         defaultResult = d["default_result"] as? [String: Any]
         userResult = d["user_result"] as? [String: Any]
         labels = d["labels"] as? [String] ?? ["Typed text", "Continuation"]
+        suiteCases = d["suite_cases"] as? Int ?? 0
+        suiteCategories = d["suite_categories"] as? Int ?? 0
     }
 }
 
@@ -312,11 +315,19 @@ struct PromptsView: View {
          "proofread-fix": "checkmark.circle", "proofread-rewrite": "wand.and.stars"][name] ?? "text.bubble"
     }
 
-    private func header(_ title: String, _ hint: String) -> some View {
+    private func header(_ title: String, _ hint: String, info: String) -> some View {
         HStack(alignment: .firstTextBaseline) {
             Text(title).font(.headline)
+            InfoTip(info)
             Text(hint).font(.caption).foregroundStyle(.secondary)
             Spacer()
+        }
+    }
+
+    private func title(_ t: String, _ info: String, font: Font = .headline) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 4) {
+            Text(t).font(font)
+            InfoTip(info)
         }
     }
 
@@ -337,7 +348,7 @@ struct PromptsView: View {
             }
             Text(e.note).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
 
-            Text("Instructions").font(.headline)
+            title("Instructions", Tips.instructions)
             TextEditor(text: $model.draft.instructions)
                 .font(.body)
                 .scrollContentBackground(.hidden)
@@ -346,7 +357,7 @@ struct PromptsView: View {
                 .background(RoundedRectangle(cornerRadius: 6).fill(Color(nsColor: .textBackgroundColor)))
                 .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.secondary.opacity(0.3)))
 
-            header("Examples", "one per line, left and right paired by line number; the model imitates these closely")
+            header("Examples", "one per line, left and right paired by line number; the model imitates these closely", info: Tips.examples)
             columnLabels(e.labels.first ?? "", e.labels.last ?? "")
             PairedLinesEditor(left: $model.draft.left, right: $model.draft.right).frame(height: 150)
             if !model.draft.incomplete.isEmpty {
@@ -389,16 +400,20 @@ struct PromptsView: View {
 
     // MARK: benchmark
 
-    private struct Column { let title: String; let key: String; let kind: Kind; enum Kind { case ms, pct, num, int } }
+    private struct Column { let title: String; let key: String; let kind: Kind; let info: String; enum Kind { case ms, pct, num, int } }
 
     private func columns(_ name: String) -> [Column] {
-        let cases = Column(title: "Cases", key: "cases", kind: .int), lat = Column(title: "Latency p50", key: "latency_p50", kind: .ms)
+        let cases = Column(title: "Cases", key: "cases", kind: .int, info: Tips.cases_),
+            lat = Column(title: "Latency p50", key: "latency_p50", kind: .ms, info: Tips.latency)
         if name == "proofread-fix" {
-            return [cases, Column(title: "Fully corrected", key: "exact", kind: .pct), Column(title: "Word match", key: "word_match", kind: .pct), lat]
+            return [cases, Column(title: "Fully corrected", key: "exact", kind: .pct, info: Tips.exact),
+                    Column(title: "Word match", key: "word_match", kind: .pct, info: Tips.wordMatch), lat]
         }
-        if name == "proofread-rewrite" { return [cases, Column(title: "Length vs. original", key: "length_ratio", kind: .num), lat] }
-        return [cases, Column(title: "Next word right", key: "next_word", kind: .pct), Column(title: "Words right", key: "words_right", kind: .num),
-                Column(title: "Completions", key: "completions", kind: .pct), Column(title: "Shown", key: "shown", kind: .pct), lat]
+        if name == "proofread-rewrite" { return [cases, Column(title: "Length vs. original", key: "length_ratio", kind: .num, info: Tips.length), lat] }
+        return [cases, Column(title: "Next word right", key: "next_word", kind: .pct, info: Tips.nextWord),
+                Column(title: "Words right", key: "words_right", kind: .num, info: Tips.wordsRight),
+                Column(title: "Completions", key: "completions", kind: .pct, info: Tips.completions),
+                Column(title: "Shown", key: "shown", kind: .pct, info: Tips.shown), lat]
     }
 
     private func value(_ r: [String: Any]?, _ key: String) -> Double? { (r?[key] as? NSNumber)?.doubleValue }
@@ -444,10 +459,11 @@ struct PromptsView: View {
         }()
         VStack(alignment: .leading, spacing: 10) {
             header("Benchmark", model.isPrediction
-                   ? "the bench/ suite: 164 texts in 7 categories; does the prompt guess what was typed next?"
-                   : "12 sentences with known mistakes" + (e.name == "proofread-rewrite" ? " (no single right answer: length and speed only)" : ""))
+                   ? "\(e.suiteCases) texts in \(e.suiteCategories) categories; does the prompt guess what was typed next?"
+                   : "\(e.suiteCases) sentences with known mistakes" + (e.name == "proofread-rewrite" ? " (no single right answer: length and speed only)" : ""),
+                   info: model.isPrediction ? Tips.benchmark : Tips.benchmarkProofread)
 
-            Text("Your test cases").font(.subheadline.bold())
+            title("Your test cases", Tips.cases, font: .subheadline.bold())
             columnLabels(e.labels.first == "Input" ? "Text" : "Typed text",
                          e.name == "proofread-fix" ? "Corrected text" : (e.name == "proofread-rewrite" ? "A good rewrite" : "What comes next"))
             PairedLinesEditor(left: $model.casesLeft, right: $model.casesRight).frame(height: 110)
@@ -468,8 +484,8 @@ struct PromptsView: View {
             }
 
             HStack(alignment: .firstTextBaseline) {
-                Text(showDraft ? "Results for this draft" : (e.custom ? "Results for your saved version" : "Results for the default prompt"))
-                    .font(.subheadline.bold())
+                title(showDraft ? "Results for this draft" : (e.custom ? "Results for your saved version" : "Results for the default prompt"),
+                      Tips.results, font: .subheadline.bold())
                 if base != nil { Text("green/red: the difference to the default").font(.caption).foregroundStyle(.secondary) }
             }
             if shown == nil && userRow == nil {
@@ -477,8 +493,8 @@ struct PromptsView: View {
             } else {
                 Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 5) {
                     GridRow {
-                        Text("Category").bold()
-                        ForEach(cols, id: \.key) { Text($0.title).bold() }
+                        HStack(spacing: 3) { Text("Category").bold(); InfoTip(Tips.category) }
+                        ForEach(cols, id: \.key) { c in HStack(spacing: 3) { Text(c.title).bold(); InfoTip(c.info) } }
                     }
                     .font(.caption)
                     Divider().gridCellUnsizedAxes(.horizontal)
@@ -490,18 +506,23 @@ struct PromptsView: View {
                     }
                     if let all = shown?["overall"] as? [String: Any], rows(shown).count > 1 {
                         GridRow {
-                            Text("All (ours)").bold()
+                            HStack(spacing: 3) { Text("All (ours)").bold(); InfoTip(Tips.all) }
                             ForEach(cols, id: \.key) { c in cell(all, base?["overall"] as? [String: Any], c).bold() }
                         }
                     }
                     if let u = userRow {
                         Divider().gridCellUnsizedAxes(.horizontal)
                         GridRow {
-                            Text("Your cases").bold()
+                            HStack(spacing: 3) { Text("Your cases").bold(); InfoTip(Tips.yours) }
                             ForEach(cols, id: \.key) { c in cell(u, nil, c) }
                         }
                     }
                 }
+            }
+            let skipped = (rows(shown) + [userRow].compactMap { $0 }).reduce(0) { $0 + ($1["skipped"] as? Int ?? 0) }
+            if skipped > 0 {
+                Label("\(skipped) case\(skipped == 1 ? " was" : "s were") left out: they share text with this prompt's examples, so they "
+                      + "would test recall, not prediction.", systemImage: "info.circle").font(.caption).foregroundStyle(.secondary)
             }
             Text("Measured on this Mac with sequential requests, as when typing. Each case keeps its category's app label, so a prompt is "
                  + "tested on every kind of text. Latency can differ by ~70 ms between runs (the system switches model modes). A full run "
@@ -514,7 +535,7 @@ struct PromptsView: View {
 
     @ViewBuilder private func historyList() -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("Saved versions").font(.headline)
+            title("Saved versions", Tips.versions)
             if model.history.isEmpty {
                 Text("None yet. Every Save keeps a version here (the last 20), with its benchmark result if you ran one.")
                     .font(.caption).foregroundStyle(.secondary)
@@ -538,5 +559,77 @@ struct PromptsView: View {
         if let n = (o["next_word"] as? NSNumber)?.doubleValue { return "\(lat) · next word \(Int((n * 100).rounded()))% (all)" }
         if let x = (o["exact"] as? NSNumber)?.doubleValue { return "\(lat) · corrected \(Int((x * 100).rounded()))%" }
         return lat
+    }
+}
+
+/// What each section and column of the Prompts tab means, shown when the pointer rests on its ⓘ.
+enum Tips {
+    static let instructions = "What the model is told to do, sent before every request. {words} becomes the number of words to "
+        + "suggest (General tab). Shorter instructions are faster: every token here costs time on each keystroke."
+    static let examples = "Sample inputs with the answer the model should give. The model copies their form closely: length, tone, "
+        + "and how a continuation starts. Each example adds to every request's time."
+    static let benchmark = "Texts typed by people (synthetic, no personal data), cut at a point, with what was typed next. The prompt "
+        + "runs on all of them and its guesses are compared with the real continuations, per category. None of them is in a "
+        + "default prompt's examples."
+    static let benchmarkProofread = "Sentences with known mistakes and their corrected versions. The prompt runs on each and its output "
+        + "is compared with the correction."
+    static let cases = "Your own texts, as left = typed so far, right = what you would type next. They run as a separate section, "
+        + "so you can check a prompt on the kind of text you write. Stored on this Mac only."
+    static let results = "The last benchmark run of the prompt shown: your draft, your saved version, or the default. Small, noisy "
+        + "samples: a difference of one case is several percent."
+    static let versions = "Every Save keeps a version (the last 20) with its benchmark result, if you ran one. Load one to edit or "
+        + "compare it."
+    static let category = "The kind of text: chat messages, email, work documents, academic writing, code comments and commits, "
+        + "general notes, terminal commands."
+    static let all = "All categories of our benchmark together (not your cases)."
+    static let yours = "Your own test cases."
+    static let cases_ = "How many texts ran in this row."
+    static let nextWord = "How often the first suggested word is exactly the word that was typed next (or the right end of an "
+        + "unfinished word). The main accuracy number."
+    static let wordsRight = "How many suggested words in a row match what was typed, on average. Higher = more of a suggestion "
+        + "is worth accepting."
+    static let completions = "Of the texts that end mid-word, how often the suggestion finishes that word correctly."
+    static let shown = "How often there was a suggestion at all (the model may answer with nothing usable)."
+    static let latency = "The median time from request to suggestion, in milliseconds: half of the suggestions came faster."
+    static let exact = "How often the output equals the corrected sentence exactly."
+    static let wordMatch = "How similar the output is to the corrected sentence, word by word (100% = identical)."
+    static let length = "The output's length divided by the input's. Around 1.0 keeps the length; much lower means text was dropped."
+}
+
+/// An ⓘ that explains something when the pointer rests on it.
+struct InfoTip: View {
+    let text: String
+    @StateObject private var hover = Hover()
+    init(_ text: String) { self.text = text }
+
+    final class Hover: ObservableObject {
+        @Published var shown = false
+        var task: DispatchWorkItem?
+    }
+
+    var body: some View {
+        Image(systemName: "info.circle")
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .onHover { inside in
+                hover.task?.cancel()
+                let shown = inside
+                let w = DispatchWorkItem { hover.shown = shown }
+                hover.task = w
+                DispatchQueue.main.asyncAfter(deadline: .now() + (inside ? 0.25 : 0.1), execute: w)
+            }
+            .popover(isPresented: $hover.shown, arrowEdge: .bottom) {
+                Text(text)
+                    .font(.callout)
+                    .frame(width: 280, alignment: .leading)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(10)
+            }
+            .accessibilityLabel(text)
+            .onAppear {     // for development: `-infoTip "How often the first"` opens the tip whose text starts with it
+                if let t = UserDefaults(suiteName: UserDefaults.argumentDomain)?.string(forKey: "infoTip"), text.hasPrefix(t) {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1) { hover.shown = true }
+                }
+            }
     }
 }

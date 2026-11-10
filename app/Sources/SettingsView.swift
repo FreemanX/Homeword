@@ -32,6 +32,25 @@ struct StatusDot: View {
 
 // MARK: General
 
+/// Words to suggest: an engine setting (GET/POST /settings), so pred and the integrations use it too.
+final class WordsModel: ObservableObject {
+    @Published var words = 5
+    @Published var available = false
+    init() { load() }
+    func load() {
+        Services.shared.get("/settings") { r, _ in
+            if let w = r?["words"] as? Int { self.words = w; self.available = true } else { self.available = false }
+        }
+    }
+    func set(_ w: Int) {
+        let w = min(max(w, 1), 10)
+        words = w
+        Services.shared.post("/settings", ["words": w]) { r, _ in
+            if let w = r?["words"] as? Int { self.words = w }
+        }
+    }
+}
+
 final class ShortcutsModel: ObservableObject {
     let proofread = HotkeyRecorderModel(key: Pref.proofreadKey)
     let rewrite = HotkeyRecorderModel(key: Pref.rewriteKey)
@@ -44,6 +63,7 @@ struct GeneralTab: View {
     @AppStorage(Pref.position) var position = "below"
     @AppStorage(Pref.chromium) var chromium = true
     @StateObject private var keys = ShortcutsModel()
+    @StateObject private var words = WordsModel()
 
     var body: some View {
         Form {
@@ -53,6 +73,14 @@ struct GeneralTab: View {
                     Text("Below the cursor").tag("below")
                     Text("Next to the cursor").tag("beside")
                 }
+                HStack {
+                    Text("Words to suggest")
+                    Spacer()
+                    Text("up to \(words.words) word\(words.words == 1 ? "" : "s")").monospacedDigit().foregroundStyle(.secondary)
+                    Stepper("", value: Binding(get: { words.words }, set: { words.set($0) }), in: 1...10).labelsHidden()
+                }
+                .disabled(!words.available)
+                .help(words.available ? "More words take longer: about 16 ms per extra word" : "Start the engine to change this")
                 HStack {                                        // the value right next to its stepper
                     Text("Start suggesting after")
                     Spacer()
@@ -244,13 +272,19 @@ struct StatsTab: View {
             Form {
                 Section("Suggestions") {
                     row("Suggestions shown", "\(s.shown)")
-                    row("Accepted (at least one word)", s.shown > 0 ? "\(s.accepted) (\(pct(s.accepted, s.shown)))" : "–")
+                    row("Accepted (at least one word)", s.shown > 0 ? "\(s.accepted) (\(pct(s.accepted, s.shown)))" : "–",
+                        info: "Suggestions of which you took at least one word with Tab, out of all shown.")
                     row("Words accepted", "\(s.acceptedWords)")
-                    row("Keystrokes saved", s.keys > 0 ? "\(s.acceptedChars - s.acceptedWords) of \(s.keys + s.acceptedChars - s.acceptedWords) (\(pct(s.acceptedChars - s.acceptedWords, s.keys + s.acceptedChars - s.acceptedWords)))" : "–")
-                    row("Characters typed along a suggestion", "\(s.typedAlong)")
-                    row("Key → pop-up, p50 / p90", ms(MetricsSummary.pct(s.latencies, 50)) + " / " + ms(MetricsSummary.pct(s.latencies, 90)))
-                    row("Model time, p50", ms(MetricsSummary.pct(s.models, 50)))
-                    row("Requests with nothing to show / errors", "\(s.empty) / \(s.errors)")
+                    row("Keystrokes saved", s.keys > 0 ? "\(s.acceptedChars - s.acceptedWords) of \(s.keys + s.acceptedChars - s.acceptedWords) (\(pct(s.acceptedChars - s.acceptedWords, s.keys + s.acceptedChars - s.acceptedWords)))" : "–",
+                        info: "Characters that accepted words typed for you (minus the Tab per word), out of all "
+                        + "characters that went into the text while suggestions were on.")
+                    row("Characters typed along a suggestion", "\(s.typedAlong)",
+                        info: "Characters you typed that matched the suggestion shown: it was right, but you typed instead of accepting.")
+                    row("Key → pop-up, p50 / p90", ms(MetricsSummary.pct(s.latencies, 50)) + " / " + ms(MetricsSummary.pct(s.latencies, 90)),
+                        info: "Time from a key press to the suggestion on screen. p50: half were faster; p90: 9 in 10 were faster.")
+                    row("Model time, p50", ms(MetricsSummary.pct(s.models, 50)), info: "The part of that time the model took to answer (median).")
+                    row("Requests with nothing to show / errors", "\(s.empty) / \(s.errors)",
+                        info: "Requests whose answer had no usable suggestion, and requests that failed (e.g. the engine was not running).")
                 }
                 if !s.perStyle.isEmpty {
                     Section("By writing style") {
@@ -268,7 +302,8 @@ struct StatsTab: View {
                 }
                 Section("Proofreading") {
                     row("Requests", "\(s.proofreads)")
-                    row("Replaced / copied / cancelled / failed", "\(s.replaced) / \(s.copied) / \(s.cancelled) / \(s.failed)")
+                    row("Replaced / copied / cancelled / failed", "\(s.replaced) / \(s.copied) / \(s.cancelled) / \(s.failed)",
+                        info: "What happened to each proofread or rewrite: put into the text, copied, closed without using it, or failed.")
                     row("Answer time, p50", ms(MetricsSummary.pct(s.proofLatencies, 50)))
                 }
             }
@@ -295,8 +330,13 @@ struct StatsTab: View {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { model.refresh() }
         }
     }
-    private func row(_ k: String, _ v: String) -> some View {
-        HStack { Text(k); Spacer(); Text(v).monospacedDigit().foregroundStyle(.secondary) }
+    private func row(_ k: String, _ v: String, info: String? = nil) -> some View {
+        HStack {
+            Text(k)
+            if let info { InfoTip(info) }
+            Spacer()
+            Text(v).monospacedDigit().foregroundStyle(.secondary)
+        }
     }
     private func pct(_ a: Int, _ b: Int) -> String { b > 0 ? "\(Int((Double(a) / Double(b) * 100).rounded()))%" : "–" }
     private func ms(_ x: Double?) -> String { x.map { "\(Int($0)) ms" } ?? "–" }

@@ -95,7 +95,8 @@ Terminals and password managers are Off by default: shells have their own comple
 
 Menu → Settings… (⌘,) opens one window with five tabs.
 
-**General.** Suggest while typing (also in the menu); pop-up position (below or next to the cursor); start after N characters (3);
+**General.** Suggest while typing (also in the menu); pop-up position (below or next to the cursor); words to suggest (1-10, 5 by
+default: an engine setting, so `pred` and the agent integrations follow it; it fills `{words}` in the prompts); start after N characters (3);
 Chrome-based browsers and Electron apps (on); proofread and rewrite selected text (on), with a shortcut recorder for each: click,
 press a combination with ⌘, ⌃ or ⌥ (Esc cancels, Delete removes the shortcut). A warning shows when both are the same or the
 combination is a plain ⌘ shortcut that apps use.
@@ -118,18 +119,21 @@ Rewrite); a dot marks your version. For the selected one:
 - Save (⌘S) applies it to the next request; Revert drops unsaved edits; Reset to Default restores the shipped prompt.
 - **Your test cases**: the same two-box editor (typed text | what comes next; for proofreading, text | corrected text). Saved per
   prompt as you type, on this Mac, outside the repo.
-- **Benchmark**: the suite from `bench/` (164 texts: `bench/cases.json` and `bench/styles.json`), each tagged with a category:
-  Chat, Email, Work documents, Academic, Code, General, Terminal. Run Full Benchmark runs the draft (or the saved prompt) on all of
+- **Benchmark**: the suite from `bench/` (200 texts: `bench/cases.json` and `bench/styles.json`, at least 25 per category), each
+  tagged with a category: Chat, Email, Work documents, Academic, Code, General, Terminal. A case that shares text with one of the
+  prompt's examples is left out (a note says how many): it would test recall, not prediction. Run Full Benchmark runs the draft (or the saved prompt) on all of
   them plus your cases; Run Your Cases runs only yours; Run Default runs the shipped prompt for comparison. A progress bar counts
   the cases (a full run takes about a minute; suggestions pause meanwhile). The results table has a row per category, All (ours),
   and Your cases as its own row: cases, next word right, words right (mean matching leading words), word completions right, shown
   and latency p50, with the difference to the default prompt in green or red. Proofreading: fully corrected and word match on 12
   sentences with known mistakes; rewriting: length and latency only.
 - **Saved versions**: the last 20 per prompt, with their benchmark results. Load puts one back in the editor.
+- An ⓘ next to each section and column name explains it when the pointer rests on it (also on the Statistics tab).
 
-Every suggestion type has its own examples. Chat, Email, Academic and Code start with General's six mixed examples, then two of
-their own: on the benchmark this beat six examples written only for the style, because the mixed ones teach the answer format
-(bench/RESULTS.md). Work documents has its own instructions and examples.
+Every suggestion type has its own examples, chosen on separate tuning cases and checked on the benchmark (bench/RESULTS.md):
+Email, Work documents and Academic have their own instructions and six examples; Chat has General's instructions with a line about
+chat and six chat examples; Code keeps General's instructions, four of its mixed examples and two code examples, because six
+code-only examples lost to the mixed ones.
 Prompts and history are kept by the engine in `~/.config/input-predictor/` (`prompts.json`, `prompt-history.json`), outside the
 repo, so `pred try` and the agent integrations use them too.
 

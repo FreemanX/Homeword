@@ -305,16 +305,19 @@ Every prompt (instructions and examples) can be replaced per user (`ghost/prompt
 | `GET /history?name=` | the saved versions, newest first, each with its benchmark result |
 | `POST /tokens` | `{"name", "prompt"?}`: tokens of the instructions and of the whole prompt as sent (a probe profile), and the estimated cost per request (~0.55 ms per cached token) |
 | `POST /bench` | `{"name", "prompt"?, "scope": "all" \| "user"}`: starts a job that runs the prompt (default: the one in use) on the benchmark suite and the user's cases (`all`), or on the user's cases only (`user`), with an unpinned profile, then gives the cache back to the pinned prompt; answers `{"job"}` |
-| `GET /bench?job=` | `state` (`running`, `done`, `error`), `done`/`total` cases, then `result`: per category, overall, the user's section; stored by the prompt's content hash |
+| `GET /bench?job=` | `state` (`running`, `done`, `error`), `done`/`total` cases, then `result`: per category, overall, the user's section, and `suite` (a fingerprint of the cases); stored by the prompt's content hash. `/prompts` and `/history` leave out results from another version of the suite |
 | `GET`/`POST /cases` | the user's own benchmark cases for a prompt: `[{"text", "rest"}]` (`rest` = what comes next, or the expected output for proofreading) |
+| `GET`/`POST /settings` | `{"words"}` (1-10): how many words to suggest; sets `words` and `maxTokens` (words + 1 per 5 words) and saves both to the user's config overrides; `{words}` in the prompts changes with it, so the profiles change too |
 
 A changed prompt is a new profile (named by its content hash), so it applies to the next request; the typing policy re-pins whenever
 its profile changes.
 
 **The benchmark suite** (`ghost/evaluate.py`, shared with `bench/run.py --styles`): every case of `bench/cases.json` (the fixed
-80-case benchmark) and `bench/styles.json` (14 per style), 164 in all, each tagged with a category (chat 26, email 23, work 14,
-academic 14, code 19, general 49, terminal 19) and keeping its own app label. A prompt runs on all of them, so one run shows how it
-does on every kind of text; results are reported per category. The user's cases run with the prompt's own label and are reported
+80-case benchmark) and `bench/styles.json` (per style, and terminal), 200 in all, each tagged with a category (chat 26, email 25,
+work 25, academic 25, code 25, general 49, terminal 25) and keeping its own app label. A prompt runs on all of them, so one run shows
+how it does on every kind of text; results are reported per category. A case that shares text with one of the prompt's examples is
+skipped and counted (`skipped`): it would test recall of the example. No shipped example is in the suite or in the tuning cases
+(`bench/styles-dev.json`, 30 per style, used only to choose the style prompts): `python3 -I ghost/evaluate.py --check`. The user's cases run with the prompt's own label and are reported
 as a separate section. Metrics: latency p50/p90, next word right (`acc1`), words right (`lead`), word completions right
 (`mid_word_ok`), shown; proofreading: fully corrected, word match; rewriting: latency and length ratio. Benchmarks from the command line (`run.py`, `human_pty.py`, `openai_compare.py`) ignore the user's prompts
 and config overrides (`Ghost(user=False)`, `PRED_NO_USER=1`), so their numbers stay comparable.

@@ -70,7 +70,7 @@ greedy, `top_p`/`seed` → `topP`/`seed`, `response_format` → `schema`, `tool_
 
 | Knob | Shipped | What it does | Trade-off |
 |---|---|---|---|
-| `words` | 5 | words shown after the unfinished word; also fills `{words}` in the instructions | more words = more output tokens (~16 ms each) and more wrong guesses |
+| `words` | 5 | words shown after the unfinished word; also fills `{words}` in the instructions. Homeword's General tab sets it (1-10) through `POST /settings`, with `maxTokens` = words + 1 per 5 words, in the user's overrides | more words = more output tokens (~16 ms each) and more wrong guesses |
 | `maxTokens` | 6 | the model's output cap; a word cut by it is dropped | the biggest latency lever; raise with `words` |
 | `textBudget` | 100 | tokens of typed text the model sees (the tail) | ~0.55 ms per cached token, ~2 ms uncached |
 | `oneSentence` | true | stop the ghost at the end of the first sentence | |
@@ -95,12 +95,15 @@ edited in Homeword's Prompts tab or through `POST /prompts`.
 
 ## ghost/styles.json (policy)
 
-The writing styles besides `general` (which is prompt.json): `title` (shown to users), `label` (the `App:` line), `shots` (its own
-examples, same format as prompt.json's) and optionally `instructions` (without, it uses general's instructions). A style without
-`shots` uses general's whole prompt; `"base": "general"` puts general's examples (the user's version, if any) before the style's
-own. Shipped: `chat`, `email`, `academic`, `code` with general's instructions and its 6 examples plus 2 of their own (this beat 6
-style-only examples on the benchmark), `work` with its own instructions and examples. The benchmark suite: `bench/cases.json` +
-`bench/styles.json` (`run.py --styles`, [bench/RESULTS.md](../bench/RESULTS.md)).
+The writing styles besides `general` (which is prompt.json): `title` (shown to users), `label` (the `App:` line), `shots` (its
+examples, same format as prompt.json's; `app` optional, default the style's label) and optionally `instructions` (without, it uses
+general's instructions). A style without `shots` uses general's whole prompt. Shipped, each chosen on the tuning cases
+(`bench/styles-dev.json`) and checked on the held-out suite ([bench/RESULTS.md](../bench/RESULTS.md)): `email`, `work`, `academic`
+with short instructions and 6 examples of their own; `chat` with general's instructions plus "The text is a casual chat message."
+and 6 chat examples; `code` with general's instructions, four of its mixed examples and two code examples (6 code-only examples lost
+4 of 25 cases). The benchmark suite: `bench/cases.json` + `bench/styles.json` (`run.py --styles`), at least 25 cases per category,
+none of them in an example (`python3 -I ghost/evaluate.py --check`; the benchmark also skips a case that shares text with an example
+of the prompt it runs, e.g. a user's).
 
 Every typing knob except `serverPort` and `serverIdleExitSec` (read when the server starts) also works per request:
 `pred ask "text" --opts '{"words":8}'`, `pred try --opts ...`, or `opts` in a ghost HTTP request.
