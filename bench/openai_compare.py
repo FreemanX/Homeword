@@ -18,7 +18,7 @@ URL = "http://127.0.0.1:47320/v1/chat/completions"
 GHOST = "http://127.0.0.1:47321/predict"
 N = int(sys.argv[1]) if len(sys.argv) > 1 else 40
 
-ghost, link = Ghost(), predictd.start()
+ghost, link = Ghost(user=False), predictd.start()
 name = ghost.ensure_profile(link, pin=True)
 prof = ghost.profile(ghost.cfg)
 cases = json.load(open(pathlib.Path(__file__).parent / "cases.json"))[:N]

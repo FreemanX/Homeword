@@ -1,0 +1,50 @@
+{
+  "_doc": "Writing styles of the typing policy besides general (prompt.json). Per style: title (shown to users), label (the App: line of the template), and optionally its own prompt: instructions ({words} = the words knob) and shots (text typed so far -> completion: the rest of an unfinished word with no space, or a leading space after a finished word). A style without its own prompt uses general's (the user's version of it, if any). Measured on bench/styles.json: general's prompt predicted chat, email, academic and code cases as well as or better than prompts written for those styles; work documents did better with their own (bench/RESULTS.md). Synthetic text only.",
+  "chat": {
+    "title": "Chat",
+    "label": "chat"
+  },
+  "email": {
+    "title": "Email",
+    "label": "mail"
+  },
+  "work": {
+    "title": "Work documents",
+    "label": "document",
+    "instructions": "Continue the user's work document: if the last word is unfinished, give its remaining letters first, then about {words} more words. Formal, precise and professional, one sentence at most, never repeat the text.",
+    "shots": [
+      {
+        "text": "The goal of this project is to reduce the time it takes to onboard new custom",
+        "completion": "ers from two weeks to three days"
+      },
+      {
+        "text": "Based on the results of the pilot, we recommend expanding the program to all reg",
+        "completion": "ional offices in the next quarter"
+      },
+      {
+        "text": "The main risk is that the migration may cause a short service interrup",
+        "completion": "tion during the switchover window"
+      },
+      {
+        "text": "Next steps: finalize the budget, confirm the vendor, and sched",
+        "completion": "ule the kickoff meeting with all stakeholders"
+      },
+      {
+        "text": "This document describes the requirements for the new ",
+        "completion": "reporting system and its main use cases"
+      },
+      {
+        "text": "Revenue grew by twelve percent compared to the previous",
+        "completion": " year, driven mainly by new subscriptions"
+      }
+    ]
+  },
+  "academic": {
+    "title": "Academic",
+    "label": "paper"
+  },
+  "code": {
+    "title": "Code",
+    "label": "code"
+  }
+}

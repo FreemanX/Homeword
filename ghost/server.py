@@ -1,21 +1,31 @@
 """HTTP front end of the policies, for apps that are not written in Python (the pi extension, the Claude Code mod, the Mac app).
 
-    POST /predict    {"app": "chat", "text": "See you tomor", "stream": "pi", "opts": {...}}  ->  the ghost answer (see policy.py)
-    POST /proofread  {"text": "...", "mode": "fix" | "rewrite"}  ->  {"text", "changed", "changes", "timing", ...} (proofread.py)
-    GET  /prompts    -> {"prompts": [{"name", "title", "text", "default", "custom", "note"}]}: the instructions, editable (prompts.py)
-    POST /prompts    {"name": "typing", "text": "..."} saves the user's version, {"name": ..., "reset": true} restores the default
-    GET  /health     POST /shutdown
+    POST /predict    {"app": "chat", "text": "See you tomor", "stream": "pi", "context": "chat", "opts": {...}}  ->  the ghost
+                     answer (policy.py); `context`: a writing style (general, chat, email, work, academic, code; default general)
+    POST /warm       {"context": "chat"}: the user is about to type in this style: pin and prewarm its prompt
+    POST /proofread  {"text": "...", "mode": "fix" | "rewrite"}  ->  {"text", "changed", "changes", "warnings", ...} (proofread.py)
+    GET  /prompts    -> {"prompts": [{"name", "group", "title", "prompt", "default", "custom", "hash", "result", ...}]}: every
+                     prompt (prediction per style, proofreading per mode), the one in use and the shipped one (prompts.py)
+    POST /prompts    {"name": "predict-chat", "prompt": {"instructions", "examples"}} saves the user's version (and a history
+                     entry), {"name": ..., "reset": true} restores the shipped one
+    GET  /history?name=predict-chat  -> {"versions": [{"hash", "saved_at", "prompt", "result"}]}: the last saved versions
+    POST /tokens     {"name", "prompt"?}  ->  {"instructions": n, "prompt": n (instructions + examples as sent), "ms": est.}
+    POST /bench      {"name", "prompt"?}  ->  benchmark result of that prompt (default: the one in use) on the style's cases
+                     (evaluate.py); stored by the prompt's hash, so history entries show it
+    GET  /health     -> {"ok", "port", "model": true if predictd answers}     POST /shutdown
 
 127.0.0.1 only. Requests on one `stream` replace each other (the older one answers {"ok": false, "error": "cancelled"}).
 Exits after `serverIdleExitSec` without requests. Started by `pred start` / `pred serve`.
 """
-import json, queue, threading, time
+import json, queue, threading, time, urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from . import predictd
+from . import evaluate, predictd
 from .policy import Ghost
-from .proofread import INSTRUCTIONS, Proofreader
-from .prompts import NAMES
+from .prompts import clean, prompt_hash
+from .proofread import Proofreader
+
+CACHED_MS_PER_TOKEN = 0.55               # measured cost of a cached prompt token per request (docs/PERFORMANCE.md)
 
 
 def serve(port=None, socket_path=predictd.SOCK, quiet=False):
@@ -23,6 +33,7 @@ def serve(port=None, socket_path=predictd.SOCK, quiet=False):
     proof = Proofreader(ghost.cfg, ghost.user)
     port = port or ghost.cfg["serverPort"]
     pool, last = queue.LifoQueue(), [time.monotonic()]
+    bench_lock = threading.Lock()
     first = predictd.start(socket_path)
     ghost.ensure_profile(first, pin=True)
     pool.put(first)
@@ -40,18 +51,126 @@ def serve(port=None, socket_path=predictd.SOCK, quiet=False):
             except queue.Empty:
                 return
 
-    titles = {"typing": "Input prediction", "proofread-fix": "Proofread", "proofread-rewrite": "Rewrite"}
-    notes = {"typing": "{words} becomes the number of words to suggest. The model also sees 6 examples (ghost/prompt.json).",
-             "proofread-fix": "The model also sees 3 examples (ghost/proofread.py).",
-             "proofread-rewrite": "The model also sees 2 examples (ghost/proofread.py)."}
+    def with_link(fn):
+        """Run fn(link) with a pooled connection; reconnect once when predictd went away (idle exit: it restarts on demand)."""
+        r = {"ok": False, "error": "predictd unavailable"}
+        for attempt in (0, 1):
+            try:
+                ln = link()
+            except (OSError, TimeoutError) as e:          # cannot start predictd
+                return {"ok": False, "error": f"predictd unavailable: {e}"}
+            try:
+                r = fn(ln)
+                pool.put(ln)
+                return r
+            except (OSError, ConnectionError):
+                ln.close()
+                drain()                                  # the other pooled connections are dead too
+                ghost.registered.clear()
+                ghost.pinned = None
+                proof.registered.clear()
+            except Exception as e:                       # a timeout or a refused profile: answer, and drop the connection
+                ln.close()
+                return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+        return r
 
-    def prompts():
-        out = []
-        for n in NAMES:
-            default = ghost.default_instructions(ghost.cfg) if n == "typing" else INSTRUCTIONS[n.split("-", 1)[1]]
-            out.append({"name": n, "title": titles[n], "text": ghost.user.get(n, default), "default": default,
-                        "custom": ghost.user.custom(n), "note": notes[n]})
-        return out
+    # -- prompts: prediction per style ("predict-<style>"), proofreading per mode ("proofread-<mode>")
+
+    def parse(name):
+        kind, _, key = (name or "").partition("-")
+        if kind == "predict" and key in ghost.style_names():
+            return kind, key
+        if kind == "proofread" and key in ("fix", "rewrite"):
+            return kind, key
+        raise ValueError(f"unknown prompt {name!r}")
+
+    def current(name):
+        kind, key = parse(name)
+        return ghost.prompt_for(key) if kind == "predict" else proof.prompt_for(key)
+
+    def default(name):
+        kind, key = parse(name)
+        return ghost.default_prompt(key) if kind == "predict" else proof.default_prompt(key)
+
+    def entry(name):
+        kind, key = parse(name)
+        p, d = current(name), default(name)
+        return {"name": name, "group": "prediction" if kind == "predict" else "proofreading",
+                "title": ghost.style_title(key) if kind == "predict" else {"fix": "Proofread", "rewrite": "Rewrite"}[key],
+                "prompt": p, "default": d, "custom": ghost.user.get(name) is not None, "hash": prompt_hash(p),
+                "default_hash": prompt_hash(d), "result": ghost.user.result(name, p), "default_result": ghost.user.result(name, d),
+                "labels": ["Typed text", "Continuation"] if kind == "predict" else ["Input", "Output"],
+                "inherits": kind == "predict" and ghost.inherits(key) and ghost.user.get(name) is None,
+                "note": (("Uses General's prompt until you change it here. " if kind == "predict" and ghost.inherits(key) else "")
+                         + (f"{{words}} becomes the number of words to suggest ({ghost.cfg['words']})." if kind == "predict"
+                            else "The model gets one paragraph at a time."))}
+
+    def catalog():
+        return [entry("predict-" + s) for s in ghost.style_names()] + [entry("proofread-fix"), entry("proofread-rewrite")]
+
+    def save(req):
+        name = req.get("name", "")
+        if name == "typing":                             # the first version's API: instructions only, general style
+            name, req = "predict-general", {"prompt": {"instructions": req.get("text", ""), "examples": default("predict-general")["examples"]}, **req}
+        parse(name)
+        if req.get("reset") or (req.get("text") == "" and "prompt" not in req):
+            ghost.user.set(name, None)
+        else:
+            p = clean(req.get("prompt"))
+            ghost.user.set(name, None if p == default(name) else p)
+        return {"ok": True, "prompts": catalog()}
+
+    def profile_of(name, prompt):
+        kind, key = parse(name)
+        return ghost.profile(ghost.cfg, key, prompt) if kind == "predict" else proof.profile(key, prompt)
+
+    def tokens(req):
+        name = req.get("name", "")
+        prompt = clean(req["prompt"]) if req.get("prompt") else current(name)
+        prof = profile_of(name, prompt)
+
+        def count(ln):
+            ins = ln.call(op="tokens", text=prof["instructions"]).get("count", -1)
+            r = ln.call(op="profile.set", **{**prof, "name": "tokens-probe", "pin": False})   # the prefix exactly as sent
+            ln.call(op="profile.drop", name="tokens-probe")
+            n = r.get("prefix_tokens", -1)
+            return {"ok": True, "instructions": ins, "prompt": n, "ms": round(n * CACHED_MS_PER_TOKEN) if n > 0 else None}
+        return with_link(count)
+
+    def bench(req):
+        name = req.get("name", "")
+        kind, key = parse(name)
+        prompt = clean(req["prompt"]) if req.get("prompt") else current(name)
+        if not bench_lock.acquire(blocking=False):
+            return {"ok": False, "error": "a benchmark is already running"}
+        try:
+            def run(ln):
+                if kind == "predict":
+                    res = evaluate.bench_style(ghost, ln, key, prompt)
+                else:
+                    res = evaluate.bench_proofread(proof, ln, key, prompt)
+                if ghost.pinned:                         # give the cache back to the prompt in use
+                    ln.call(op="prewarm", profile=ghost.pinned)
+                return res
+            res = with_link(run)
+            if "error" in res and res.get("ok") is False:
+                return res
+            ghost.user.save_result(name, prompt, res)
+            return {"ok": True, "name": name, "hash": prompt_hash(prompt), "result": res}
+        finally:
+            bench_lock.release()
+
+    def model_up():
+        try:
+            ln = predictd.Link(socket_path)
+        except OSError:
+            return False
+        try:
+            return ln.call(op="ping", timeout=1).get("ok", False)
+        except Exception:
+            return False
+        finally:
+            ln.close()
 
     class Handler(BaseHTTPRequestHandler):
         def reply(self, obj, code=200):
@@ -64,9 +183,20 @@ def serve(port=None, socket_path=predictd.SOCK, quiet=False):
 
         def do_GET(self):
             last[0] = time.monotonic()
-            if self.path == "/prompts":
-                return self.reply({"ok": True, "prompts": prompts()})
-            self.reply({"ok": True} if self.path == "/health" else {"ok": False, "error": "GET /health or /prompts"}, 200 if self.path == "/health" else 404)
+            url = urllib.parse.urlparse(self.path)
+            q = urllib.parse.parse_qs(url.query)
+            try:
+                if url.path == "/health":
+                    return self.reply({"ok": True, "port": port, "model": model_up()})
+                if url.path == "/prompts":
+                    return self.reply({"ok": True, "prompts": catalog(), "styles": [{"name": s, "title": ghost.style_title(s)} for s in ghost.style_names()]})
+                if url.path == "/history":
+                    name = (q.get("name") or [""])[0]
+                    parse(name)
+                    return self.reply({"ok": True, "name": name, "versions": ghost.user.history(name)})
+            except ValueError as e:
+                return self.reply({"ok": False, "error": str(e)}, 400)
+            self.reply({"ok": False, "error": "GET /health, /prompts or /history?name="}, 404)
 
         def do_POST(self):
             last[0] = time.monotonic()
@@ -75,41 +205,28 @@ def serve(port=None, socket_path=predictd.SOCK, quiet=False):
                 self.reply({"ok": True})
                 threading.Thread(target=server.shutdown, daemon=True).start()
                 return
-            if self.path not in ("/predict", "/proofread", "/prompts"):
-                return self.reply({"ok": False, "error": "POST /predict, /proofread or /prompts"}, 404)
             try:
                 req = json.loads(body or b"{}")
             except ValueError:
                 return self.reply({"ok": False, "error": "body is not JSON"}, 400)
-            if self.path == "/prompts":                      # no model involved
-                try:
-                    ghost.user.set(req.get("name", ""), "" if req.get("reset") else req.get("text", ""))
-                except (ValueError, OSError) as e:
-                    return self.reply({"ok": False, "error": str(e)}, 400)
-                return self.reply({"ok": True, "prompts": prompts()})
-            r = {"ok": False, "error": "predictd unavailable"}
-            for attempt in (0, 1):
-                try:
-                    ln = link()
-                except (OSError, TimeoutError) as e:          # cannot start predictd
-                    r = {"ok": False, "error": f"predictd unavailable: {e}"}
-                    break
-                try:
-                    if self.path == "/proofread":
-                        r = proof.run(ln, req.get("text", ""), req.get("mode", "fix"))
-                    else:
-                        r = ghost.predict(ln, req.get("app", ""), req.get("text", ""), req.get("opts"), stream=req.get("stream", "ghost-http"))
-                    pool.put(ln)
-                    break
-                except (OSError, ConnectionError):           # predictd went away (idle exit): reconnect, it restarts on demand
-                    ln.close()
-                    drain()                                  # the other pooled connections are dead too
-                    ghost.registered.clear()
-                    proof.registered.clear()
-                except Exception as e:                       # a timeout or a refused profile: answer, and drop the connection
-                    ln.close()
-                    r = {"ok": False, "error": f"{type(e).__name__}: {e}"}
-                    break
+            try:
+                if self.path == "/predict":
+                    r = with_link(lambda ln: ghost.predict(ln, req.get("app", ""), req.get("text", ""), req.get("opts"),
+                                                           stream=req.get("stream", "ghost-http"), style=req.get("context") or "general"))
+                elif self.path == "/proofread":
+                    r = with_link(lambda ln: proof.run(ln, req.get("text", ""), req.get("mode", "fix")))
+                elif self.path == "/warm":
+                    r = with_link(lambda ln: ghost.warm(ln, req.get("context") or "general"))
+                elif self.path == "/prompts":
+                    r = save(req)                        # no model involved
+                elif self.path == "/tokens":
+                    r = tokens(req)
+                elif self.path == "/bench":
+                    r = bench(req)
+                else:
+                    return self.reply({"ok": False, "error": "POST /predict, /warm, /proofread, /prompts, /tokens or /bench"}, 404)
+            except (ValueError, OSError) as e:
+                return self.reply({"ok": False, "error": str(e)}, 400)
             self.reply(r)
 
         def log_message(self, *a):

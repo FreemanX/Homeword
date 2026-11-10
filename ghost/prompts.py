@@ -1,24 +1,75 @@
-"""User overrides of the policies' instructions (system prompts), so a user can tune them without editing the repo.
+"""The user's own prompts, their history and benchmark results, so a user can tune the prompts without editing the repo.
 
-Stored as {"name": "instructions", ...} in the file named by the `userPrompts` knob (default ~/.config/input-predictor/prompts.json,
-mode 0600, outside the repo: what a user writes there is theirs). Names: "typing" (the typing policy's active instructions; `{words}`
-becomes the `words` knob), "proofread-fix", "proofread-rewrite". The examples stay in prompt.json and proofread.py.
+A prompt is {"instructions": str, "examples": [{"text": str, "completion": str}, ...]}. Prediction prompts are named
+"predict-<style>" (general, chat, email, ...; `{words}` in the instructions becomes the `words` knob), proofreading ones
+"proofread-fix" and "proofread-rewrite" (examples: text = input, completion = output).
+
+Files, in the directory of the `userPrompts` knob (default ~/.config/input-predictor/, mode 0600, outside the repo: what a user
+writes there is theirs):
+  prompts.json          {name: prompt}: the overrides in use (an older form, {name: "instructions"}, still loads)
+  prompt-history.json   {"versions": {name: [{"hash", "saved_at", "prompt"}]}, "results": {hash: {name: result}}}: the last
+                        `HISTORY` saved versions per prompt, and benchmark results by prompt content hash
 A changed prompt makes a new predictd profile (profiles are named by a hash of their content), so the change applies to the next
 request; the first one after it is uncached.
 """
-import json, os, tempfile, threading
+import hashlib, json, os, tempfile, threading, time
 
-NAMES = ("typing", "proofread-fix", "proofread-rewrite")
-MAX_CHARS = 4000                          # instructions + examples + input must fit the 8192-token window
+MAX_CHARS = 6000                          # instructions + examples + input must fit the 8192-token window
+MAX_EXAMPLES = 12
+HISTORY = 20
+
+
+def prompt_hash(prompt):
+    return hashlib.sha1(json.dumps(prompt, sort_keys=True, ensure_ascii=False).encode()).hexdigest()[:10]
+
+
+def clean(prompt):
+    """Validate and normalise a prompt from a client; raises ValueError."""
+    if not isinstance(prompt, dict) or not isinstance(prompt.get("instructions"), str):
+        raise ValueError("a prompt is {\"instructions\": text, \"examples\": [{\"text\", \"completion\"}]}")
+    ins = prompt["instructions"].strip()
+    if not ins:
+        raise ValueError("the instructions are empty")
+    examples = []
+    for e in prompt.get("examples") or []:
+        if not isinstance(e, dict) or not isinstance(e.get("text"), str) or not isinstance(e.get("completion"), str):
+            raise ValueError("each example needs text and completion")
+        if e["text"].strip() and e["completion"].strip():
+            examples.append({k: e[k] for k in ("text", "completion", "app") if isinstance(e.get(k), str)})
+    if len(examples) > MAX_EXAMPLES:
+        raise ValueError(f"at most {MAX_EXAMPLES} examples")
+    if len(ins) + sum(len(e["text"]) + len(e["completion"]) for e in examples) > MAX_CHARS:
+        raise ValueError(f"the prompt is too long (at most {MAX_CHARS} characters with its examples)")
+    return {"instructions": ins, "examples": examples}
+
+
+def _read(path):
+    try:
+        return json.load(open(path))
+    except (OSError, ValueError):
+        return None
+
+
+def _write(path, data):
+    os.makedirs(os.path.dirname(path), mode=0o700, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path), prefix=".tmp-")
+    with os.fdopen(fd, "w") as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
+    os.replace(tmp, path)                                       # mkstemp files are 0600
 
 
 class UserPrompts:
+    """`path`: the prompts.json file, or None for none (benchmarks run on the shipped prompts)."""
+
     def __init__(self, path):
-        self.path = os.path.expanduser(path)
+        self.path = os.path.expanduser(path) if path else None
+        self.history_path = os.path.join(os.path.dirname(self.path), "prompt-history.json") if self.path else None
         self.lock = threading.Lock()
         self.stamp, self.data = None, {}
 
     def _load(self):
+        if not self.path:
+            return
         try:
             st = os.stat(self.path)
             stamp = (st.st_mtime_ns, st.st_size)
@@ -26,41 +77,73 @@ class UserPrompts:
             self.stamp, self.data = None, {}
             return
         if stamp != self.stamp:                                 # changed by another process (pred try, a text editor)
-            try:
-                d = json.load(open(self.path))
-                self.data = {k: v for k, v in d.items() if k in NAMES and isinstance(v, str) and v.strip()}
-            except (OSError, ValueError):
-                self.data = {}
+            d = _read(self.path) or {}
+            self.data = {}
+            for k, v in d.items():
+                if k == "typing":                               # the first version's name for the general prediction prompt
+                    k = "predict-general"
+                if isinstance(v, str) and v.strip():
+                    v = {"instructions": v}                     # instructions only: examples stay the default ones
+                if isinstance(v, dict) and isinstance(v.get("instructions"), str):
+                    self.data[k] = v
             self.stamp = stamp
 
-    def get(self, name, default):
+    def get(self, name):
+        """The user's version (instructions, maybe examples) or None."""
         with self.lock:
             self._load()
-            return self.data.get(name, default)
+            return self.data.get(name)
 
-    def custom(self, name):
+    def set(self, name, prompt):
+        """Save the user's version (None restores the default) and record it in the history."""
+        if not self.path:
+            raise ValueError("no user prompt file configured")
         with self.lock:
             self._load()
-            return name in self.data
-
-    def set(self, name, text):
-        """Save an override; empty text restores the default."""
-        if name not in NAMES:
-            raise ValueError(f"name must be one of {list(NAMES)}")
-        if len(text) > MAX_CHARS:
-            raise ValueError(f"at most {MAX_CHARS} characters")
-        with self.lock:
-            self._load()
-            if text.strip():
-                self.data[name] = text
-            else:
+            if prompt is None:
                 self.data.pop(name, None)
-            os.makedirs(os.path.dirname(self.path), mode=0o700, exist_ok=True)
-            fd, tmp = tempfile.mkstemp(dir=os.path.dirname(self.path), prefix=".prompts-")
-            with os.fdopen(fd, "w") as f:
-                json.dump(self.data, f, indent=2, ensure_ascii=False)
-            os.replace(tmp, self.path)                          # mkstemp files are 0600
+            else:
+                self.data[name] = prompt
+            _write(self.path, self.data)
             self.stamp = None
+            if prompt is not None:
+                h = self._history()
+                versions = [v for v in h["versions"].get(name, []) if v["hash"] != prompt_hash(prompt)]
+                versions.append({"hash": prompt_hash(prompt), "saved_at": time.strftime("%Y-%m-%dT%H:%M:%S"), "prompt": prompt})
+                h["versions"][name] = versions[-HISTORY:]
+                self._prune(h)
+                _write(self.history_path, h)
 
-    def reset(self, name):
-        self.set(name, "")
+    def _history(self):
+        h = _read(self.history_path) if self.history_path else None
+        if not isinstance(h, dict):
+            h = {}
+        h.setdefault("versions", {})
+        h.setdefault("results", {})
+        return h
+
+    def _prune(self, h):
+        """Keep results only for versions still in the history (and anything benchmarked in the last week, e.g. defaults)."""
+        keep = {v["hash"] for vs in h["versions"].values() for v in vs}
+        cutoff = time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(time.time() - 7 * 86400))
+        h["results"] = {k: r for k, r in h["results"].items()
+                        if k in keep or any(x.get("at", "") >= cutoff for x in r.values())}
+
+    def history(self, name):
+        """Saved versions of `name`, newest first, each with its benchmark result if one was run."""
+        with self.lock:
+            h = self._history()
+            return [{**v, "result": h["results"].get(v["hash"], {}).get(name)} for v in reversed(h["versions"].get(name, []))]
+
+    def result(self, name, prompt):
+        with self.lock:
+            return self._history()["results"].get(prompt_hash(prompt), {}).get(name)
+
+    def save_result(self, name, prompt, result):
+        if not self.history_path:
+            return
+        with self.lock:
+            h = self._history()
+            h["results"].setdefault(prompt_hash(prompt), {})[name] = result
+            self._prune(h)
+            _write(self.history_path, h)

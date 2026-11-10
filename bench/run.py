@@ -12,6 +12,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).parent.parent))
 from machine import machine_info, describe
 from ghost import predictd
 from ghost.policy import Ghost
+from ghost.evaluate import score  # noqa: F401  (shared with the app's benchmark)
 
 HERE = pathlib.Path(__file__).parent
 PUNCT = " .,;:!?\"'()[]{}"
@@ -28,28 +29,6 @@ def pct(xs, p):
 def mean(xs):
     xs = list(xs)
     return sum(xs) / len(xs) if xs else float("nan")
-
-
-def score(case, r):
-    """Quality of one response against what the user actually typed next."""
-    partial = r.get("partial", "")
-    sug = r.get("suggestion", "") or ""
-    pred = (partial + sug).split()
-    truth = (partial + case["rest"]).split()
-    lead = 0
-    for a, b in zip(pred, truth):
-        if norm(a) != norm(b):
-            break
-        lead += 1
-    tset = {norm(w) for w in truth}
-    bag = sum(norm(w) in tset for w in pred) / len(pred) if pred else 0.0
-    last3 = [norm(w) for w in case["text"].split()[-3:]]
-    echo = len(last3) == 3 and " ".join(last3) in " ".join(norm(w) for w in sug.split())
-    complete = bool(case["text"]) and not case["text"][-1].isspace() and case["rest"].startswith(" ")
-    return {"complete": complete, "space_ok": complete and (sug.startswith(" ") or not sug.strip()), "shown": bool(sug.strip()), "cross": bool(re.search(r"[.!?]\s+\S", sug)), "mid": partial != "", "lead": lead, "acc1": lead >= 1,
-            "word_ok": bool(pred) and bool(truth) and norm(pred[0]) == norm(truth[0]),
-            "bag": bag, "n_words": len(sug.split()), "echo": echo,
-            "truth": " ".join(truth[:8]), "pred": " ".join(pred)}
 
 
 def lat(sub):
@@ -191,6 +170,31 @@ def run_typing(c, aux, ghost, cases, key_ms, nkeys=12, ncases=8):
     return rows, sent_n, superseded, aux.call(op="stats")
 
 
+def run_styles(a, c, ghost, proc):
+    from ghost.evaluate import bench_proofread, bench_style
+    from ghost.proofread import Proofreader
+    results = {}
+    print(f"{'prompt':18} {'cases':>5} {'p50 ms':>7} {'p90 ms':>7}  quality")
+    for st in ghost.style_names():
+        r = results["predict-" + st] = bench_style(ghost, c, st)
+        print(f"{'predict-' + st:18} {r['cases']:5} {r['latency_p50']:7} {r['latency_p90']:7}  next word {r['next_word']:.0%}, words right "
+              f"{r['words_right']:.2f}, completions {r['completions']:.0%}, shown {r['shown']:.0%}")
+    proof = Proofreader(ghost.cfg)
+    for mode in ("fix", "rewrite"):
+        r = results["proofread-" + mode] = bench_proofread(proof, c, mode)
+        q = f"exact {r['exact']:.0%}, word match {r['word_match']:.2f}" if mode == "fix" else f"length ratio {r['length_ratio']}"
+        print(f"{'proofread-' + mode:18} {r['cases']:5} {r['latency_p50']:7} {r['latency_p90']:7}  {q}")
+    res = HERE / "results"
+    res.mkdir(exist_ok=True)
+    path = res / f"{datetime.datetime.now():%Y%m%d-%H%M%S}-{a.label}-styles.json"
+    mach = machine_info()
+    print("machine:", describe(mach))
+    json.dump({"label": a.label, "scenario": "styles", "machine": mach, "policy": ghost.cfg, "results": results}, open(path, "w"), indent=1)
+    print("saved", path)
+    if proc:
+        proc.terminate()
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--label", default="run")
@@ -204,6 +208,8 @@ def main():
     ap.add_argument("--key-ms", type=float, default=150)
     ap.add_argument("--cases", default=str(HERE / "cases.json"))
     ap.add_argument("--limit", type=int, default=0)
+    ap.add_argument("--styles", action="store_true", help="benchmark every writing style and proofreading on bench/styles.json "
+                    "with the shipped prompts (the numbers the Mac app's Prompts tab shows)")
     a = ap.parse_args()
     proc, sock = None, a.socket
     if a.spawn:
@@ -213,7 +219,7 @@ def main():
         tmp = tempfile.mkdtemp()
         cfgp, sock, logp = os.path.join(tmp, "predictd.json"), os.path.join(tmp, "p.sock"), os.path.join(tmp, "log")
         json.dump(cfg, open(cfgp, "w"))
-        proc = subprocess.Popen([str(HERE.parent / "predictd"), "--config", cfgp, "--socket", sock],
+        proc = subprocess.Popen([str(HERE.parent / "predictd"), "--config", cfgp, "--user-config", "", "--socket", sock],
                                 stderr=open(logp, "w"), stdout=subprocess.DEVNULL)
         for _ in range(300):
             if "ready on" in open(logp).read():
@@ -222,7 +228,9 @@ def main():
         else:
             sys.exit("daemon did not start: " + open(logp).read())
     c, aux = predictd.Link(sock), predictd.Link(sock)
-    ghost = Ghost(overrides=json.loads(a.config))
+    ghost = Ghost(overrides=json.loads(a.config), user=False)     # the shipped prompts and knobs, not the user's
+    if a.styles:
+        return run_styles(a, c, ghost, proc)
     ghost.ensure_profile(aux, pin=True)
     cases = json.load(open(a.cases))
     if a.limit:

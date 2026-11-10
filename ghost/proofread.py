@@ -58,17 +58,30 @@ def diff(a, b):
 class Proofreader:
     def __init__(self, cfg=None, user=None):
         self.cfg = cfg or json.load(open(CONFIG))
-        self.user = user or UserPrompts(self.cfg.get("userPrompts", "~/.config/input-predictor/prompts.json"))
+        self.user = user or UserPrompts(None)                   # the server passes the typing policy's (the user's prompts)
         self.registered = set()
         self.lock = threading.Lock()
 
-    def profile(self, mode):
-        examples = [{"prompt": a, "response": b} for a, b in EXAMPLES[mode]]
-        d = {"instructions": self.user.get("proofread-" + mode, INSTRUCTIONS[mode]), "examples": examples, "guardrails": self.cfg.get("proofreadGuardrails", "permissive")}
+    @staticmethod
+    def default_prompt(mode):
+        return {"instructions": INSTRUCTIONS[mode], "examples": [{"text": a, "completion": b} for a, b in EXAMPLES[mode]]}
+
+    def prompt_for(self, mode):
+        """The prompt in use: the user's version (instructions, and examples if they changed them), else the shipped one."""
+        d = self.default_prompt(mode)
+        u = self.user.get("proofread-" + mode)
+        if not u:
+            return d
+        return {"instructions": u["instructions"], "examples": u["examples"] if "examples" in u else d["examples"]}
+
+    def profile(self, mode, prompt=None):
+        p = prompt or self.prompt_for(mode)
+        examples = [{"prompt": e["text"], "response": e["completion"]} for e in p["examples"]]
+        d = {"instructions": p["instructions"], "examples": examples, "guardrails": self.cfg.get("proofreadGuardrails", "permissive")}
         return {"name": f"proofread-{mode}-" + hashlib.sha1(json.dumps(d, sort_keys=True).encode()).hexdigest()[:8], **d}
 
-    def ensure_profile(self, link, mode, force=False):
-        prof = self.profile(mode)
+    def ensure_profile(self, link, mode, force=False, prompt=None):
+        prof = self.profile(mode, prompt)
         with self.lock:
             if force or prof["name"] not in self.registered:
                 r = link.call(op="profile.set", pin=False, **prof)
@@ -77,7 +90,7 @@ class Proofreader:
                 self.registered.add(prof["name"])
         return prof["name"]
 
-    def run(self, link, text, mode="fix", stream="proofread"):
+    def run(self, link, text, mode="fix", stream="proofread", prompt=None):
         t0 = time.perf_counter()
         if mode not in INSTRUCTIONS:
             return {"ok": False, "error": f"mode must be one of {sorted(INSTRUCTIONS)}"}
@@ -90,7 +103,7 @@ class Proofreader:
         longest = max(est_tokens(p.strip()) for p in parts[::2])
         if longest > limit:
             return {"ok": False, "error": f"a paragraph is too long (about {int(longest)} tokens, at most {limit})"}
-        name = self.ensure_profile(link, mode)
+        name = self.ensure_profile(link, mode, prompt=prompt)
         out, model_ms, tokens, truncated, warnings = [], 0.0, {"in": 0, "cached": 0, "out": 0}, False, []
         for i, part in enumerate(parts):
             if i % 2 or not part.strip():
@@ -102,7 +115,7 @@ class Proofreader:
             resp = link.call(timeout=120, **req)
             if resp.get("error") == "unknown_profile":        # predictd restarted
                 self.registered.discard(name)
-                self.ensure_profile(link, mode)
+                self.ensure_profile(link, mode, prompt=prompt)
                 resp = link.call(timeout=120, **req)
             if not resp.get("ok"):
                 err = resp.get("error")

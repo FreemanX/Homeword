@@ -38,6 +38,16 @@ func loadJSON(_ path: String) -> [String: Any] {
     guard let d = FileManager.default.contents(atPath: path), let o = try? JSONSerialization.jsonObject(with: d) as? [String: Any] else { return [:] }
     return o
 }
+/// The config file, then the user's overrides (a file outside the repo; "" = none).
+func loadConfig(_ path: String, user: String) -> Config {
+    var c = Config(); c.apply(loadJSON(path))
+    if !user.isEmpty { c.apply(loadJSON(user)) }
+    return c
+}
+let defaultUserConfig: String = {
+    let base = ProcessInfo.processInfo.environment["XDG_CONFIG_HOME"].flatMap { $0.isEmpty ? nil : $0 } ?? (NSHomeDirectory() + "/.config")
+    return base + "/input-predictor/predictd.json"
+}()
 func jsonText(_ o: Any) -> String {
     guard JSONSerialization.isValidJSONObject(o), let d = try? JSONSerialization.data(withJSONObject: o, options: [.sortedKeys]) else { return "\(o)" }
     return String(decoding: d, as: UTF8.self)
@@ -257,7 +267,7 @@ struct Stats { var requests = 0, chat = 0, cold = 0, cancelled = 0, errors = 0, 
 
 actor Engine {
     var cfg: Config
-    let configPath: String
+    let configPath: String, userConfigPath: String
     var profiles: [String: Profile] = [:]
     var slots: [String: Slot] = [:]
     var pinned: String? = nil              // the profile kept warm; nil = the most recently used session
@@ -269,7 +279,7 @@ actor Engine {
     var stats = Stats()
     let started = clock.now
 
-    init(cfg: Config, configPath: String) { self.cfg = cfg; self.configPath = configPath }
+    init(cfg: Config, configPath: String, userConfigPath: String) { self.cfg = cfg; self.configPath = configPath; self.userConfigPath = userConfigPath }
 
     func startup() {
         log("availability: \(SystemLanguageModel.default.availability)")
@@ -406,6 +416,16 @@ actor Engine {
                 conn.send(["id": id, "ok": true, "name": p.name, "changed": true, "prefix_tokens": p.prefixTokens])
             } catch { fail("profile: \(error.localizedDescription)") }
 
+        case "prewarm":   // warm a profile's default session now and keep it warm as the most recently used one (a client knows
+                          // what comes next, e.g. the user switched to another kind of text); skipped while a generation runs
+            guard let n = req["profile"] as? String, let p = profiles[n] else { return fail("unknown_profile") }
+            guard inflight == 0 else { conn.send(["id": id, "ok": true, "prewarmed": false]); return }
+            guard let s = try? slot(p, "") else { return fail("no session") }
+            if !s.conversation { s.session.transcript = s.base }
+            s.session.prewarm(); s.usedAt = clock.now; cacheOwner = s.key; lastUsed = s.key; recentAt = clock.now
+            stats.keepAlives += 1
+            conn.send(["id": id, "ok": true, "prewarmed": true])
+
         case "profile.pin":
             if let n = req["name"] as? String { guard profiles[n] != nil else { return fail("unknown_profile") }; pinned = n } else { pinned = nil }
             conn.send(["id": id, "ok": true, "pinned": pinned ?? NSNull()])
@@ -463,7 +483,7 @@ actor Engine {
                        "profiles": list, "pinned": pinned ?? NSNull(), "warm": cacheOwner ?? NSNull(), "config": cfg.dict()])
 
         case "reload":
-            var c = Config(); c.apply(loadJSON(configPath)); c.apply(req["config"] as? [String: Any] ?? [:])
+            var c = loadConfig(configPath, user: userConfigPath); c.apply(req["config"] as? [String: Any] ?? [:])
             c.socketPath = cfg.socketPath; c.httpPort = cfg.httpPort   // the listeners stay where they are
             cfg = c
             conn.send(["id": id, "ok": true, "config": cfg.dict()])
@@ -862,22 +882,23 @@ func handleHTTP(_ cfd: Int32, _ engine: Engine) {
 @main struct Predictd {
     static func main() async {
         var configPath = CommandLine.arguments.first.map { URL(fileURLWithPath: $0).deletingLastPathComponent().appendingPathComponent("predictd.json").path } ?? "predictd.json"
-        var socket: String? = nil, httpPortArg: Int? = nil
+        var socket: String? = nil, httpPortArg: Int? = nil, userConfig = defaultUserConfig
         var args = Array(CommandLine.arguments.dropFirst())
         while !args.isEmpty {
             let a = args.removeFirst()
             switch a {
             case "--config": configPath = args.removeFirst()
+            case "--user-config": userConfig = args.removeFirst()      // "" = ignore the user's overrides (benchmarks)
             case "--socket": socket = args.removeFirst()
             case "--http-port": httpPortArg = Int(args.removeFirst())
             case "--version": print("predictd 0.2"); return
             default: log("unknown argument \(a)"); exit(1)
             }
         }
-        var cfg = Config(); cfg.apply(loadJSON(configPath))
+        var cfg = loadConfig(configPath, user: userConfig)
         if let s = socket { cfg.socketPath = s }
         if let hp = httpPortArg { cfg.httpPort = hp }
-        let engine = Engine(cfg: cfg, configPath: configPath)
+        let engine = Engine(cfg: cfg, configPath: configPath, userConfigPath: userConfig)
         await engine.startup()
         serve(path: cfg.socketPath, engine: engine)
         if cfg.httpPort > 0 { serveHTTP(port: cfg.httpPort, engine: engine) }

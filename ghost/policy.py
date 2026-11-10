@@ -20,6 +20,7 @@ from .prompts import UserPrompts
 HERE = os.path.dirname(os.path.realpath(__file__))
 CONFIG = os.path.join(HERE, "config.json")
 PROMPT = os.path.join(HERE, "prompt.json")
+STYLES = os.path.join(HERE, "styles.json")
 STRUCTURED_SCHEMA = {"title": "Prediction", "type": "object", "required": ["completion"],
                      "properties": {"completion": {"type": "string", "description": "how the text continues"}}}
 # "friday" is only a word as "Friday"; but don't accept every name ("justine" is not "just in"), only days and months
@@ -260,14 +261,36 @@ def assemble(text, completion, app, cfg, truncated, speller):
     return a
 
 
-class Ghost:
-    """The policy. `overrides` change config.json for this instance; per-request `opts` change it for one request."""
+def user_dir():
+    """The user's config directory, outside the repo: config.json (knob overrides), prompts.json, prompt-history.json."""
+    return os.path.join(os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config"), "input-predictor")
 
-    def __init__(self, config=CONFIG, prompt=PROMPT, overrides=None):
-        self.cfg = json.load(open(config))
+
+def load_config(path=CONFIG, user=True):
+    """config.json, then the user's overrides of its knobs (user_dir()/config.json), unless `user` is False (benchmarks)."""
+    cfg = json.load(open(path))
+    if user:
+        try:
+            u = json.load(open(os.path.join(user_dir(), "config.json")))
+        except (OSError, ValueError):
+            u = {}
+        if isinstance(u, dict):
+            cfg.update({k: v for k, v in u.items() if k in cfg})
+    return cfg
+
+
+class Ghost:
+    """The policy. `overrides` change config.json for this instance; per-request `opts` change it for one request.
+    `user=False` ignores the user's config overrides and prompts (benchmarks run on the shipped ones)."""
+
+    def __init__(self, config=CONFIG, prompt=PROMPT, overrides=None, user=None, styles=STYLES):
+        if user is None:                                        # benchmarks set PRED_NO_USER=1 for the processes they start
+            user = os.environ.get("PRED_NO_USER") != "1"
+        self.cfg = load_config(config, user)
         self.cfg.update(overrides or {})
         self.prompt = json.load(open(prompt))
-        self.user = UserPrompts(self.cfg.get("userPrompts", "~/.config/input-predictor/prompts.json"))
+        self.styles = {k: v for k, v in json.load(open(styles)).items() if not k.startswith("_")}
+        self.user = UserPrompts(os.path.expanduser(self.cfg.get("userPrompts") or os.path.join(user_dir(), "prompts.json")) if user else None)
         self.registered = set()
         self.pinned = None                                      # the profile predictd keeps warm for us
         self.lock = threading.Lock()
@@ -281,31 +304,69 @@ class Ghost:
         t = self.prompt.get("template", "App: {app}\nText: {text}")
         return t.replace("{app}", app).replace("{text}", text)
 
+    # -- writing styles: general is prompt.json (with its research knobs), the others are styles.json
+
+    def style_names(self):
+        return ["general"] + list(self.styles)
+
+    def style_title(self, style):
+        return "General" if style == "general" else self.styles[style]["title"]
+
+    def style_label(self, style):
+        return "notes" if style == "general" else self.styles[style]["label"]
+
     def default_instructions(self, cfg):
         """The instructions prompt.json gives this configuration (`{words}` not yet filled in)."""
         p = self.prompt
         return p["instructions_fullword"] if cfg["format"] == "fullword" else p["instructions_short"] if cfg["instructions"] == "short" else p["instructions"]
 
-    def profile(self, cfg):
-        """The predictd profile for this configuration: instructions + examples. Its name is a hash of its content, so a
-        request that changes the prompt (other `shots`, `instructions`, ...) gets its own profile instead of a stale one."""
-        p, full, structured = self.prompt, cfg["format"] == "fullword", cfg["output"] == "structured"
-        ins = self.user.get("typing", self.default_instructions(cfg))       # the user's own, if they set one
+    def inherits(self, style):
+        """True when the style has no prompt of its own and uses general's."""
+        return style != "general" and "instructions" not in self.styles[style]
+
+    def default_prompt(self, style="general", cfg=None):
+        """The shipped prompt of a style: {"instructions", "examples": [{"text", "completion", "app"?}]}. A style without its
+        own prompt defaults to general's prompt in use (the user's version, if any)."""
+        cfg = cfg or self.cfg
+        if self.inherits(style):
+            return self.prompt_for("general", cfg)
+        if style == "general":
+            return {"instructions": self.default_instructions(cfg),
+                    "examples": [{"text": s["text"], "completion": s["completion"], "app": s["app"]} for s in self.prompt["shots"][: cfg["shots"]]]}
+        st = self.styles[style]
+        return {"instructions": st["instructions"], "examples": [{"text": s["text"], "completion": s["completion"]} for s in st["shots"]]}
+
+    def prompt_for(self, style="general", cfg=None):
+        """The prompt in use: the user's version (instructions, and examples if they changed them), else the shipped one."""
+        d = self.default_prompt(style, cfg)
+        u = self.user.get("predict-" + style)
+        if not u:
+            return d
+        return {"instructions": u["instructions"], "examples": u["examples"] if "examples" in u else d["examples"]}
+
+    def profile(self, cfg, style="general", prompt=None):
+        """The predictd profile for this configuration and style: instructions + examples. Its name is a hash of its content,
+        so a request that changes the prompt (other `shots`, `instructions`, a user's edit, ...) gets its own profile instead of
+        a stale one."""
+        full, structured = cfg["format"] == "fullword", cfg["output"] == "structured"
+        p = prompt or self.prompt_for(style, cfg)
         examples = []
-        for s in p["shots"][: cfg["shots"]]:
+        for s in p["examples"]:
             comp = s["completion"]
             if full and s["text"] and not s["text"][-1].isspace():   # fullword format: the answer re-writes the last word, completed
                 comp = trailing_partial(s["text"]) + comp
-            examples.append({"prompt": self.template(s["app"], s["text"]), "response": {"completion": comp} if structured else comp})
-        d = {"instructions": ins.replace("{words}", str(cfg["words"])), "examples": examples, "guardrails": cfg["guardrails"]}
+            examples.append({"prompt": self.template(s.get("app") or self.style_label(style), s["text"]),
+                             "response": {"completion": comp} if structured else comp})
+        d = {"instructions": p["instructions"].replace("{words}", str(cfg["words"])), "examples": examples, "guardrails": cfg["guardrails"]}
         if structured:
             d["schema"] = STRUCTURED_SCHEMA
         return {"name": "ghost-" + hashlib.sha1(json.dumps(d, sort_keys=True).encode()).hexdigest()[:8], **d}
 
-    def ensure_profile(self, link, cfg=None, pin=False, force=False):
-        prof = self.profile(cfg or self.cfg)
+    def ensure_profile(self, link, cfg=None, pin=False, force=False, style="general", prompt=None):
+        prof = self.profile(cfg or self.cfg, style, prompt)
         with self.lock:
-            # re-send when the pinned profile changes too (a prompt edited and reset): profile.set of a known profile is free
+            # re-send when the pinned profile changes too (another style, a prompt edited and reset): profile.set of a known
+            # profile is free
             if force or prof["name"] not in self.registered or (pin and self.pinned != prof["name"]):
                 r = link.call(op="profile.set", pin=pin, **prof)
                 if not r.get("ok"):
@@ -315,13 +376,26 @@ class Ghost:
                     self.pinned = prof["name"]
         return prof["name"]
 
-    def request(self, app, text, opts=None):
-        """The generate request for this text, and the context `finish` needs; (None, ctx) when there is nothing to ask."""
+    def warm(self, link, style="general"):
+        """The user is about to type in this style (they switched apps): pin its profile and have predictd prewarm it now, so
+        the first keystroke hits the cache (prewarming needs ~1 s of lead time)."""
+        name = self.ensure_profile(link, style=style if style in self.styles else "general", pin=True)
+        r = link.call(op="prewarm", profile=name)
+        return {"ok": r.get("ok", False), "profile": name, "prewarmed": r.get("prewarmed", False)}
+
+    def request(self, app, text, opts=None, style="general", prompt=None):
+        """The generate request for this text, and the context `finish` needs; (None, ctx) when there is nothing to ask.
+        `style`: a writing style (general = `app` is sent as is; others send their own label). `prompt`: try this prompt
+        instead of the one in use (benchmarks)."""
         t0 = time.perf_counter()
         cfg = self.config(opts)
+        if style not in self.styles:
+            style = "general"
+        if style != "general":
+            app = self.style_label(style)
         tail, est, trimmed = trim_tail(text, max(16, cfg["textBudget"]))
-        ctx = {"cfg": cfg, "app": app, "text": text, "tail": tail, "est": est, "trimmed": trimmed, "t0": t0,
-               "profile": self.profile(cfg)["name"]}
+        ctx = {"cfg": cfg, "app": app, "text": text, "tail": tail, "est": est, "trimmed": trimmed, "t0": t0, "style": style,
+               "prompt": prompt, "profile": self.profile(cfg, style, prompt)["name"]}
         ctx["trim_ms"] = (time.perf_counter() - t0) * 1000
         if not tail.strip():
             return None, ctx
@@ -357,18 +431,19 @@ class Ghost:
                 "tokens": {**tok, "text_est": ctx["est"], "budget": cfg["textBudget"], "trimmed": ctx["trimmed"],
                            "text_chars_in": len(text), "text_chars_used": len(ctx["tail"])}}
 
-    def predict(self, link, app, text, opts=None, stream=None):
+    def predict(self, link, app, text, opts=None, stream=None, style="general", prompt=None):
         """Blocking: one suggestion for `text`. Registers the profile when predictd does not know it (first use, or the daemon
         restarted)."""
-        req, ctx = self.request(app, text, opts)
+        req, ctx = self.request(app, text, opts, style, prompt)
         if req is None:
             return {"ok": True, "suggestion": "", "partial": "", "timing": {"total_ms": ctx["trim_ms"]}}
         if stream:
             req["stream"] = stream
-        self.ensure_profile(link, ctx["cfg"], pin=not opts)      # the base profile is pinned, per-request variants are not
+        pin = not opts and prompt is None                       # the prompt in use is pinned, per-request variants are not
+        self.ensure_profile(link, ctx["cfg"], pin=pin, style=ctx["style"], prompt=prompt)
         resp = link.call(**req)
         if resp.get("error") == "unknown_profile":
             self.registered.discard(ctx["profile"])
-            self.ensure_profile(link, ctx["cfg"], pin=not opts)
+            self.ensure_profile(link, ctx["cfg"], pin=pin, style=ctx["style"], prompt=prompt)
             resp = link.call(**req)
         return self.finish(ctx, resp, lambda ws, lang: link.call(op="spell", words=ws, language=lang)["valid"])

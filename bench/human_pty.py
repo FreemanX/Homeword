@@ -21,6 +21,7 @@ logf = tempfile.mktemp(suffix=".jsonl")
 ghostf = tempfile.mktemp(suffix=".json")
 ACCEPT = os.environ.get("ACCEPT") == "1"      # press Tab when the ghost's next word is what the user meant to type
 os.environ["PRED_GHOST_FILE"] = ghostf
+os.environ["PRED_NO_USER"] = "1"              # the shipped prompts and knobs, not the user's
 pid, fd = pty.fork()
 if pid == 0:
     os.environ["TERM"] = "xterm-256color"
