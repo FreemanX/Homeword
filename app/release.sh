@@ -28,7 +28,7 @@ NO_REPO=1 OUT="$OUT" app/build.sh
 
 E="$RES/engine"                                          # the repo's layout: ghostd finds its data next to it
 mkdir -p "$E/ghost" "$E/bench"
-cp ghostd predictd predictd.json "$E/"
+cp ghostd predictd predictd.json VERSION "$E/"
 cp ghost/*.json "$E/ghost/"
 cp bench/cases.json bench/styles.json "$E/bench/"        # the benchmark in the Prompts tab
 cp LICENSE "$RES/"

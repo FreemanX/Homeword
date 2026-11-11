@@ -170,11 +170,16 @@ final class Services {
         }.resume()
     }
 
+    /// A /health answer from the engine (ghostd), not from another program on its port.
+    static func isEngine(_ health: [String: Any]?) -> Bool {
+        health?["ok"] as? Bool == true && health?["service"] as? String == "ghostd"
+    }
+
     /// Ask the engine how it is; start it if it is down (unless the user stopped it).
     func check(autostart: Bool = true) {
         port = EngineConfig.port
         get("/health", timeout: 2) { r, _ in
-            let ok = r?["ok"] as? Bool ?? false
+            let ok = Services.isEngine(r)
             self.modelUp = r?["model"] as? Bool ?? false
             self.availability = r?["availability"] as? String
             if ok {
@@ -223,7 +228,7 @@ final class Services {
         state = .starting
         port = EngineConfig.port
         get("/health", timeout: 2) { r, _ in
-            if r?["ok"] as? Bool == true {
+            if Services.isEngine(r) {
                 self.state = .unknown
                 self.check(autostart: false)
             } else {
@@ -251,7 +256,7 @@ final class Services {
     private func waitUp(_ p: Process, until: Date) {
         get("/health", timeout: 1) { r, _ in
             // up, or it failed; exit status 0 = another engine took the port first (it is still starting): keep waiting for it
-            if r?["ok"] as? Bool == true || (!p.isRunning && p.terminationStatus != 0) || Date() > until {
+            if Services.isEngine(r) || (!p.isRunning && p.terminationStatus != 0) || Date() > until {
                 self.state = .unknown
                 self.check(autostart: false)
             } else {

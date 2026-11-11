@@ -848,7 +848,10 @@ func serve(path: String, engine: Engine) {
     }.start()
 }
 
-// MARK: HTTP (127.0.0.1 only): POST with the same JSON object as the socket protocol (op defaults to generate), GET /health.
+// MARK: HTTP (127.0.0.1 only): POST with the same JSON object as the socket protocol (op defaults to generate), GET /health
+// ({"ok", "service": "predictd", "version", "pid"}).
+
+let PREDICTD_VERSION = "0.2"
 
 func serveHTTP(port: Int, engine: Engine) {
     let fd = socket(AF_INET, SOCK_STREAM, 0)
@@ -888,7 +891,7 @@ func handleHTTP(_ cfd: Int32, _ engine: Engine) {
     let parts = requestLine.split(separator: " ")
     let method = parts.first.map(String.init) ?? "", path = parts.count > 1 ? String(parts[1].split(separator: "?").first ?? "") : ""
     if path.hasPrefix("/v1/") { Task { await engine.openai(method, path, body, conn) }; return }
-    if requestLine.hasPrefix("GET /health") { conn.send(["ok": true]); return }
+    if requestLine.hasPrefix("GET /health") { conn.send(["ok": true, "service": "predictd", "version": PREDICTD_VERSION, "pid": Int(getpid())]); return }
     guard requestLine.hasPrefix("POST /"), var req = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any] else {
         conn.send(["ok": false, "error": "POST a JSON object (see docs/ARCHITECTURE.md)"]); return
     }
@@ -909,7 +912,7 @@ func handleHTTP(_ cfd: Int32, _ engine: Engine) {
             case "--user-config": userConfig = args.removeFirst()      // "" = ignore the user's overrides (benchmarks)
             case "--socket": socket = args.removeFirst()
             case "--http-port": httpPortArg = Int(args.removeFirst())
-            case "--version": print("predictd 0.2"); return
+            case "--version": print("predictd \(PREDICTD_VERSION)"); return
             default: log("unknown argument \(a)"); exit(1)
             }
         }

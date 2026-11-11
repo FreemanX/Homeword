@@ -26,8 +26,11 @@
 //     GET  /config     -> {"config"}: the policy's knobs in effect (pred status, the benchmarks' records)
 //     POST /request    {"app", "text", "context"?, "opts"?, "keep_app"?}  ->  {"profile", "generate"}: the profile and the generate
 //                      request a prediction would use, without running it (bench/openai_compare.py)
-//     GET  /health     -> {"ok", "port", "model": true if predictd answers, "availability": "available" or why the on-device
-//                      model is not (device_not_eligible, apple_intelligence_off, model_not_ready)}
+//     GET  /health     -> {"ok", "service": "ghostd", "version", "build", "pid", "started", "port", "model": true if predictd
+//                      answers, "availability": "available" or why the on-device model is not (device_not_eligible,
+//                      apple_intelligence_off, model_not_ready)}. Whether a ghostd runs on a port: "service" is "ghostd" (see
+//                      isGhostd). `build`: when this binary was built (its modification time), so a client can tell a ghostd
+//                      started before a rebuild; `version`: the VERSION file next to it; `started`: when this process started.
 //     POST /shutdown   {"predictd": true?}: exit (and stop predictd too)
 //
 // 127.0.0.1 only. Requests on one `stream` replace each other (the older one answers {"ok": false, "error": "cancelled"}).
@@ -72,13 +75,28 @@ var lastRequest = Date()
 // MARK: the port, first: one ghostd per port. A second start (two apps starting the engine at once) exits here, before it
 // touches predictd (registering and pinning profiles would take the warm cache from the running one).
 
+/// Who this process is, in every /health answer.
+let identity: [String: Any] = {
+    let built = (try? FileManager.default.attributesOfItem(atPath: EXECUTABLE)[.modificationDate]) as? Date
+    let version = (try? String(contentsOfFile: ROOT + "/VERSION", encoding: .utf8))?.trimmingCharacters(in: .whitespacesAndNewlines)
+    let iso = ISO8601DateFormatter()
+    return ["service": "ghostd", "version": version ?? "unknown", "build": built.map { iso.string(from: $0) } ?? NSNull(),
+            "pid": Int(getpid()), "started": iso.string(from: Date())]
+}()
+
+/// A /health answer from a ghostd (not another program on the port, not predictd's /health).
+func isGhostd(_ health: Any?) -> Bool {
+    guard let h = health as? [String: Any] else { return false }
+    return truthy(h["ok"]) && h["service"] as? String == "ghostd"
+}
+
 /// Does a ghostd answer on 127.0.0.1:port?
 func ghostdAnswers(_ port: Int) -> Bool {
     guard let url = URL(string: "http://127.0.0.1:\(port)/health") else { return false }
     let done = DispatchSemaphore(value: 0)
     var ok = false
     URLSession.shared.dataTask(with: URLRequest(url: url, timeoutInterval: 5)) { data, _, _ in
-        ok = (data.flatMap { jsonObject($0) } as? [String: Any]).map { truthy($0["ok"]) && $0["port"] != nil } ?? false
+        ok = isGhostd(data.flatMap { jsonObject($0) })
         done.signal()
     }.resume()
     _ = done.wait(timeout: .now() + 6)
@@ -321,7 +339,7 @@ func handleGET(_ path: String, _ q: [String: String]) -> (Int, [String: Any]) {
         switch path {
         case "/health":
             let (up, availability) = modelState()
-            return (200, ["ok": true, "port": port, "model": up, "availability": availability])
+            return (200, identity.merging(["ok": true, "port": port, "model": up, "availability": availability]) { a, _ in a })
         case "/prompts":
             return (200, ["ok": true, "prompts": try catalog(), "styles": ghost.styleNames().map { ["name": $0, "title": ghost.styleTitle($0)] }])
         case "/bench":

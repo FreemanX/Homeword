@@ -4,14 +4,15 @@ import Foundation
 let SOCK = "/tmp/predictd-\(getuid()).sock"
 let PREDICTD_LOG = "/tmp/predictd-\(getuid()).log"
 
-/// The directory holding the engine: ghostd, predictd, predictd.json, ghost/, bench/ (the repo, or the app's Resources/engine).
-let ROOT: String = {
+/// This binary (symlinks resolved), and the directory holding the engine next to it: ghostd, predictd, predictd.json, VERSION,
+/// ghost/, bench/ (the repo, or the app's Resources/engine).
+let EXECUTABLE: String = {
     var buf = [CChar](repeating: 0, count: Int(PATH_MAX))
     var size = UInt32(buf.count)
     _ = _NSGetExecutablePath(&buf, &size)
-    let exe = URL(fileURLWithPath: String(cString: buf)).resolvingSymlinksInPath()
-    return exe.deletingLastPathComponent().path
+    return URL(fileURLWithPath: String(cString: buf)).resolvingSymlinksInPath().path
 }()
+let ROOT = (EXECUTABLE as NSString).deletingLastPathComponent
 
 struct PredictdError: Error, CustomStringConvertible {
     let description: String

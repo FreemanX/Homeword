@@ -27,9 +27,12 @@ const GHOSTD = process.env.GHOSTD ?? fileURLToPath(new URL("../../ghostd", impor
 let daemonStart: Promise<void> | undefined;
 let lastStart = 0;
 
+/** Does ghostd answer on PORT? (`service` tells it from another program on the port.) */
 async function engineUp(): Promise<boolean> {
 	try {
-		return (await fetch(`http://127.0.0.1:${PORT}/health`, { signal: AbortSignal.timeout(2000) })).ok;
+		const res = await fetch(`http://127.0.0.1:${PORT}/health`, { signal: AbortSignal.timeout(2000) });
+		const h = (await res.json()) as { ok?: boolean; service?: string };
+		return h.ok === true && h.service === "ghostd";
 	} catch {
 		return false;
 	}

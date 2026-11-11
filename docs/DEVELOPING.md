@@ -68,10 +68,25 @@ stateDiagram-v2
     Showing --> Idle: Esc, cursor moved, submit
 ```
 
-Skip what is not prose for your `app`: both integrations ignore `/commands`, `!shell` lines and texts under 2 characters. If nothing
-answers on 47321 (`GET /health`), start the repo's `ghostd` in the background (it starts predictd; the pi extension and Homeword
-do this) and show nothing meanwhile. Never start one while one answers; if two apps race, the second ghostd finds the port taken
-and exits at once, before it touches predictd.
+Skip what is not prose for your `app`: both integrations ignore `/commands`, `!shell` lines and texts under 2 characters. If no ghostd
+answers on 47321, start the repo's `ghostd` in the background (it starts predictd; the pi extension and Homeword do this) and show
+nothing meanwhile. Never start one while one answers; if two apps race, the second ghostd finds the port taken and exits at once,
+before it touches predictd.
+
+**Is ghostd running?** `GET 127.0.0.1:47321/health` (the port: `serverPort` in ghost/config.json and the user's overrides):
+
+```sh
+curl -s 127.0.0.1:47321/health
+# {"ok":true,"service":"ghostd","version":"0.1.0","build":"2026-11-11T23:51:37Z","pid":82640,"started":"2026-11-11T23:52:11Z",
+#  "port":47321,"model":true,"availability":"available"}
+```
+
+Running = the answer has `ok: true` and `service: "ghostd"` (anything else on the port, or predictd's own `/health`, says
+otherwise or nothing). Connection refused = not running; no answer within a few seconds = probably starting (it takes the port
+first, then answers once predictd is up): wait instead of starting another. `model`: predictd answers; `availability`: whether the
+on-device model can be used (`available`, `apple_intelligence_off`, `model_not_ready`, `device_not_eligible`). `build` is when the
+running binary was built (its modification time): compare it with the binary on disk to find a ghostd started before a rebuild.
+`version` is the project's VERSION, `started` when the process started.
 
 ```sh
 curl -s 127.0.0.1:47321/predict -d '{"app":"chat","text":"See you tomor","stream":"demo"}'

@@ -125,7 +125,8 @@ flowchart LR
 ### Protocol
 
 Newline-delimited JSON on the unix socket `/tmp/predictd-UID.sock` (mode 0600), or the same objects as the body of an HTTP `POST` to
-`127.0.0.1:47320` (`op` defaults to `generate`; `GET /health`). Every request may carry an `id`, echoed in its answer.
+`127.0.0.1:47320` (`op` defaults to `generate`; `GET /health` answers `{"ok", "service": "predictd", "version", "pid"}`). Every
+request may carry an `id`, echoed in its answer.
 
 | Op | Request | Answer |
 |---|---|---|

@@ -45,10 +45,15 @@ def config_port():
     return port
 
 
+def is_ghostd(health):
+    """A /health answer from a ghostd (not another program on the port, not predictd's /health)."""
+    return bool(health.get("ok")) and health.get("service") == "ghostd"
+
+
 def up(port, timeout=1):
     try:
-        return http(port, "/health", timeout=timeout).get("ok", False)
-    except OSError:
+        return is_ghostd(http(port, "/health", timeout=timeout))
+    except (OSError, ValueError):
         return False
 
 
