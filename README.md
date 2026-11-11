@@ -171,7 +171,15 @@ A research prototype. Benchmark results (the best run per machine):
 
 Details and raw data: [bench/RESULTS.md](bench/RESULTS.md).
 
-Known limits: English only so far (prompt, examples and spell check); one warm prefix cache for the whole system (switching profiles
-costs an uncached prefix); guesses from a one-letter prefix are often wrong; predictd reads one non-public field (`finishReason`, via
-reflection), which macOS 27.0.1 does not have, so there a word cut by the token cap is kept. On a managed Mac, check whether Apple
-Intelligence features may be used before relying on it.
+## Known limits
+
+- **English only** so far: the prompts, examples and spell check.
+- **One warm prompt cache for the whole system**: switching between prompts (another writing style, proofreading, an agent on the
+  OpenAI API) makes the next request ~70 ms slower once, and another app using Apple Intelligence can evict the cache.
+- **Slower Macs show fewer suggestions while typing fast**: on an Apple M1 Pro a model call (~355 ms) is longer than the gap
+  between keys, so most requests are replaced by the next keystroke before they answer ([results](bench/RESULTS.md#typing-simulation)).
+- **One-letter prefixes** are mostly guesses ("won't j" → "job").
+- **macOS 27.0.1**: predictd reads one non-public field (`finishReason`, via reflection) that this version does not have, so a word
+  cut by the token cap is kept instead of dropped.
+- **Managed Macs**: Apple Intelligence can be restricted by the organization (MDM); check before relying on it.
+- The Mac app's own limits (caret position in some apps, pop-up instead of inline text, ...): [app/README.md](app/README.md#known-limits).
