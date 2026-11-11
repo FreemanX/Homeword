@@ -21,6 +21,18 @@ def machine_info():
     }
 
 
+def model_users():
+    """What else would use the on-device model during a benchmark: a running predictd or ghost server, Homeword (it restarts
+    the engine on its own), `pred try`. Another user evicts the run's cache and changes outputs, so results would be invalid."""
+    found = []
+    for pattern, what in (("-x predictd", "predictd"), ("-f bin/pred serve", "the ghost server (pred serve)"),
+                          ("-x Homeword", "Homeword"), ("-f bin/pred try", "pred try")):
+        pids = _run("pgrep", *pattern.split(" ", 1)).split()
+        if pids:
+            found.append(f"{what} (pid {', '.join(pids)})")
+    return found
+
+
 def describe(m):
     return f"{m['chip']}, {m['cpu_cores']} CPU, {m['gpu_cores']}-core GPU, {m['ram_gb']} GB RAM, macOS {m['macos']}"
 

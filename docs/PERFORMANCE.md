@@ -34,7 +34,9 @@ to back), `idle` (15 s gaps: does the keep-alive keep the model loaded), `typing
 the last keystroke to its answer). Metrics: client-side end-to-end time (p50/p90/max, by context size), model time, prefix-cache hit
 rate, and quality against what the user really typed next: suggestion shown, first word right, completed-word exact match for
 mid-word cuts, leading words right, word overlap, echo, misspelled words. Each run is saved to `bench/results/` (git-ignored) with
-its rows, machine spec and a model-mode fingerprint, so two runs can be compared; shared runs live in `bench/baselines/`.
+its rows, machine spec and a model-mode fingerprint, so two runs can be compared; shared runs live in `bench/baselines/`. To
+measure a machine (hardware + macOS) and record its results, step by step: "Recording results for a machine" in
+[AGENTS.md](../AGENTS.md#recording-results-for-a-machine).
 
 Quality is exact word match against one real continuation, so it is harsh on the next-word part; the mid-word completion number is
 the most objective. Hand-written cases (52: mail, chat, notes, review, terminal, code, editor) are short; the 28 generated ones are

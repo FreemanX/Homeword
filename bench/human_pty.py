@@ -4,8 +4,10 @@ Prints pred's session stats. Usage: python3 -I human_pty.py [extra pred try args
 Timing model: ~5.5 keys/s (lognormal around 170 ms), 25% of word ends get a 250-700 ms pause, sentence ends 800 ms."""
 import os, pty, random, re, select, sys, time, pathlib, fcntl, termios, struct, json, tempfile, datetime
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
-from machine import machine_info, describe
+from machine import machine_info, describe, model_users
 root = pathlib.Path(__file__).resolve().parent.parent
+if model_users():           # pred try below starts its own predictd; anything else on the model makes the run invalid
+    sys.exit("other model users: " + "; ".join(model_users()) + ". Quit Homeword and the integrations, run bin/pred stop, retry")
 LINES = [
     "Hi Sarah, thanks for the update on the budget. I will review the numbers and get back to you tomorrow.",
     "git commit -m \"fix the login timeout\"",
@@ -91,3 +93,6 @@ json.dump({"label": out.stem[16:], "scenario": "typing-sim", "machine": mach, "a
                        "cache_misses": sum(p["cached"] < 0.5 for p in parts), "shown": len(parts), "mode_fingerprint": fp},
            "pred_stats": text[i:].strip()}, open(out, "w"), indent=1)
 print("saved", out)
+late = [u for u in model_users() if not u.startswith(("predictd", "pred try"))]   # our predictd is still up; pred try just exited
+if late:
+    print("WARNING: other model users appeared during the run:", "; ".join(late), "- the results are invalid, repeat")

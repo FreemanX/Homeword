@@ -81,6 +81,8 @@ def start(path=SOCK, config=None, http_port=None, log=LOG, wait=40, on_spawn=Non
     if on_spawn:
         on_spawn()
     args = [binary, "--socket", path] + (["--config", config] if config else []) + (["--http-port", str(http_port)] if http_port is not None else [])
+    if os.environ.get("PRED_NO_USER") == "1":           # benchmarks: the shipped predictd.json, not the user's overrides
+        args += ["--user-config", ""]
     with open(log, "ab") as f:
         subprocess.Popen(args, stdin=subprocess.DEVNULL, stdout=f, stderr=f, start_new_session=True)
     end = time.monotonic() + wait

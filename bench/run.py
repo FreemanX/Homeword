@@ -9,7 +9,7 @@ Results: bench/results/<timestamp>-<label>.json (rows + summary). Compare: pytho
 import argparse, hashlib, json, os, re, subprocess, sys, tempfile, threading, time, datetime, pathlib
 sys.path.insert(0, str(pathlib.Path(__file__).parent))
 sys.path.insert(0, str(pathlib.Path(__file__).parent.parent))
-from machine import machine_info, describe
+from machine import machine_info, describe, model_users
 from ghost import predictd
 from ghost.policy import Ghost
 from ghost.evaluate import score  # noqa: F401  (shared with the app's benchmark)
@@ -180,9 +180,10 @@ def other_daemons(proc):
 
 
 def concurrency_note(proc):
-    others = other_daemons(proc)
+    others = [f"predictd (pid {p})" for p in other_daemons(proc)] if proc else []
+    others += [u for u in model_users() if not u.startswith("predictd")] if proc else []
     if others:
-        print(f"WARNING: another predictd ran during this run (pid {', '.join(others)}): results are invalid, quit Homeword and the "
+        print(f"WARNING: other model users during this run ({'; '.join(others)}): results are invalid, quit Homeword and the "
               "integrations, run bin/pred stop and repeat")
     return bool(others)
 
@@ -238,10 +239,10 @@ def main():
     a = ap.parse_args()
     proc, sock = None, a.socket
     if a.spawn:
-        running = subprocess.run(["pgrep", "-x", "predictd"], capture_output=True, text=True).stdout.split()
-        if running:
-            sys.exit(f"another predictd is running (pid {', '.join(running)}): it would evict this run's cache. Quit Homeword and "
-                     "the integrations, run bin/pred stop, then retry")
+        busy = model_users()
+        if busy:
+            sys.exit(f"other model users: {'; '.join(busy)}: they would evict this run's cache. Quit Homeword and the "
+                     "integrations, run bin/pred stop, then retry")
         cfg = json.load(open(HERE.parent / "predictd.json"))
         cfg["httpPort"] = 0                                 # private daemon: leave the shared HTTP port to the main one
         cfg.update(json.loads(a.daemon_config))

@@ -103,7 +103,8 @@ Policy (ghost, typing):
 - Before a run, make sure nothing else uses the model: quit Homeword (it restarts the engine on its own), `bin/pred stop` (also
   stops the ghost server), quit any open `pred try` and pi/Claude Code sessions with the integrations (they restart the services),
   no other `predictd` (`pgrep -fl predictd`). Results taken with a concurrent user are invalid (cache misses, different outputs).
-  `run.py --spawn` refuses to start while another predictd runs and warns (`concurrent_daemon` in the result) if one appeared.
+  `run.py --spawn` and `human_pty.py` refuse to start while another model user runs (`bench/machine.py` `model_users()`:
+  predictd, the ghost server, Homeword, `pred try`) and warn if one appeared (`concurrent_daemon` in a run.py result).
 - Fixed benchmark: `cd bench && python3 -I run.py --spawn --label <name> [--config '{...}'] [--daemon-config '{...}']` (private
   predictd; `--config` overrides the policy, `--daemon-config` predictd).
   Typing: `SEED=1 python3 -I bench/human_pty.py` and `ACCEPT=1 ...` (Tab when the ghost is right). Both save to `bench/results/`.
@@ -111,9 +112,9 @@ Policy (ghost, typing):
   looks odd, re-run before bisecting: a mode switch once made a harmless change look like a 70 ms regression.
 - Quality metrics are exact word matches against one real continuation: treat them as relative. Mid-word completion accuracy is the
   most objective number.
-- Results keep one run per machine spec and benchmark: the best one (lowest latency at equal quality). To share a run that beats
-  the current one, replace its file in `bench/baselines/` (name: `<date>-<scenario>-<chip>.json`) and its row in the tables in
-  `bench/RESULTS.md`. Present results plainly: the machine by its specs (chip, GPU, memory, macOS version) in the Machines table and
+- Results keep one run per machine spec and benchmark: the best one (lowest latency at equal quality; steps in "Recording results
+  for a machine" below). To share a run that beats the current one, replace its file in `bench/baselines/` (name:
+  `<date>-<scenario>-<chip>.json`) and its row in the tables in `bench/RESULTS.md`. Present results plainly: the machine by its specs (chip, GPU, memory, macOS version) in the Machines table and
   a Machine column, the numbers in the tables, the JSON file only as a link. No personal context ("this laptop", "my machine",
   "here"), no narrative. Put before/after numbers in the commit message.
 - Changing `cases.json` or `corpus.md` breaks comparability with older runs: record a new baseline.
@@ -124,6 +125,41 @@ Policy (ghost, typing):
   (`run.py --styles`); 25-30 cases per category means one case is 3-4 points, so a single-set win of one or two cases is noise
   (a round tuned on 16 cases did not hold up). Examples must never appear in the suite or the tuning cases:
   `python3 -I ghost/evaluate.py --check` (the benchmark also skips such cases). Code-only examples lost to mixed ones.
+
+## Recording results for a machine
+
+A machine is a hardware spec plus a macOS version: chip, CPU cores, GPU cores, memory, macOS version and build.
+`python3 -I bench/machine.py` prints it, and every result file records it (`machine`). A different macOS version or build is a
+different machine (outputs can differ, see "macOS versions" in bench/RESULTS.md). RESULTS.md keeps one result per machine and
+benchmark: the best run. To measure this Mac and record it:
+
+1. **Prepare.** AC power. Quit Homeword, `pred try` and pi/Claude Code sessions with the integrations; `bin/pred stop`;
+   `pgrep -fl "predictd|Homeword|pred serve"` prints nothing (the scripts refuse to start otherwise). `./build.sh`. Test a
+   committed tree (`git status` clean) and note `git rev-parse --short HEAD` for the steady row.
+2. **Run** from `bench/`, each benchmark twice in a row. Two runs that agree (outputs, p50 within a few ms) are in one model mode;
+   if they differ by ~70 ms or in quality, the mode switched: run again until two agree.
+   - Steady: `python3 -I run.py --spawn --label steady`
+   - Typing: `SEED=1 python3 -I human_pty.py` and `SEED=1 ACCEPT=1 python3 -I human_pty.py`, with `../bin/pred stop` after each
+     (they start predictd through `pred try`, without the user's overrides, and the next run refuses while it is up)
+   - Writing styles and proofreading: `python3 -I run.py --spawn --styles --label styles`
+   - Optional, real apps: `bench/integration_latency.py` for pi and Claude Code (see its docstring; tmux).
+
+   Each prints its numbers and saves `bench/results/<time>-<label>.json` (git-ignored). A run with a warning about other model
+   users, `concurrent_daemon: true`, errors or failed requests is invalid: discard it.
+3. **Pick the best valid run per benchmark**: steady and typing, the lowest p50 (key → ghost for typing) with 0 cache misses;
+   styles, the lowest overall p50 (both modes are valid but give different quality: say which mode in the text).
+   `python3 -I bench/compare.py a.json b.json` compares two runs and warns when the modes differ.
+4. **Compare with bench/RESULTS.md.** Find the machine in the Machines table (all five fields equal).
+   - Not there: add a Machines row (CPU as "12 cores (8P + 4E)", GPU, memory, macOS with build) and a row in each benchmark table.
+   - There: replace a benchmark's row and baseline file only if the new run is better (lower p50 at equal quality; for styles, the
+     same mode as the recorded one, or a lower p50). Otherwise keep the recorded one.
+5. **Record.** Copy the chosen file to `bench/baselines/<YYYY-MM-DD>-<scenario>-<chip>.json` (scenario: `steady`,
+   `typing-sim-seed1`, `typing-sim-accept-seed1`, `styles-suite200`; chip: `m4pro`, `m4max`, ...) and `git rm` the file it
+   replaces. Fill the row from the printed numbers in the existing columns (steady: date and commit; quality table too), the JSON
+   only as a link. If the machine is in the README Status table or the docs/PERFORMANCE.md Summary, update those numbers too. No
+   narrative or personal context.
+6. **Check and commit.** `grep -c "/Users/" <file>` is 0 for each new baseline (run.py drops the socket path), scan
+   `git diff --cached` for personal data, then commit with the machine spec and the numbers (and the run replaced) in the message.
 
 ## Repo rules
 
