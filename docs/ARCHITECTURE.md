@@ -306,6 +306,7 @@ Every prompt (instructions and examples) can be replaced per user (`ghost/prompt
 | `POST /tokens` | `{"name", "prompt"?}`: tokens of the instructions and of the whole prompt as sent (a probe profile), and the estimated cost per request (~0.55 ms per cached token) |
 | `POST /bench` | `{"name", "prompt"?, "scope": "all" \| "user"}`: starts a job that runs the prompt (default: the one in use) on the benchmark suite and the user's cases (`all`), or on the user's cases only (`user`), with an unpinned profile, then gives the cache back to the pinned prompt; answers `{"job"}` |
 | `GET /bench?job=` | `state` (`running`, `done`, `error`), `done`/`total` cases, then `result`: per category, overall, the user's section, and `suite` (a fingerprint of the cases); stored by the prompt's content hash. `/prompts` and `/history` leave out results from another version of the suite |
+| `GET /suite?name=` | the built-in benchmark cases the prompt runs on, per category (`{"name", "title", "cases": [{"text", "rest", "skipped"}]}`), for viewing; `skipped`: left out because it shares text with an example of the prompt in use |
 | `GET`/`POST /cases` | the user's own benchmark cases for a prompt: `[{"text", "rest"}]` (`rest` = what comes next, or the expected output for proofreading) |
 | `GET`/`POST /settings` | `{"words"}` (1-10): how many words to suggest; sets `words` and `maxTokens` (words + 1 per 5 words) and saves both to the user's config overrides; `{words}` in the prompts changes with it, so the profiles change too |
 

@@ -62,6 +62,22 @@ struct PromptEntry {
     }
 }
 
+/// A category of the built-in benchmark cases, as two line-paired texts for the read-only viewer.
+struct SuiteCategory: Identifiable {
+    let id: String, title: String, left: String, right: String, count: Int
+    let skipped: [Int]                      // line numbers left out for this prompt (they share text with its examples)
+
+    init(_ d: [String: Any]) {
+        let cases = d["cases"] as? [[String: Any]] ?? []
+        id = d["name"] as? String ?? ""
+        title = d["title"] as? String ?? ""
+        left = cases.map { $0["text"] as? String ?? "" }.joined(separator: "\n")
+        right = cases.map { $0["rest"] as? String ?? "" }.joined(separator: "\n")
+        count = cases.count
+        skipped = cases.enumerated().filter { $0.element["skipped"] as? Bool == true }.map { $0.offset + 1 }
+    }
+}
+
 struct PromptVersion: Identifiable {
     let id: String              // content hash
     let savedAt: String
@@ -83,6 +99,9 @@ final class PromptsModel: ObservableObject {
     @Published var savedCases = 0
     @Published var message = ""
     @Published var loaded = false
+    @Published var suite: [SuiteCategory] = []
+    @Published var suiteShown = false
+    @Published var suiteCategory = ""
     private var tokenTimer: Timer?, casesTimer: Timer?, pollTimer: Timer?
     private var tokenSeq = 0
     private var loadingCases = false
@@ -102,8 +121,12 @@ final class PromptsModel: ObservableObject {
             if !self.loaded, let n = UserDefaults(suiteName: UserDefaults.argumentDomain)?.string(forKey: "promptsSelect") {
                 self.selected = n                               // for development: `-promptsSelect predict-chat`
             }
+            let first = !self.loaded
             self.loaded = true
             if !keepDraft { self.select() }
+            if first, UserDefaults(suiteName: UserDefaults.argumentDomain)?.object(forKey: "promptsSuite") != nil {
+                self.openSuite()                                // for development: `-promptsSuite 1` opens the built-in cases
+            }
             self.loadHistory()
         }
     }
@@ -155,6 +178,23 @@ final class PromptsModel: ObservableObject {
             if let saved = r?["cases"] as? [[String: Any]] { self.savedCases = saved.count }
             else { self.message = (r?["error"] as? String) ?? err ?? "Could not save the cases" }
             then?()
+        }
+    }
+
+    // MARK: the built-in cases (read-only)
+
+    /// Load the built-in cases this prompt runs on and show them, starting with the prompt's own category.
+    func openSuite() {
+        let name = selected
+        Services.shared.get("/suite?name=\(name)") { r, err in
+            guard name == self.selected, let list = r?["categories"] as? [[String: Any]] else {
+                self.message = (r?["error"] as? String) ?? err ?? "Could not load the test cases"
+                return
+            }
+            self.suite = list.map(SuiteCategory.init)
+            let own = name.hasPrefix("predict-") ? String(name.dropFirst("predict-".count)) : ""
+            self.suiteCategory = self.suite.contains { $0.id == own } ? own : (self.suite.first?.id ?? "")
+            self.suiteShown = true
         }
     }
 
@@ -393,6 +433,7 @@ struct PromptsView: View {
 
             Divider()
             benchmark(e).id("bench")
+                .sheet(isPresented: $model.suiteShown) { SuiteSheet(model: model) }
             Divider()
             historyList()
         }
@@ -458,10 +499,19 @@ struct PromptsView: View {
             return a ?? b
         }()
         VStack(alignment: .leading, spacing: 10) {
-            header("Benchmark", model.isPrediction
-                   ? "\(e.suiteCases) texts in \(e.suiteCategories) categories; does the prompt guess what was typed next?"
-                   : "\(e.suiteCases) sentences with known mistakes" + (e.name == "proofread-rewrite" ? " (no single right answer: length and speed only)" : ""),
-                   info: model.isPrediction ? Tips.benchmark : Tips.benchmarkProofread)
+            header("Benchmark", model.isPrediction ? "does the prompt guess what was typed next?"
+                   : (e.name == "proofread-rewrite" ? "no single right answer: length and speed only" : "does it correct known mistakes?"),
+                   info: Tips.benchmark)
+
+            HStack(alignment: .firstTextBaseline) {
+                title("Built-in test cases", model.isPrediction ? Tips.builtIn : Tips.builtInProofread, font: .subheadline.bold())
+                Text(model.isPrediction ? "\(e.suiteCases) texts in \(e.suiteCategories) categories" : "\(e.suiteCases) sentences with known mistakes")
+                    .font(.caption).foregroundStyle(.secondary)
+                Button("View…") { model.openSuite() }
+                    .controlSize(.small)
+                    .help("See the built-in test cases (read-only)")
+                Spacer()
+            }
 
             title("Your test cases", Tips.cases, font: .subheadline.bold())
             columnLabels(e.labels.first == "Input" ? "Text" : "Typed text",
@@ -480,7 +530,7 @@ struct PromptsView: View {
                     .help("The shipped prompt on the full benchmark, for comparison")
                 Button("Run Your Cases") { model.bench(scope: "user") }.disabled(model.running != nil || model.casePairs.isEmpty)
                 Button("Run Full Benchmark") { model.bench(scope: "all") }.disabled(model.running != nil)
-                    .help("The bench/ suite and your cases")
+                    .help("The built-in test cases and yours")
             }
 
             HStack(alignment: .firstTextBaseline) {
@@ -506,7 +556,7 @@ struct PromptsView: View {
                     }
                     if let all = shown?["overall"] as? [String: Any], rows(shown).count > 1 {
                         GridRow {
-                            HStack(spacing: 3) { Text("All (ours)").bold(); InfoTip(Tips.all) }
+                            HStack(spacing: 3) { Text("All categories").bold(); InfoTip(Tips.all) }
                             ForEach(cols, id: \.key) { c in cell(all, base?["overall"] as? [String: Any], c).bold() }
                         }
                     }
@@ -568,11 +618,13 @@ enum Tips {
         + "suggest (General tab). Shorter instructions are faster: every token here costs time on each keystroke."
     static let examples = "Sample inputs with the answer the model should give. The model copies their form closely: length, tone, "
         + "and how a continuation starts. Each example adds to every request's time."
-    static let benchmark = "Texts typed by people (synthetic, no personal data), cut at a point, with what was typed next. The prompt "
-        + "runs on all of them and its guesses are compared with the real continuations, per category. None of them is in a "
-        + "default prompt's examples."
-    static let benchmarkProofread = "Sentences with known mistakes and their corrected versions. The prompt runs on each and its output "
-        + "is compared with the correction."
+    static let benchmark = "Runs the prompt on test cases and compares its answers with the expected ones, so you can see how a "
+        + "change to the prompt affects accuracy and speed before you rely on it."
+    static let builtIn = "Example texts that come with Homeword (written for testing, no personal data), each cut at a point, with "
+        + "what was typed next. They cover chat, email, work documents, academic writing, code, general notes and terminal "
+        + "commands, and results are shown per category. None of them is in a default prompt's examples. View… shows them."
+    static let builtInProofread = "Sentences with known mistakes that come with Homeword, and their corrected versions. The prompt "
+        + "runs on each and its output is compared with the correction. View… shows them."
     static let cases = "Your own texts, as left = typed so far, right = what you would type next. They run as a separate section, "
         + "so you can check a prompt on the kind of text you write. Stored on this Mac only."
     static let results = "The last benchmark run of the prompt shown: your draft, your saved version, or the default. Small, noisy "
@@ -581,7 +633,7 @@ enum Tips {
         + "compare it."
     static let category = "The kind of text: chat messages, email, work documents, academic writing, code comments and commits, "
         + "general notes, terminal commands."
-    static let all = "All categories of our benchmark together (not your cases)."
+    static let all = "All the built-in test cases together (your own cases are shown separately)."
     static let yours = "Your own test cases."
     static let cases_ = "How many texts ran in this row."
     static let nextWord = "How often the first suggested word is exactly the word that was typed next (or the right end of an "
@@ -631,5 +683,57 @@ struct InfoTip: View {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 1) { hover.shown = true }
                 }
             }
+    }
+}
+
+/// The built-in test cases of the selected prompt, per category, read-only.
+struct SuiteSheet: View {
+    @ObservedObject var model: PromptsModel
+
+    var body: some View {
+        let cat = model.suite.first { $0.id == model.suiteCategory } ?? model.suite.first
+        let proof = !model.isPrediction
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .firstTextBaseline) {
+                Text("Built-in test cases").font(.title3.bold())
+                Text(model.entry?.title ?? "").foregroundStyle(.secondary)
+                Spacer()
+                Button("Done") { model.suiteShown = false }.keyboardShortcut(.defaultAction)
+            }
+            if model.suite.count > 1 {
+                Picker("Category", selection: $model.suiteCategory) {
+                    ForEach(model.suite) { Text($0.title).tag($0.id) }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+            }
+            Text(proof ? "Read-only. Left: a sentence with mistakes; right: the corrected sentence the output is compared with."
+                       : "Read-only. Left: the text typed so far; right: what was typed next. A suggestion counts as right when it "
+                         + "matches the right side.")
+                .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            let split: CGFloat = proof ? 0.5 : 0.7                 // typed texts are long, continuations short
+            GeometryReader { geo in
+                HStack(spacing: 0) {
+                    Text(proof ? "Text" : "Typed text").frame(width: (geo.size.width - 8) * split, alignment: .leading).padding(.leading, 34)
+                    Text(proof ? "Corrected text" : "What comes next").padding(.leading, 8)
+                    Spacer()
+                }
+            }
+            .frame(height: 14)
+            .font(.caption).foregroundStyle(.secondary)
+            PairedLinesEditor(left: .constant(cat?.left ?? ""), right: .constant(cat?.right ?? ""), editable: false, split: split)
+            HStack {
+                Text("\(cat?.count ?? 0) cases").monospacedDigit()
+                if let c = cat, !c.skipped.isEmpty {
+                    Text("· line\(c.skipped.count == 1 ? "" : "s") \(c.skipped.map(String.init).joined(separator: ", ")) left out for this "
+                         + "prompt: they share text with its examples")
+                        .foregroundStyle(.orange)
+                }
+                Spacer()
+            }
+            .font(.caption).foregroundStyle(.secondary)
+        }
+        .padding(16)
+        .frame(width: 840, height: 560)
     }
 }

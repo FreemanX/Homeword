@@ -57,6 +57,8 @@ final class LineGutter: NSView {
     var highlight = -1 { didSet { needsDisplay = true } }
     var count = 1 { didSet { needsDisplay = true } }
     override var isFlipped: Bool { true }
+    override init(frame: NSRect) { super.init(frame: frame); clipsToBounds = true }   // numbers past the box stay hidden
+    required init?(coder: NSCoder) { fatalError() }
 
     override func draw(_ dirty: NSRect) {
         NSColor.controlBackgroundColor.setFill()
@@ -83,9 +85,12 @@ final class PairedLinesView: NSView, NSTextViewDelegate {
     private let leftGutter = LineGutter(), rightGutter = LineGutter()
     private var syncing = false
     var onChange: ((String, String) -> Void)?
+    var editable = true { didSet { left.isEditable = editable; right.isEditable = editable } }
+    var split: CGFloat = 0.5 { didSet { needsLayout = true } }    // the left box's share of the width
 
     override init(frame: NSRect) {
         super.init(frame: frame)
+        clipsToBounds = true
         for (tv, sv, g) in [(left, leftScroll, leftGutter), (right, rightScroll, rightGutter)] {
             setUp(tv, sv)
             addSubview(sv)
@@ -131,11 +136,11 @@ final class PairedLinesView: NSView, NSTextViewDelegate {
 
     override func layout() {
         super.layout()
-        let gap: CGFloat = 8, g: CGFloat = 30, w = (bounds.width - gap) / 2
+        let gap: CGFloat = 8, g: CGFloat = 30, w = (bounds.width - gap) * split
         leftGutter.frame = NSRect(x: 0, y: 0, width: g, height: bounds.height)
         leftScroll.frame = NSRect(x: g, y: 0, width: w - g, height: bounds.height)
         rightGutter.frame = NSRect(x: w + gap, y: 0, width: g, height: bounds.height)
-        rightScroll.frame = NSRect(x: w + gap + g, y: 0, width: w - g, height: bounds.height)
+        rightScroll.frame = NSRect(x: w + gap + g, y: 0, width: bounds.width - w - gap - g, height: bounds.height)
         for v in [leftGutter, rightGutter] { v.wantsLayer = true; v.layer?.cornerRadius = 0 }
     }
 
@@ -164,8 +169,13 @@ final class PairedLinesView: NSView, NSTextViewDelegate {
             left.highlight = i
             right.highlight = i
         }
+        let changed = left.string != l || right.string != r
         if left.string != l { left.string = l; left.markSpaces() }
         if right.string != r { right.string = r; right.markSpaces() }
+        if changed && !editable {                           // read-only: new content starts at the top
+            leftScroll.contentView.scroll(to: .zero)
+            leftScroll.reflectScrolledClipView(leftScroll.contentView)
+        }
         refreshRulers()
     }
 
@@ -197,9 +207,13 @@ final class PairedLinesView: NSView, NSTextViewDelegate {
 struct PairedLinesEditor: NSViewRepresentable {
     @Binding var left: String
     @Binding var right: String
+    var editable = true                     // false: view and select only
+    var split: CGFloat = 0.5                // the left box's share of the width
 
     func makeNSView(context: Context) -> PairedLinesView {
         let v = PairedLinesView()
+        v.editable = editable
+        v.split = split
         v.set(left, right)
         v.onChange = { l, r in
             DispatchQueue.main.async {

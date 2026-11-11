@@ -119,11 +119,12 @@ Rewrite); a dot marks your version. For the selected one:
 - Save (⌘S) applies it to the next request; Revert drops unsaved edits; Reset to Default restores the shipped prompt.
 - **Your test cases**: the same two-box editor (typed text | what comes next; for proofreading, text | corrected text). Saved per
   prompt as you type, on this Mac, outside the repo.
-- **Benchmark**: the suite from `bench/` (200 texts: `bench/cases.json` and `bench/styles.json`, at least 25 per category), each
-  tagged with a category: Chat, Email, Work documents, Academic, Code, General, Terminal. A case that shares text with one of the
-  prompt's examples is left out (a note says how many): it would test recall, not prediction. Run Full Benchmark runs the draft (or the saved prompt) on all of
+- **Benchmark**: the built-in test cases (200 texts from `bench/cases.json` and `bench/styles.json`, at least 25 per category),
+  each tagged with a category: Chat, Email, Work documents, Academic, Code, General, Terminal. View… opens them read-only, per
+  category (typed text | what comes next, the same paired view as the editors). A case that shares text with one of the prompt's
+  examples is left out (a note says how many, and the viewer marks its line): it would test recall, not prediction. Run Full Benchmark runs the draft (or the saved prompt) on all of
   them plus your cases; Run Your Cases runs only yours; Run Default runs the shipped prompt for comparison. A progress bar counts
-  the cases (a full run takes about a minute; suggestions pause meanwhile). The results table has a row per category, All (ours),
+  the cases (a full run takes about a minute; suggestions pause meanwhile). The results table has a row per category, All categories,
   and Your cases as its own row: cases, next word right, words right (mean matching leading words), word completions right, shown
   and latency p50, with the difference to the default prompt in green or red. Proofreading: fully corrected and word match on 12
   sentences with known mistakes; rewriting: length and latency only.

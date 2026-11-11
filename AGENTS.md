@@ -25,7 +25,7 @@ a prototype menu bar Mac app (any text field, a writing style per app, proofread
   a text, per paragraph, word diff), `prompts.py` (the user's prompts, history and benchmark results, in
   `~/.config/input-predictor/`), `evaluate.py` (scoring, per-style benchmarks), `config.json` (knobs; user overrides in
   `~/.config/input-predictor/config.json`), `predictd.py` (generic predictd client), `server.py` (HTTP `127.0.0.1:47321`:
-  `/predict`, `/warm`, `/proofread`, `/prompts`, `/history`, `/tokens`, `/bench`, `/cases`, `/settings`, for non-Python
+  `/predict`, `/warm`, `/proofread`, `/prompts`, `/history`, `/tokens`, `/bench`, `/suite`, `/cases`, `/settings`, for non-Python
   apps).
 - `bin/pred`: CLI on the policy. `pred try` (interactive line editor, Enter = new round with stats), `pred ask`, `pred serve`,
   `pred start|stop|status` (predictd + ghost server).
@@ -155,7 +155,8 @@ cursor). Test Claude Code with a throwaway `CLAUDE_CONFIG_DIR` holding the keybi
 - A freshly compiled binary is slow on its very first launch; `build.sh` runs it once.
 - `python3` may be a wrapper on some machines; any Python 3.9+ works.
 - Mac app: no SwiftUI `@State` (a macro on macOS 27 SDKs; its plugin ships with Xcode only, and `app/build.sh` uses the command
-  line tools): keep view state in `ObservableObject`s. Check UI with `--args -show <tab>` / `-demoProofread file` / `-infoTip <text prefix>` (opens that ⓘ popover) and a window
+  line tools): keep view state in `ObservableObject`s. Check UI with `--args -show <tab>` / `-demoProofread file` / `-infoTip <text prefix>` (opens that ⓘ popover) / `-promptsSuite 1`
+  (opens the built-in test cases) and a window
   screenshot (`screencapture -l <window id>`), never a full-screen one.
 - Importing `bench/run.py` used to start a benchmark; it now has a `__main__` guard. Keep scripts importable.
 

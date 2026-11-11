@@ -26,7 +26,7 @@ STYLE_CASES = os.path.join(ROOT, "bench", "styles.json")
 PUNCT = " .,;:!?\"'()[]{}"
 CATEGORIES = [("chat", "Chat"), ("email", "Email"), ("work", "Work documents"), ("academic", "Academic"), ("code", "Code"),
               ("general", "General"), ("terminal", "Terminal")]
-TITLES = dict(CATEGORIES) | {"user": "Your cases", "proofread": "Proofreading", "all": "All (ours)"}
+TITLES = dict(CATEGORIES) | {"user": "Your cases", "proofread": "Proofreading", "all": "All categories"}
 APP_CATEGORY = {"mail": "email", "chat": "chat", "notes": "general", "editor": "general", "essay": "general",
                 "terminal": "terminal", "review": "code", "code": "code"}      # cases.json app labels
 STYLE_LABEL = {"general": "notes", "chat": "chat", "email": "mail", "work": "document", "academic": "paper", "code": "code"}

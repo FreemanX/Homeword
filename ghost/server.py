@@ -16,6 +16,9 @@
                      on the suite, per category (evaluate.py), and/or on the user's cases; runs in the background
     GET  /bench?job= -> {"state": "running" | "done" | "error", "done", "total", "result"}: progress, then the result, which is
                      also stored by the prompt's hash (history entries show it)
+    GET  /suite?name=predict-chat  -> {"categories": [{"name", "title", "cases": [{"text", "rest", "skipped"}]}]}: the built-in
+                     benchmark cases the prompt runs on, read-only; `skipped`: left out because it shares text with an example of
+                     the prompt in use
     GET  /cases?name=  -> {"cases": [{"text", "rest"}]}: the user's own benchmark cases for a prompt
     POST /cases      {"name", "cases": [...]} saves them
     GET  /settings   -> {"words", "maxTokens"}      POST /settings {"words": 1-10}: how many words to suggest, saved to the user's
@@ -113,6 +116,15 @@ def serve(port=None, socket_path=predictd.SOCK, quiet=False):
         if r and scope == "all" and r.get("suite") != suite_ids["predict" if kind == "predict" else key]:
             return None
         return r
+
+    def suite_view(name):
+        kind, key = parse(name)
+        examples = current(name)["examples"]
+        mark = lambda c: {"text": c["text"], "rest": c["rest"], "skipped": evaluate.overlaps(c["text"], examples)}
+        if kind == "proofread":
+            return [{"name": "proofread", "title": evaluate.TITLES["proofread"],
+                     "cases": [mark({"text": c["text"], "rest": c["expected"]}) for c in evaluate.load_cases()["proofread"]]}]
+        return [{"name": k, "title": t, "cases": [mark(c) for c in suite if c["category"] == k]} for k, t in evaluate.CATEGORIES]
 
     def entry(name):
         kind, key = parse(name)
@@ -239,6 +251,9 @@ def serve(port=None, socket_path=predictd.SOCK, quiet=False):
                     name = (q.get("name") or [""])[0]
                     parse(name)
                     return self.reply({"ok": True, "name": name, "cases": ghost.user.cases(name)})
+                if url.path == "/suite":
+                    name = (q.get("name") or [""])[0]
+                    return self.reply({"ok": True, "name": name, "categories": suite_view(name)})
                 if url.path == "/settings":
                     return self.reply({"ok": True, "words": ghost.cfg["words"], "maxTokens": ghost.cfg["maxTokens"]})
                 if url.path == "/history":
