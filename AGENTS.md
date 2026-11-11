@@ -114,9 +114,10 @@ Policy (ghost, typing):
   most objective number.
 - Results keep one run per machine spec and benchmark: the best one (lowest latency at equal quality; steps in "Recording results
   for a machine" below). To share a run that beats the current one, replace its file in `bench/baselines/` (name:
-  `<date>-<scenario>-<chip>.json`) and its row in the tables in `bench/RESULTS.md`. Present results plainly: the machine by its specs (chip, GPU, memory, macOS version) in the Machines table and
-  a Machine column, the numbers in the tables, the JSON file only as a link. No personal context ("this laptop", "my machine",
-  "here"), no narrative. Put before/after numbers in the commit message.
+  `<date>-<scenario>-<chip>.json`) and its row in the tables in `bench/RESULTS.md`. Present results plainly: the machine by its
+  specs (chip, GPU, memory, macOS version) in the Machines table and a Machine column, the numbers in the tables, the JSON file only
+  as a link. No personal context ("this laptop", "my machine", "here"), no narrative. Put before/after numbers in the commit
+  message.
 - Changing `cases.json` or `corpus.md` breaks comparability with older runs: record a new baseline.
 - Benchmarks must not see the user's prompts or config overrides: scripts use `Ghost(user=False)`, spawned `pred` processes get
   `PRED_NO_USER=1`, a spawned predictd `--user-config ""`. `integration_latency.py` drives the running engine, which uses them.
