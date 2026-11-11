@@ -262,8 +262,16 @@ def assemble(text, completion, app, cfg, truncated, speller):
 
 
 def user_dir():
-    """The user's config directory, outside the repo: config.json (knob overrides), prompts.json, prompt-history.json."""
-    return os.path.join(os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config"), "input-predictor")
+    """The user's config directory, outside the repo: config.json (knob overrides), prompts.json, prompt-history.json,
+    test-cases.json. The project's earlier name was input-predictor: that directory is moved here once."""
+    base = os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config")
+    d, old = os.path.join(base, "homeword"), os.path.join(base, "input-predictor")
+    if not os.path.exists(d) and os.path.isdir(old):
+        try:
+            os.rename(old, d)
+        except OSError:
+            return old
+    return d
 
 
 def load_config(path=CONFIG, user=True):

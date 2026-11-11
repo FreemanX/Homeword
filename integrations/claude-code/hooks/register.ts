@@ -1,4 +1,4 @@
-// input-predictor ghost text for Claude Code's prompt box.
+// Homeword ghost text for Claude Code's prompt box.
 //
 // While you type, asks the ghost policy server (`pred serve`, http://127.0.0.1:47321, on top of the predictd model host) how the
 // prompt continues and paints the answer as dim virtual text after the cursor: drawn, never part of the draft.
@@ -104,8 +104,8 @@ export const register: Register = on => {
 
   on('session.start', async ($, e, next) => {
     const r = await next(e)
-    await $.command.register({ name: 'ghost-word', description: 'input-predictor: accept one word of the ghost text', immediate: true })
-    await $.command.register({ name: 'ghost-all', description: 'input-predictor: accept the ghost text (or move the cursor right)', immediate: true })
+    await $.command.register({ name: 'ghost-word', description: 'Homeword: accept one word of the ghost text', immediate: true })
+    await $.command.register({ name: 'ghost-all', description: 'Homeword: accept the ghost text (or move the cursor right)', immediate: true })
     return r
   })
 

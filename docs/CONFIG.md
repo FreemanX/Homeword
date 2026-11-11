@@ -7,15 +7,15 @@ Knobs follow the mechanism/policy split ([ARCHITECTURE.md](ARCHITECTURE.md)):
 | Mechanism | `predictd.json`, daemon flags | how the host runs: socket, port, keep-alive, idle exit |
 | Mechanism, per caller | `profile.set` and `generate` fields | what a client asks for: instructions, examples, schema, guardrails, token limit, sampling |
 | Policy | `ghost/config.json`, `ghost/prompt.json`, `ghost/styles.json` | how the typing predictor uses the model: context size, words, spell rules, its prompts per writing style |
-| User | `~/.config/input-predictor/` | the user's overrides, outside the repo: `config.json` (policy knobs), `predictd.json` (daemon), `prompts.json` and `prompt-history.json` (their prompts, versions and benchmark results), `test-cases.json` (their benchmark cases) |
+| User | `~/.config/homeword/` | the user's overrides, outside the repo: `config.json` (policy knobs), `predictd.json` (daemon), `prompts.json` and `prompt-history.json` (their prompts, versions and benchmark results), `test-cases.json` (their benchmark cases) |
 
 `pred status` prints the daemon's config, its profiles and the policy's config in effect.
 
-**User overrides.** Both layers read the shipped file, then the user's file of the same name in `~/.config/input-predictor/`
-(`$XDG_CONFIG_HOME/input-predictor/` if set) for the keys it contains. Homeword's Engine tab writes the ports there
-(`serverPort` in `config.json`, `httpPort` in `predictd.json`) and its General tab the words to suggest (`words`, `maxTokens`);
-any other knob works the same way. Benchmarks ignore the user's
-files (`Ghost(user=False)`, `predictd --user-config ""`).
+**User overrides.** Both layers read the shipped file, then the user's file of the same name in `~/.config/homeword/`
+(`$XDG_CONFIG_HOME/homeword/` if set) for the keys it contains. (The directory from before the project's rename is moved there on
+first use.) Homeword's Engine tab writes the ports there (`serverPort` in `config.json`, `httpPort` in `predictd.json`) and its
+General tab the words to suggest (`words`, `maxTokens`); any other knob works the same way. Benchmarks ignore the user's files
+(`Ghost(user=False)`, `predictd --user-config ""`).
 
 ```mermaid
 flowchart LR
@@ -86,7 +86,7 @@ greedy, `top_p`/`seed` → `topP`/`seed`, `response_format` → `schema`, `tool_
 | `guardrails` | permissive | the profile's guardrails | |
 | `serverPort`, `serverIdleExitSec` | 47321, 1800 | the ghost HTTP server's port and idle exit | |
 | `repeatNgram`, `repeatWindow` | 3, 60 | never complete a run of `repeatNgram` words already in the last `repeatWindow` words: the suggestion is cut before it (nothing shown: `suppressed: repetition`); 0 = off | stops the model echoing recent phrases, which loops when accepted again and again; also cuts an intended repeat |
-| `userPrompts` | `~/.config/input-predictor/prompts.json` | the user's versions of the prompts (instructions and examples, typing per style and proofreading), edited in the Mac app or by `POST /prompts` | outside the repo; a changed prompt is a new profile, so the next request is uncached |
+| `userPrompts` | `~/.config/homeword/prompts.json` | the user's versions of the prompts (instructions and examples, typing per style and proofreading), edited in the Mac app or by `POST /prompts` | outside the repo; a changed prompt is a new profile, so the next request is uncached |
 | `proofreadMaxInputTokens` | 2500 | the longest paragraph `/proofread` accepts (estimated tokens); a text is proofread one paragraph per request | the window is 8192: prefix + input + an answer of about the same length |
 | `proofreadGuardrails` | permissive | the proofreading profiles' guardrails | `default` refuses more texts and is ~100 ms slower |
 

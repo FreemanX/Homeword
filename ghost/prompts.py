@@ -4,7 +4,7 @@ A prompt is {"instructions": str, "examples": [{"text": str, "completion": str},
 "predict-<style>" (general, chat, email, ...; `{words}` in the instructions becomes the `words` knob), proofreading ones
 "proofread-fix" and "proofread-rewrite" (examples: text = input, completion = output).
 
-Files, in the directory of the `userPrompts` knob (default ~/.config/input-predictor/, mode 0600, outside the repo: what a user
+Files, in the directory of the `userPrompts` knob (default ~/.config/homeword/, mode 0600, outside the repo: what a user
 writes there is theirs):
   prompts.json          {name: prompt}: the overrides in use (an older form, {name: "instructions"}, still loads)
   prompt-history.json   {"versions": {name: [{"hash", "saved_at", "prompt"}]}, "results": {hash: {name: result}}}: the last

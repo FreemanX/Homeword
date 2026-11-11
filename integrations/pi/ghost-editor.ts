@@ -1,5 +1,5 @@
 /**
- * input-predictor ghost text for the pi coding agent.
+ * Homeword ghost text for the pi coding agent.
  *
  * Replaces pi's prompt editor with a subclass that asks the ghost policy server (`pred serve`, on top of the predictd model host)
  * for a continuation of what you are typing and draws it as dim "ghost" text after the cursor.

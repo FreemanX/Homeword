@@ -93,7 +93,7 @@ styles live in `ghost/styles.json`. The pi and Claude Code integrations send no 
 - Proofread benchmark: 12 sentences with known errors. It reports latency and corrected exactly / edits matched. Rewrite has no
   ground truth, so it reports latency and length ratio only.
 - **History**: every Save appends a version (last 20 per prompt) with time, tokens and any benchmark result. Load puts it in the
-  editor. Kept by the policy in `~/.config/input-predictor/prompt-history.json`, next to `prompts.json`.
+  editor. Kept by the policy in `~/.config/homeword/prompt-history.json`, next to `prompts.json`.
 
 **Benchmark cases per style**: new hand-written cases in `bench/styles.json`, about 12-15 per style: chat (informal messaging),
 email (professional), work documents (formal), academic, code (comments, reviews, commit messages), and general (notes,
@@ -134,8 +134,8 @@ Permissions                              ● Accessibility allowed   [Open Setti
 - Dots: green = running, yellow = starting / stopping / restarting, red = stopped (with the reason: "stopped by you:
   predictions are paused", or "starts when you type" after it shut down when idle, or an error).
 - Start, Stop and Restart run `bin/pred start|stop`. After Stop the app does not restart the engine on its own until Start.
-- Ports: saved to user config files outside the repo, then the engine restarts: `~/.config/input-predictor/config.json` (policy
-  overrides, `serverPort`) and `~/.config/input-predictor/predictd.json` (predictd overrides, `httpPort`). This needs generic
+- Ports: saved to user config files outside the repo, then the engine restarts: `~/.config/homeword/config.json` (policy
+  overrides, `serverPort`) and `~/.config/homeword/predictd.json` (predictd overrides, `httpPort`). This needs generic
   layering: predictd loads its `predictd.json`, then the user file if present; the policy loads `ghost/config.json`, then the user
   file. The pi and Claude Code integrations keep their own port settings; the tab says so.
 - Status: the app polls `GET /health` (engine) and predictd's HTTP `ping` (API) every 2 s while the tab is open, and on use.

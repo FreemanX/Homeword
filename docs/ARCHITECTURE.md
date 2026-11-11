@@ -171,7 +171,7 @@ parameters and harness setup: [OPENAI.md](OPENAI.md).
   exist until clients register them.
 - **One per user**: a new daemon that finds a live one on the socket exits; a daemon whose socket file is removed or replaced exits.
 - **Idle**: keep-alive for `keepAliveMaxIdleSec` (5 min) after the last request, exit after `idleExitSec` (30 min).
-- **Config**: `predictd.json` next to the binary (`--config`), then the user's overrides in `~/.config/input-predictor/predictd.json`
+- **Config**: `predictd.json` next to the binary (`--config`), then the user's overrides in `~/.config/homeword/predictd.json`
   if present (`$XDG_CONFIG_HOME` respected; `--user-config ""` ignores them, as the benchmarks do).
 - **Logs**: stderr, `/tmp/predictd-UID.log` when started by `pred`.
 - **Non-public bits**: the finish reason is read from the transcript through `Mirror` (`Transcript.Response.finishReason`). macOS
@@ -296,7 +296,7 @@ model declined this text"`. A paragraph takes about 0.5-1 s (a 4-paragraph, 180-
 ### User prompts, history and benchmarks
 
 Every prompt (instructions and examples) can be replaced per user (`ghost/prompts.py`), in files outside the repo
-(`~/.config/input-predictor/`): `predict-<style>` for each writing style, `proofread-fix`, `proofread-rewrite`.
+(`~/.config/homeword/`): `predict-<style>` for each writing style, `proofread-fix`, `proofread-rewrite`.
 
 | Endpoint | What |
 |---|---|

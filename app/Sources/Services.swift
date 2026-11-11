@@ -16,7 +16,7 @@ enum Pref {
     }
     static var d: UserDefaults { .standard }
 
-    /// First launch under the new name: take over the settings and metrics of the app's first version.
+    /// First launch under the new name: take over the settings and metrics of the app's first version (InputPredictor).
     static func migrate() {
         guard !d.bool(forKey: "migratedFromInputPredictor") else { return }
         d.set(true, forKey: "migratedFromInputPredictor")
@@ -41,13 +41,18 @@ enum Pref {
 let chromiumApps: Set<String> = ["com.google.Chrome", "com.google.Chrome.canary", "com.microsoft.edgemac", "com.brave.Browser",
                                  "com.vivaldi.Vivaldi", "company.thebrowser.Browser", "org.chromium.Chromium"]
 
-/// The engine's settings that live outside the app, shared with `pred`: ~/.config/input-predictor/config.json (the policies'
-/// knobs, `serverPort`) and predictd.json (`httpPort`, the OpenAI-compatible API). Missing = the shipped defaults.
+/// The engine's settings that live outside the app, shared with `pred`: ~/.config/homeword/config.json (the policies'
+/// knobs, `serverPort`, `words`) and predictd.json (`httpPort`, the OpenAI-compatible API). Missing = the shipped defaults.
 enum EngineConfig {
     static let dir: URL = {
         let base = ProcessInfo.processInfo.environment["XDG_CONFIG_HOME"].flatMap { $0.isEmpty ? nil : URL(fileURLWithPath: $0) }
             ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".config")
-        return base.appendingPathComponent("input-predictor")
+        let dir = base.appendingPathComponent("homeword"), old = base.appendingPathComponent("input-predictor")   // earlier name
+        let fm = FileManager.default
+        if !fm.fileExists(atPath: dir.path) && fm.fileExists(atPath: old.path) && (try? fm.moveItem(at: old, to: dir)) == nil {
+            return old
+        }
+        return dir
     }()
     static func read(_ file: String) -> [String: Any] {
         guard let d = try? Data(contentsOf: dir.appendingPathComponent(file)),

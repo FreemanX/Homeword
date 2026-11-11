@@ -1,4 +1,4 @@
-# Homeword: the Mac app (prototype)
+# The Homeword Mac app (prototype)
 
 <img src="Icon/icon.svg" width="96" align="right" alt="Homeword icon">
 
@@ -75,9 +75,6 @@ to an older signature: remove it (–), or `tccutil reset Accessibility dev.home
 Monitoring, event posting). If Accessibility is allowed but the menu says "Keyboard: blocked", also allow the app in Privacy &
 Security → Input Monitoring.
 
-**From the first version (InputPredictor).** On first launch Homeword takes over its settings (excluded apps become Off) and moves
-its metrics. The new bundle ID needs the Accessibility permission once more; remove the old InputPredictor entry from the list.
-
 **macOS inline predictions.** macOS shows its own inline predictive text in many apps. With both on you see two suggestions, and Tab
 may go to either. Turn off System Settings → Keyboard → Text Input → "Show inline predictive text", or Homeword's suggestions.
 
@@ -139,7 +136,7 @@ Every suggestion type has its own examples, chosen on separate tuning cases and 
 Email, Work documents and Academic have their own instructions and six examples; Chat has General's instructions with a line about
 chat and six chat examples; Code keeps General's instructions, four of its mixed examples and two code examples, because six
 code-only examples lost to the mixed ones.
-Prompts and history are kept by the engine in `~/.config/input-predictor/` (`prompts.json`, `prompt-history.json`), outside the
+Prompts and history are kept by the engine in `~/.config/homeword/` (`prompts.json`, `prompt-history.json`), outside the
 repo, so `pred try` and the agent integrations use them too; your test cases are in `test-cases.json` there. Results from an
 older version of the built-in cases are not shown (they are not comparable).
 
@@ -148,7 +145,7 @@ proofreading outcomes. Reveal the file, Reset, Refresh.
 
 **Engine.** A colored dot: green running, yellow starting or stopping, red stopped. Start, Stop and Restart. After Stop, suggestions
 and proofreading pause and the app does not restart the engine until Start. The engine's port (47321) and the OpenAI-compatible
-API's (47320) can be changed: Apply and Restart saves them to `~/.config/input-predictor/config.json` (`serverPort`) and
+API's (47320) can be changed: Apply and Restart saves them to `~/.config/homeword/config.json` (`serverPort`) and
 `predictd.json` (`httpPort`), which `pred` reads too (the pi and Claude Code integrations have their own port setting). The API
 section shows the base URL, model and key to copy into other apps, and its own status dot. Permissions shows the Accessibility
 state.

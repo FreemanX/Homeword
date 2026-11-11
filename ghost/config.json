@@ -21,7 +21,7 @@
   "guardrails": "permissive",
   "proofreadMaxInputTokens": 2500,
   "proofreadGuardrails": "permissive",
-  "userPrompts": "~/.config/input-predictor/prompts.json",
+  "userPrompts": "~/.config/homeword/prompts.json",
   "serverPort": 47321,
   "serverIdleExitSec": 1800
 }

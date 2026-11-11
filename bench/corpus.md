@@ -1,6 +1,6 @@
-# input-predictor
+# Homeword
 
-Prototype of an input predictor on Apple's on-device model (FoundationModels, macOS 26+/27): given the app and the text
+Prototype of a typing predictor on Apple's on-device model (FoundationModels, macOS 26+/27): given the app and the text
 typed so far, predict the rest of the unfinished word plus the next ~5 words. `predictd` is a long-lived service that keeps
 the model and one cached session ready; `bench/` is a mini benchmark to re-measure after every change.
 

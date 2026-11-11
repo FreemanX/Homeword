@@ -46,7 +46,12 @@ func loadConfig(_ path: String, user: String) -> Config {
 }
 let defaultUserConfig: String = {
     let base = ProcessInfo.processInfo.environment["XDG_CONFIG_HOME"].flatMap { $0.isEmpty ? nil : $0 } ?? (NSHomeDirectory() + "/.config")
-    return base + "/input-predictor/predictd.json"
+    let dir = base + "/homeword", old = base + "/input-predictor"         // the project's earlier name: moved once
+    let fm = FileManager.default
+    if !fm.fileExists(atPath: dir) && fm.fileExists(atPath: old) && (try? fm.moveItem(atPath: old, toPath: dir)) == nil {
+        return old + "/predictd.json"
+    }
+    return dir + "/predictd.json"
 }()
 func jsonText(_ o: Any) -> String {
     guard JSONSerialization.isValidJSONObject(o), let d = try? JSONSerialization.data(withJSONObject: o, options: [.sortedKeys]) else { return "\(o)" }

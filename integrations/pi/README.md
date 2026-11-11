@@ -48,7 +48,7 @@ pi auto-loads `~/.pi/agent/extensions/*.ts`. Keep the code in the repo and put a
 
 ```sh
 mkdir -p ~/.pi/agent/extensions
-echo "export { default } from \"$PWD/integrations/pi/ghost-editor.ts\";" > ~/.pi/agent/extensions/input-predictor.ts   # run in the repo
+echo "export { default } from \"$PWD/integrations/pi/ghost-editor.ts\";" > ~/.pi/agent/extensions/homeword.ts   # run in the repo
 ```
 
 Remove that file to uninstall. If another extension also replaces the editor, the last one wins.

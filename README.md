@@ -1,19 +1,45 @@
-# input-predictor
+# Homeword
 
-Ghost-text typing prediction on Apple's on-device language model (FoundationModels, macOS 27). As you type, it suggests the rest
-of the unfinished word plus the next few words, within one sentence, in about a quarter of a second. Nothing leaves the machine.
+<img src="app/Icon/icon.svg" width="96" align="right" alt="Homeword icon">
 
-It is built in three layers, keeping **mechanism and policy apart**:
+Homeword brings Apple's on-device language model (FoundationModels, macOS 27) to your typing and your tools: next-word suggestions
+and proofreading in any app, ghost text in coding agents' prompt boxes, and a local OpenAI-compatible API. Everything runs on your
+Mac. Your words never leave home.
+
+## What it provides
+
+- **The Homeword Mac app**: a menu bar app. While you type in any app, a pop-up shows the next words (about a quarter of a second,
+  in a writing style that follows the app: chat, email, work documents, ...); Tab inserts a word. Select text and press ⌃⌥P to
+  proofread it or ⌃⌥R to rewrite it. Every prompt is editable, with a built-in benchmark. [More](#the-homeword-mac-app)
+  <!-- demo GIF: suggestions in Mail, then proofreading a paragraph -->
+- **The engine**: runs the model on your Mac and turns its answers into suggestions (the rest of the unfinished word plus up to five
+  words, one sentence) and proofreading. The `pred` command line tool starts it and lets you try it in a terminal (`pred try`); apps
+  reach it over local HTTP. [Quick start](#quick-start)
+  <!-- demo GIF: pred try in a terminal -->
+- **An OpenAI-compatible API**: point any agent harness, SDK or tool at `http://127.0.0.1:47320/v1` to use the on-device model:
+  chat completions with streaming, tool calls and JSON output. [More](#use-the-on-device-model-from-any-agent-harness)
+  <!-- demo GIF: an agent harness running on the on-device model -->
+- **Ghost text in pi**: suggestions while you type a prompt in the pi coding agent; Tab takes a word, → all. [More](#pi-ghost-text-in-pis-prompt-editor)
+  <!-- demo GIF: ghost text in pi -->
+- **Ghost text in Claude Code**: the same in Claude Code's prompt box, as a Claude Code mod. [More](#claude-code-ghost-text-in-the-prompt-box)
+  <!-- demo GIF: ghost text in Claude Code -->
+
+```
+› Could you explain why the test is fail|ing despite correct preparation      ← dim ghost, Tab takes one word, → all
+```
+
+## How it is built
+
+Three layers, keeping **mechanism and policy apart**:
 
 - **predictd**: a model host, mechanism only. It keeps named system prompts ("profiles") with their prefix cache warm and
   generates plain or structured output with the limits each caller asks for. It knows nothing about typing. It also speaks the
   **OpenAI chat API**, so agent harnesses can use the on-device model directly.
-- **ghost**: the policies (Python). Typing prediction owns the prompt and examples, the context trimming and the rules that turn the
-  model's answer into a ghost (word glue, spelling, one sentence, up to five words by default). Proofreading fixes or rewrites a
-  selected text.
-- **Applications**: `pred try` in a terminal, ghost text in the pi and Claude Code prompt boxes, and Homeword, a menu bar Mac app
-  that suggests the next words in any text field (in a writing style that follows the app) and proofreads the selection. Other
-  policies (summarise, commit messages, triage) can share the same predictd.
+- **ghost**: the policies (Python). Typing prediction owns the prompts and examples (one per writing style), the context trimming
+  and the rules that turn the model's answer into a ghost (word glue, spelling, one sentence, up to five words by default).
+  Proofreading fixes or rewrites a selected text. Together with predictd this is the engine.
+- **Applications**: the Homeword Mac app, `pred try`, and the pi and Claude Code integrations. Other policies (summarise, commit
+  messages, triage) can share the same predictd.
 
 ```mermaid
 flowchart TB
@@ -47,10 +73,6 @@ flowchart TB
     classDef future stroke-dasharray: 5 5
 ```
 
-```
-› Could you explain why the test is fail|ing despite correct preparation      ← dim ghost, Tab takes one word, → all
-```
-
 ## Quick start
 
 Requirements: macOS 27+ with Apple Intelligence enabled, the Xcode command line tools (`swiftc`), `python3` (standard library only,
@@ -73,7 +95,22 @@ curl -s 127.0.0.1:47320/v1/chat/completions -d '{"model":"apple-on-device","mess
 predictd starts on demand (any `pred` command or ghost request starts it); the ghost server starts with `pred start` or `pred serve`,
 and the pi extension runs `pred start` itself. Both exit after 30 idle minutes.
 
-## Sample applications
+## Applications
+
+### The Homeword Mac app
+
+A menu bar Mac app (prototype); your words never leave home. While you type in any app, a pop-up below the text cursor shows the
+next words in a writing style that follows the app (Chat in Slack, Email in Mail or Gmail, Work documents in Pages or Google Docs,
+...); Tab inserts the next word, Esc dismisses. Select text and press ⌃⌥P to fix typos and grammar, or ⌃⌥R to rewrite it, keeping
+its meaning; Return replaces the selection. Settings has a writing style per app, every prompt editable with a built-in benchmark
+and version history, configurable shortcuts, engine controls and the OpenAI-compatible API's address. It logs latency and acceptance
+statistics (no text). Needs the Accessibility permission.
+
+```sh
+app/build.sh && open app/build/Homeword.app
+```
+
+Details, permissions and metrics: [app](app/README.md).
 
 ### `pred try`: try it in a terminal
 
@@ -100,21 +137,6 @@ A Claude Code mod (a plugin with a hooks module) that paints the ghost as dim vi
 [integrations/claude-code](integrations/claude-code/README.md) before installing it.
 
 Last keystroke → ghost on screen, human-like typing in tmux (Apple M4 Pro, macOS 27.2): pi 117 ms p50, Claude Code 157 ms p50.
-
-### Homeword: any text field, plus proofreading
-
-A menu bar Mac app (prototype); your words never leave home. While you type in any app, a pop-up below the text cursor shows the
-next words in a writing style that follows the app (Chat in Slack, Email in Mail or Gmail, Work documents in Pages or Google Docs,
-...); Tab inserts the next word, Esc dismisses. Select text and press ⌃⌥P to fix typos and grammar, or ⌃⌥R to rewrite it, keeping
-its meaning; Return replaces the selection. Settings has a writing style per app, every prompt editable with a built-in benchmark
-and version history, configurable shortcuts, engine controls and the OpenAI-compatible API's address. It logs latency and acceptance
-statistics (no text). Needs the Accessibility permission.
-
-```sh
-app/build.sh && open app/build/Homeword.app
-```
-
-Details, permissions and metrics: [app](app/README.md).
 
 ## Use the on-device model from any agent harness
 

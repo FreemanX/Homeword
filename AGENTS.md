@@ -1,4 +1,4 @@
-# AGENTS.md: working on input-predictor
+# AGENTS.md: working on Homeword
 
 Context for an AI agent (or a human) who develops, benchmarks or extends this project. Read before changing anything:
 [README.md](README.md) (overview), [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) (mechanism/policy split, protocol, pipeline),
@@ -7,10 +7,11 @@ Context for an AI agent (or a human) who develops, benchmarks or extends this pr
 
 ## What this is
 
-A research prototype of a typing predictor on Apple's on-device language model (FoundationModels framework, macOS 27): given the app
-and the text typed so far, show a gray "ghost" with the rest of the unfinished word plus up to 5 more words (adjustable, 1-10),
-within one sentence. The owner works experiment-first: measure, then decide. It runs in `pred try`, in two coding agents (pi, Claude
-Code) and in Homeword, a prototype menu bar Mac app (any text field, a writing style per app, proofreading of the selection).
+Homeword is a research prototype of a typing predictor on Apple's on-device language model (FoundationModels framework, macOS 27):
+given the app and the text typed so far, show a gray "ghost" with the rest of the unfinished word plus up to 5 more words
+(adjustable, 1-10), within one sentence. The owner works experiment-first: measure, then decide. It runs in `pred try`, in two
+coding agents (pi, Claude Code) and in the Homeword Mac app, a prototype menu bar app (any text field, a writing style per app,
+proofreading of the selection).
 
 **Design principle: separate mechanism from policy.** The owner asked for this explicitly; keep it when changing anything.
 
@@ -23,8 +24,8 @@ Code) and in Homeword, a prototype menu bar Mac app (any text field, a writing s
 - **Policy** `ghost/` (Python, standard library only): the typing predictor and the proofreader. `policy.py` (a profile per writing
   style: general from `prompt.json`, the others from `styles.json`; trim, generate, assemble, warm), `proofread.py` (fix or rewrite
   a text, per paragraph, word diff), `prompts.py` (the user's prompts, history and benchmark results, in
-  `~/.config/input-predictor/`), `evaluate.py` (scoring, per-style benchmarks), `config.json` (knobs; user overrides in
-  `~/.config/input-predictor/config.json`), `predictd.py` (generic predictd client), `server.py` (HTTP `127.0.0.1:47321`:
+  `~/.config/homeword/`), `evaluate.py` (scoring, per-style benchmarks), `config.json` (knobs; user overrides in
+  `~/.config/homeword/config.json`), `predictd.py` (generic predictd client), `server.py` (HTTP `127.0.0.1:47321`:
   `/predict`, `/warm`, `/proofread`, `/prompts`, `/history`, `/tokens`, `/bench`, `/suite`, `/cases`, `/settings`, for non-Python
   apps).
 - `bin/pred`: CLI on the policy. `pred try` (interactive line editor, Enter = new round with stats), `pred ask`, `pred serve`,
