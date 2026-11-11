@@ -19,9 +19,11 @@ Mac. Your words never leave home.
 - **An OpenAI-compatible API**: point any agent harness, SDK or tool at `http://127.0.0.1:47320/v1` to use the on-device model:
   chat completions with streaming, tool calls and JSON output. [More](#use-the-on-device-model-from-any-agent-harness)
   <!-- demo GIF: an agent harness running on the on-device model -->
-- **Ghost text in pi**: suggestions while you type a prompt in the pi coding agent; Tab takes a word, → all. [More](#pi-ghost-text-in-pis-prompt-editor)
+- **Ghost text in pi**: suggestions while you type a prompt in the pi coding agent; Tab takes a word, → all.
+  [More](#pi-ghost-text-in-pis-prompt-editor)
   <!-- demo GIF: ghost text in pi -->
-- **Ghost text in Claude Code**: the same in Claude Code's prompt box, as a Claude Code mod. [More](#claude-code-ghost-text-in-the-prompt-box)
+- **Ghost text in Claude Code**: the same in Claude Code's prompt box, as a Claude Code mod.
+  [More](#claude-code-ghost-text-in-the-prompt-box)
   <!-- demo GIF: ghost text in Claude Code -->
 
 ```
