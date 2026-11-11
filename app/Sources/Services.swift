@@ -215,11 +215,25 @@ final class Services {
         shutdown(port) { self.lastStart = Date(); self.launch() }
     }
 
-    /// Run ghostd in the background (it outlives the app and exits after 30 idle minutes), then wait until it answers.
+    /// Run ghostd in the background (it outlives the app and exits after 30 idle minutes), then wait until it answers. Nothing to
+    /// run when an engine already answers (started by `pred`, pi or an earlier run of the app); a second ghostd on a taken port
+    /// would exit at once anyway.
     private func launch() {
-        guard let exe = ghostd else { state = .stopped; return }
+        guard ghostd != nil else { state = .stopped; return }
         state = .starting
         port = EngineConfig.port
+        get("/health", timeout: 2) { r, _ in
+            if r?["ok"] as? Bool == true {
+                self.state = .unknown
+                self.check(autostart: false)
+            } else {
+                self.spawn()
+            }
+        }
+    }
+
+    private func spawn() {
+        guard let exe = ghostd else { state = .stopped; return }
         let logPath = "/tmp/ghostd-\(getuid()).log"
         if !FileManager.default.fileExists(atPath: logPath) { FileManager.default.createFile(atPath: logPath, contents: nil) }
         let log = FileHandle(forWritingAtPath: logPath)
@@ -236,7 +250,8 @@ final class Services {
 
     private func waitUp(_ p: Process, until: Date) {
         get("/health", timeout: 1) { r, _ in
-            if r?["ok"] as? Bool == true || !p.isRunning || Date() > until {   // up, or it failed (port taken: another engine?)
+            // up, or it failed; exit status 0 = another engine took the port first (it is still starting): keep waiting for it
+            if r?["ok"] as? Bool == true || (!p.isRunning && p.terminationStatus != 0) || Date() > until {
                 self.state = .unknown
                 self.check(autostart: false)
             } else {

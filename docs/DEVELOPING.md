@@ -69,8 +69,9 @@ stateDiagram-v2
 ```
 
 Skip what is not prose for your `app`: both integrations ignore `/commands`, `!shell` lines and texts under 2 characters. If nothing
-answers on 47321, start the repo's `ghostd` in the background (it starts predictd; the pi extension does this) and show nothing
-meanwhile.
+answers on 47321 (`GET /health`), start the repo's `ghostd` in the background (it starts predictd; the pi extension and Homeword
+do this) and show nothing meanwhile. Never start one while one answers; if two apps race, the second ghostd finds the port taken
+and exits at once, before it touches predictd.
 
 ```sh
 curl -s 127.0.0.1:47321/predict -d '{"app":"chat","text":"See you tomor","stream":"demo"}'

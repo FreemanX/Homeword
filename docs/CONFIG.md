@@ -136,7 +136,8 @@ name changes with the content) and re-run the benchmark ([PERFORMANCE.md](PERFOR
 | `pred start`, `pred stop`, `pred status` | ghostd + predictd in the background |
 
 `ghostd` itself: `--port N` (0 = any free port, named in the ready line on stdout), `--socket PATH` (predictd's), `--config JSON`
-(policy overrides), `--no-user` (or `PRED_NO_USER=1`: without the user's config overrides and prompts), `--quiet`.
+(policy overrides), `--no-user` (or `PRED_NO_USER=1`: without the user's config overrides and prompts), `--quiet`. One ghostd
+per port: started while another answers on its port, it exits at once with status 0 ("already running").
 
 ## Integrations
 

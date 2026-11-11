@@ -32,9 +32,10 @@ sequenceDiagram
 ```
 
 The ghost appears only with the cursor at the end of the text, and not for `/commands` or `!shell` lines. It talks to
-`http://127.0.0.1:$GHOST_PORT` (default 47321; if you change `serverPort` in `ghost/config.json`, set `GHOST_PORT` to match)
-and starts the repo's `ghostd` (run `./build.sh` once; it starts predictd) if nothing answers. Optional environment:
-`GHOST_PORT`, `GHOST_APP` (the app label sent to the policy, default `coding agent prompt`), `GHOSTD` (another ghostd binary).
+`http://127.0.0.1:$GHOST_PORT` (default 47321; if you change `serverPort` in `ghost/config.json`, set `GHOST_PORT` to match) and
+starts the repo's `ghostd` (run `./build.sh` once; it starts predictd) only if nothing answers there: an engine started by
+Homeword, `pred` or another pi session is reused. Optional environment: `GHOST_PORT`, `GHOST_APP` (the app label sent to the
+policy, default `coding agent prompt`), `GHOSTD` (another ghostd binary).
 
 ## Try it
 

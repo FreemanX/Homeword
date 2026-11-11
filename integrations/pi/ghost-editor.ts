@@ -27,22 +27,26 @@ const GHOSTD = process.env.GHOSTD ?? fileURLToPath(new URL("../../ghostd", impor
 let daemonStart: Promise<void> | undefined;
 let lastStart = 0;
 
-/** Start ghostd in the background (it starts predictd) and wait until it answers. One start at a time, and at most one every
- * 10 s: the services exit after 30 idle minutes, so a long pi session may need to start them again. */
+async function engineUp(): Promise<boolean> {
+	try {
+		return (await fetch(`http://127.0.0.1:${PORT}/health`, { signal: AbortSignal.timeout(2000) })).ok;
+	} catch {
+		return false;
+	}
+}
+
+/** Start ghostd in the background (it starts predictd) unless one already answers (Homeword, another pi session, `pred`),
+ * then wait until it does. One start at a time, and at most one every 10 s: the engine exits after 30 idle minutes, so a long
+ * pi session may need to start it again. Two starts racing are harmless: a second ghostd on a taken port exits at once. */
 function startDaemon(): Promise<void> {
 	if (!daemonStart && Date.now() - lastStart > 10_000) {
 		lastStart = Date.now();
 		daemonStart = (async () => {
-			if (!existsSync(GHOSTD)) return;
+			if ((await engineUp()) || !existsSync(GHOSTD)) return;
 			const p = spawn(GHOSTD, ["--port", String(PORT)], { stdio: "ignore", detached: true });
 			p.on("error", () => {});
 			p.unref();
-			for (let i = 0; i < 150; i++) {
-				try {
-					if ((await fetch(`http://127.0.0.1:${PORT}/health`)).ok) return;
-				} catch {}
-				await new Promise((r) => setTimeout(r, 200));
-			}
+			for (let i = 0; i < 150 && !(await engineUp()); i++) await new Promise((r) => setTimeout(r, 200));
 		})().finally(() => {
 			daemonStart = undefined;
 		});

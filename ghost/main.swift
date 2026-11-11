@@ -31,7 +31,8 @@
 //     POST /shutdown   {"predictd": true?}: exit (and stop predictd too)
 //
 // 127.0.0.1 only. Requests on one `stream` replace each other (the older one answers {"ok": false, "error": "cancelled"}).
-// Exits after `serverIdleExitSec` without requests.
+// Exits after `serverIdleExitSec` without requests. One ghostd per port: started while one is running, it exits at once
+// (status 0, "already running"), so any app can start it without checking first.
 //
 // Usage: ghostd [--port N] [--socket PATH] [--config JSON] [--no-user] [--quiet]
 //   --port 0: any free port; the ready line on stdout ("ghost server on 127.0.0.1:<port> ...") names it; --config: policy overrides (ghost/config.json keys); --no-user (or PRED_NO_USER=1): ignore the user's config, prompts and
@@ -67,6 +68,45 @@ let ghost = Ghost(overrides: overrides, user: !noUser)
 let proof = Proofreader(cfg: { ghost.cfg }, user: ghost.user)
 var port = argPort ?? intValue(ghost.cfg["serverPort"]) ?? 47321   // 0: any free port (printed)
 var lastRequest = Date()
+
+// MARK: the port, first: one ghostd per port. A second start (two apps starting the engine at once) exits here, before it
+// touches predictd (registering and pinning profiles would take the warm cache from the running one).
+
+/// Does a ghostd answer on 127.0.0.1:port?
+func ghostdAnswers(_ port: Int) -> Bool {
+    guard let url = URL(string: "http://127.0.0.1:\(port)/health") else { return false }
+    let done = DispatchSemaphore(value: 0)
+    var ok = false
+    URLSession.shared.dataTask(with: URLRequest(url: url, timeoutInterval: 5)) { data, _, _ in
+        ok = (data.flatMap { jsonObject($0) } as? [String: Any]).map { truthy($0["ok"]) && $0["port"] != nil } ?? false
+        done.signal()
+    }.resume()
+    _ = done.wait(timeout: .now() + 6)
+    return ok
+}
+
+let listener = socket(AF_INET, SOCK_STREAM, 0)
+var yes: Int32 = 1
+setsockopt(listener, SOL_SOCKET, SO_REUSEADDR, &yes, socklen_t(MemoryLayout<Int32>.size))
+var addr = sockaddr_in()
+addr.sin_family = sa_family_t(AF_INET)
+addr.sin_port = in_port_t(UInt16(port).bigEndian)
+addr.sin_addr.s_addr = inet_addr("127.0.0.1")
+let bound = withUnsafePointer(to: &addr) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { bind(listener, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) } }
+guard bound == 0, listen(listener, 64) == 0 else {
+    let why = errno
+    if why == EADDRINUSE && ghostdAnswers(port) {
+        FileHandle.standardError.write(Data("ghostd: already running on 127.0.0.1:\(port)\n".utf8))
+        exit(0)
+    }
+    FileHandle.standardError.write(Data("ghostd: cannot listen on 127.0.0.1:\(port): \(String(cString: strerror(why)))\n".utf8))
+    exit(1)
+}
+if port == 0 {
+    var got = sockaddr_in(), len = socklen_t(MemoryLayout<sockaddr_in>.size)
+    _ = withUnsafeMutablePointer(to: &got) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { getsockname(listener, $0, &len) } }
+    port = Int(UInt16(bigEndian: got.sin_port))
+}
 
 // MARK: predictd connections
 
@@ -429,24 +469,6 @@ func serve(_ fd: Int32) {
     } else {
         reply(fd, 404, ["ok": false, "error": "GET or POST"])
     }
-}
-
-let listener = socket(AF_INET, SOCK_STREAM, 0)
-var yes: Int32 = 1
-setsockopt(listener, SOL_SOCKET, SO_REUSEADDR, &yes, socklen_t(MemoryLayout<Int32>.size))
-var addr = sockaddr_in()
-addr.sin_family = sa_family_t(AF_INET)
-addr.sin_port = in_port_t(UInt16(port).bigEndian)
-addr.sin_addr.s_addr = inet_addr("127.0.0.1")
-let bound = withUnsafePointer(to: &addr) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { bind(listener, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) } }
-guard bound == 0, listen(listener, 64) == 0 else {
-    FileHandle.standardError.write(Data("ghostd: cannot listen on 127.0.0.1:\(port): \(String(cString: strerror(errno)))\n".utf8))
-    exit(1)
-}
-if port == 0 {
-    var got = sockaddr_in(), len = socklen_t(MemoryLayout<sockaddr_in>.size)
-    _ = withUnsafeMutablePointer(to: &got) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { getsockname(listener, $0, &len) } }
-    port = Int(UInt16(bigEndian: got.sin_port))
 }
 
 let idle = num(ghost.cfg["serverIdleExitSec"]) ?? 1800
