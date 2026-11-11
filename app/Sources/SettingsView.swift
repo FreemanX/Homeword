@@ -239,12 +239,12 @@ struct AppsTab: View {
                     Divider()
                     Button("Choose an App…") { model.choose() }
                 } label: {
-                    Image(systemName: "plus")
+                    Image(systemName: "plus").frame(width: 16, height: 16)
                 }
                 .menuIndicator(.hidden)
                 .fixedSize()
                 .help("Add a running app, or choose one from Applications")
-                Button { model.removeSelected() } label: { Image(systemName: "minus") }
+                Button { model.removeSelected() } label: { Image(systemName: "minus").frame(width: 16, height: 16) }  // same size as +
                     .disabled(model.selection.map { Style.userChoices[$0] == nil } ?? true)
                     .help("Remove your setting for the selected app (built-in apps go back to Automatic)")
                 Spacer()
