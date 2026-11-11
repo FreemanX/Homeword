@@ -42,6 +42,16 @@ final class WordsModel: ObservableObject {
             if let w = r?["words"] as? Int { self.words = w; self.available = true } else { self.available = false }
         }
     }
+    /// The latency effect against the default, from the measured cost of an output token (docs/PERFORMANCE.md): the output cap
+    /// is words + 1 per 5 words (ghost/policy.py tokens_for_words), ~16 ms per token.
+    var cost: String {
+        let tokens = { (w: Int) in w + (w + 4) / 5 }
+        let ms = (tokens(words) - tokens(5)) * 16
+        if ms == 0 { return "The default. Each word more or fewer changes every suggestion's time by up to about 20 ms." }
+        return "Up to about \(abs(ms)) ms \(ms > 0 ? "slower" : "faster") per suggestion than the default (5 words)"
+            + (ms > 0 ? "; longer suggestions are right all the way less often." : ".")
+    }
+
     func set(_ w: Int) {
         let w = min(max(w, 1), 10)
         words = w
@@ -73,14 +83,20 @@ struct GeneralTab: View {
                     Text("Below the cursor").tag("below")
                     Text("Next to the cursor").tag("beside")
                 }
-                HStack {
-                    Text("Words to suggest")
-                    Spacer()
-                    Text("up to \(words.words) word\(words.words == 1 ? "" : "s")").monospacedDigit().foregroundStyle(.secondary)
-                    Stepper("", value: Binding(get: { words.words }, set: { words.set($0) }), in: 1...10).labelsHidden()
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack {
+                        Text("Words to suggest")
+                        InfoTip("How many words a suggestion can have after the word you are typing. Every word costs model time on "
+                                + "each suggestion (about 16 ms per token, ~1.2 tokens per word), and words further ahead are right "
+                                + "less often. The model stops earlier at the end of a sentence, so the cost is a maximum.")
+                        Spacer()
+                        Text("up to \(words.words) word\(words.words == 1 ? "" : "s")").monospacedDigit().foregroundStyle(.secondary)
+                        Stepper("", value: Binding(get: { words.words }, set: { words.set($0) }), in: 1...10).labelsHidden()
+                    }
+                    Text(words.available ? words.cost : "Start the engine to change this.")
+                        .font(.caption).foregroundStyle(.secondary).monospacedDigit()
                 }
                 .disabled(!words.available)
-                .help(words.available ? "More words take longer: about 16 ms per extra word" : "Start the engine to change this")
                 HStack {                                        // the value right next to its stepper
                     Text("Start suggesting after")
                     Spacer()

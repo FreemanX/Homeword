@@ -96,7 +96,8 @@ Terminals and password managers are Off by default: shells have their own comple
 Menu → Settings… (⌘,) opens one window with five tabs.
 
 **General.** Suggest while typing (also in the menu); pop-up position (below or next to the cursor); words to suggest (1-10, 5 by
-default: an engine setting, so `pred` and the agent integrations follow it; it fills `{words}` in the prompts); start after N characters (3);
+default: an engine setting, so `pred` and the agent integrations follow it; it fills `{words}` in the prompts; a line
+below shows the latency effect against 5 words, about 16 ms per output token); start after N characters (3);
 Chrome-based browsers and Electron apps (on); proofread and rewrite selected text (on), with a shortcut recorder for each: click,
 press a combination with ⌘, ⌃ or ⌥ (Esc cancels, Delete removes the shortcut). A warning shows when both are the same or the
 combination is a plain ⌘ shortcut that apps use.
