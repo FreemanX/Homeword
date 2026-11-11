@@ -9,6 +9,7 @@ machine it ran on; the files below are in [`baselines/`](baselines/). One result
 |---|---|---|---|---|
 | Apple M4 Pro | 12 cores (8P + 4E) | 16-core | 48 GB | 27.2 (26B123) |
 | Apple M4 Max | 14 cores (10P + 4E) | 32-core | 36 GB | 27.0.1 (26A434) |
+| Apple M1 Pro | 8 cores (6P + 2E) | 14-core | 16 GB | 27.2 (26B123) |
 
 All runs: on AC power, nothing else using the model, the typing policy as committed (`ghost/config.json`: 6 examples, short
 instructions, `textBudget` 100, `maxTokens` 6, greedy, plain output).
@@ -16,20 +17,26 @@ instructions, `textBudget` 100, `maxTokens` 6, greedy, plain output).
 ## Steady benchmark
 
 `bench/run.py --spawn`: 80 cases (52 short hand-written, 28 cut from a document at four context sizes), one request every 1.2 s.
-Latency is client-side end to end. Both runs are in the same model mode (fingerprint `d4c6a5e1`).
+Latency is client-side end to end. The two Apple M4 runs are in the same model mode (fingerprint `d4c6a5e1`); the Apple M1 Pro
+run has fingerprint `609ddd4f`.
 
 | Machine | macOS | Date (commit) | p50 | p90 | max | Short cases p50 | Data |
 |---|---|---|---|---|---|---|---|
 | Apple M4 Pro | 27.2 | 2026-11-07 (`b245066`) | 329 ms | 426 ms | 477 ms | 302 ms | [steady](baselines/2026-11-07-steady.json) |
 | Apple M4 Max | 27.0.1 | 2026-11-09 (`1511ffb`) | 295 ms | 408 ms | 446 ms | 278 ms | [steady](baselines/2026-11-09-steady-m4max.json) |
+| Apple M1 Pro | 27.2 | 2026-11-11 (`5d4d904`) | 517 ms | 634 ms | 684 ms | 468 ms | [steady](baselines/2026-11-11-steady-m1pro.json) |
 
 | Machine | macOS | Suggestion shown | First word right | Mid-word completed exactly | Leading words right | Word overlap | Space after a finished word | Cache misses |
 |---|---|---|---|---|---|---|---|---|
 | Apple M4 Pro | 27.2 | 96% | 45% | 58% | 0.61 | 30.5% | 8/8 | 0 |
 | Apple M4 Max | 27.0.1 | 96% | 45% | 58% | 0.61 | 29.7% | 8/8 | 0 |
+| Apple M1 Pro | 27.2 | 99% | 45% | 55% | 0.57 | 42.8% | 7/8 | 0 |
 
-The model's raw completions are the same in both runs; on macOS 27.0.1 the suggestions differ in 27 of 80 cases (see
-[macOS versions](#macos-versions)).
+The model's raw completions are the same in both Apple M4 runs; on macOS 27.0.1 the suggestions differ in 27 of 80 cases (see
+[macOS versions](#macos-versions)). The Apple M1 Pro run's raw completions (before the policy) differ from the Apple M4 runs'
+in 73 of 80 cases, with the same prompt (profile `ghost-295db2ba`, as in the Apple M4 Max run) and the same input tokens; the
+cause (chip or model mode) is unknown. Its suggestions are shorter: 2.5 words on average vs 3.4 (Apple M4 Pro) and 3.75
+(Apple M4 Max).
 
 ## Typing simulation
 
@@ -43,8 +50,12 @@ is the one being typed (`ACCEPT=1`).
 | Apple M4 Pro | 27.2 | Tab when right | 259 ms | 294 ms | 257 ms | 66 | 0 | 40 | 136 of 491 | [accept](baselines/2026-11-07-typing-sim-accept-seed1.json) |
 | Apple M4 Max | 27.0.1 | typing only | 258 ms | 291 ms | 257 ms | 56 | 0 | – | – | [typing](baselines/2026-11-09-typing-sim-seed1-m4max.json) |
 | Apple M4 Max | 27.0.1 | Tab when right | 255 ms | 289 ms | 253 ms | 60 | 0 | 42 | 149 of 491 | [accept](baselines/2026-11-09-typing-sim-accept-seed1-m4max.json) |
+| Apple M1 Pro | 27.2 | typing only | 354 ms | 416 ms | 352 ms | 33 | 0 | – | – | [typing](baselines/2026-11-11-typing-sim-seed1-m1pro.json) |
+| Apple M1 Pro | 27.2 | Tab when right | 357 ms | 413 ms | 354 ms | 35 | 0 | 16 | 60 of 491 | [accept](baselines/2026-11-11-typing-sim-accept-seed1-m1pro.json) |
 
-The Apple M4 Max typing-only run had 1 failed request out of 303.
+The Apple M4 Max typing-only run had 1 failed request out of 303. On the Apple M1 Pro a model call (~355 ms) is longer than the
+gap between keys, so most requests are superseded by the next keystroke (69 of 441 answered, vs 147 of 297 on the Apple M4 Pro):
+fewer ghosts, and which keystrokes get an answer varies with timing, so the fingerprint differs between otherwise equal runs.
 
 ## Writing styles
 
@@ -60,14 +71,23 @@ prefix. Next word right per category, and over all cases. The same benchmark run
 | Apple M4 Pro | 27.2 | work | 42% | 76% | **80%** | 72% | 64% | 29% | 16% | 51% | 298 ms | [suite](baselines/2026-11-10-styles-suite200.json) |
 | Apple M4 Pro | 27.2 | academic | 46% | 76% | 72% | **68%** | 40% | 20% | 20% | 46% | 256 ms | [suite](baselines/2026-11-10-styles-suite200.json) |
 | Apple M4 Pro | 27.2 | code | 73% | 72% | 68% | 64% | **72%** | 31% | 24% | 55% | 258 ms | [suite](baselines/2026-11-10-styles-suite200.json) |
+| Apple M1 Pro | 27.2 | general | 73% | 76% | 72% | 72% | 72% | 33% | 52% | 60% | 320 ms | [suite](baselines/2026-11-11-styles-suite200-m1pro.json) |
+| Apple M1 Pro | 27.2 | chat | **73%** | 72% | 60% | 68% | 40% | 35% | 40% | 53% | 364 ms | [suite](baselines/2026-11-11-styles-suite200-m1pro.json) |
+| Apple M1 Pro | 27.2 | email | 58% | **76%** | 64% | 68% | 56% | 37% | 28% | 53% | 312 ms | [suite](baselines/2026-11-11-styles-suite200-m1pro.json) |
+| Apple M1 Pro | 27.2 | work | 54% | 76% | **72%** | 72% | 60% | 35% | 32% | 55% | 366 ms | [suite](baselines/2026-11-11-styles-suite200-m1pro.json) |
+| Apple M1 Pro | 27.2 | academic | 50% | 60% | 60% | **64%** | 56% | 33% | 28% | 48% | 353 ms | [suite](baselines/2026-11-11-styles-suite200-m1pro.json) |
+| Apple M1 Pro | 27.2 | code | 73% | 76% | 72% | 72% | **76%** | 31% | 48% | 60% | 328 ms | [suite](baselines/2026-11-11-styles-suite200-m1pro.json) |
 
-Cases per category: chat 26, email 25, work 25, academic 25, code 25, general 49, terminal 25. Bold: the style's own category. Two
-runs, identical, in the fast mode.
+Cases per category: chat 26, email 25, work 25, academic 25, code 25, general 49, terminal 25. Bold: the style's own category. Apple M4
+Pro: two runs, identical, in the fast mode. Apple M1 Pro (commit `5d4d904`): two runs, identical in quality; the outputs match
+neither Apple M4 Pro mode, so the mode is not named.
 
 | Machine | macOS | Prompt | Cases | p50 | Fully corrected | Word match | Length vs. input | Data |
 |---|---|---|---|---|---|---|---|---|
 | Apple M4 Pro | 27.2 | proofread | 12 | 356 ms | 75% | 0.98 | – | [suite](baselines/2026-11-10-styles-suite200.json) |
 | Apple M4 Pro | 27.2 | rewrite | 12 | 348 ms | – | – | 1.0 | [suite](baselines/2026-11-10-styles-suite200.json) |
+| Apple M1 Pro | 27.2 | proofread | 12 | 405 ms | 92% | 0.99 | – | [suite](baselines/2026-11-11-styles-suite200-m1pro.json) |
+| Apple M1 Pro | 27.2 | rewrite | 12 | 385 ms | – | – | 0.98 | [suite](baselines/2026-11-11-styles-suite200-m1pro.json) |
 
 **Style prompts on their own category in both model modes** (Apple M4 Pro, macOS 27.2, 2026-11-10; slow mode: two runs each,
 identical, no data file). Next word right, general's prompt vs the shipped style prompt:
