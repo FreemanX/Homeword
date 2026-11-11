@@ -69,6 +69,11 @@ with `bench/human_pty.py`:
 Splitting the daemon into mechanism (predictd) and policy (ghost, Python) changed nothing measurable: steady p50 329 ms before and
 331 ms after (within run-to-run noise), the same raw outputs and quality. Assembly in Python plus one `spell` round trip cost ~1-2 ms.
 
+The policy then moved from Python to Swift (`ghostd`, so the app ships without a Python runtime): identical answers on every suite
+case in every style over HTTP, and identical benchmark quality. Since then `bench/run.py` and `pred try` reach the policy over
+ghostd's local HTTP instead of calling it in-process, which adds ~1-3 ms to their end-to-end latency (`socket+json` in run.py's
+output); the model time is unchanged.
+
 A short instruction (~45 tokens instead of ~140) was both faster and more accurate; fewer than 6 examples saved little and cost
 accuracy. A `GenerationSchema` cost ~200 ms. Not available: token streaming (`streamResponse` and `SystemLanguageModel.Executor`
 deliver a short answer in one piece), stop sequences, a smaller model, or turning guardrails off (permissive is the lightest).

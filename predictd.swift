@@ -53,6 +53,19 @@ let defaultUserConfig: String = {
     }
     return dir + "/predictd.json"
 }()
+/// Whether the system's on-device model can be used now: "available", or why not (an OS fact every client needs to explain).
+func modelAvailability() -> String {
+    switch SystemLanguageModel.default.availability {
+    case .available: return "available"
+    case .unavailable(let reason):
+        switch reason {
+        case .deviceNotEligible: return "device_not_eligible"
+        case .appleIntelligenceNotEnabled: return "apple_intelligence_off"
+        case .modelNotReady: return "model_not_ready"
+        @unknown default: return "unavailable"
+        }
+    }
+}
 func jsonText(_ o: Any) -> String {
     guard JSONSerialization.isValidJSONObject(o), let d = try? JSONSerialization.data(withJSONObject: o, options: [.sortedKeys]) else { return "\(o)" }
     return String(decoding: d, as: UTF8.self)
@@ -404,7 +417,7 @@ actor Engine {
         let id = req["id"] as? String ?? String(describing: req["id"] ?? "")
         func fail(_ e: String) { conn.send(["id": id, "ok": false, "error": e]) }
         switch req["op"] as? String ?? "generate" {
-        case "ping": conn.send(["id": id, "ok": true, "pong": true])
+        case "ping": conn.send(["id": id, "ok": true, "pong": true, "model": modelAvailability()])
 
         case "profile.set":
             do {

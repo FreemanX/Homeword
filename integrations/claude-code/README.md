@@ -1,8 +1,8 @@
 # Claude Code integration: ghost text in the prompt box
 
-A Claude Code mod (a plugin with a hooks module, Claude Code 2.1.287+). While you type a prompt it asks the ghost policy server
-(`pred serve`, on top of predictd) for a continuation and paints it as dim virtual text after the cursor: drawn, never part of the
-draft until you accept it. The mod is only UI: what to ask and what to show is decided by the policy.
+A Claude Code mod (a plugin with a hooks module, Claude Code 2.1.287+). While you type a prompt it asks Homeword's engine (ghostd,
+the policies over HTTP, on top of predictd) for a continuation and paints it as dim virtual text after the cursor: drawn, never
+part of the draft until you accept it. The mod is only UI: what to ask and what to show is decided by the policy.
 
 How it works (`hooks/register.ts`): a `prompt.edit` hook sees every edit; the request runs from a `$.clock.after` timer so typing is
 never held up; the answer is painted with `$.prompt.fill` decorations (`virtualText`, `dimColor`) after checking the draft has not
@@ -63,8 +63,8 @@ A fresh `CLAUDE_CONFIG_DIR` runs Claude Code's first-run screens and asks to tru
 
 Load the mod everywhere, e.g. `export CLAUDE_CODE_PLUGIN_DIRS=<repo>/integrations/claude-code` in `~/.zshrc.local` (or install it
 from a local marketplace with `claude plugin marketplace add` / `claude plugin install`), then add the bindings above to
-`~/.claude/keybindings.json`. Start the services with `bin/pred start` (the mod shows nothing while they are down; they exit
-after 30 idle minutes, so run it again after a break, or from your shell startup).
+`~/.claude/keybindings.json`. Start the engine with `bin/pred start` (or let Homeword or pi start it; the mod shows nothing while
+it is down; it exits after 30 idle minutes, so run it again after a break, or from your shell startup).
 
 Last keystroke → ghost on screen (`bench/integration_latency.py`, Apple M4 Pro, macOS 27.2): 157 ms p50, 205 ms max.
 Validate after changes: `claude plugin validate integrations/claude-code`.

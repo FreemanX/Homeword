@@ -14,7 +14,7 @@ Status: implemented (Homeword). Changes from the plan below, after measuring or 
 Scope of this round: user-facing names, a writing style per app (detected automatically, adjustable), a prompt per style with a
 built-in benchmark and a history of versions, custom shortcuts, an app picker instead of bundle IDs, and an Engine tab that
 shows and controls the local service. The layering stays: the app is UI only; prompts, styles, benchmarks and history live in the
-Python policy and its HTTP server; predictd stays a model host that knows nothing about apps or styles.
+policy and its HTTP server (ghostd); predictd stays a model host that knows nothing about apps or styles.
 
 ## 1. Words the user sees
 
@@ -22,7 +22,7 @@ No design jargon in the UI. Internal names stay in code and developer docs.
 
 | Internal | User-facing |
 |---|---|
-| policy server (`pred serve`) + predictd | **Engine** ("runs Apple's on-device model on this Mac; nothing leaves it") |
+| policy server (ghostd) + predictd | **Engine** ("runs Apple's on-device model on this Mac; nothing leaves it") |
 | predictd's OpenAI-compatible API | **OpenAI-compatible API** (for other apps) |
 | profile, pin, prefix cache | not shown; a prompt's size is shown as tokens and an estimated time per request |
 | context label (`app`) | **Writing style**: General, Chat, Email, Work documents, Academic, Code |
@@ -133,7 +133,8 @@ Permissions                              ● Accessibility allowed   [Open Setti
 
 - Dots: green = running, yellow = starting / stopping / restarting, red = stopped (with the reason: "stopped by you:
   predictions are paused", or "starts when you type" after it shut down when idle, or an error).
-- Start, Stop and Restart run `bin/pred start|stop`. After Stop the app does not restart the engine on its own until Start.
+- Start runs ghostd (bundled in a release build, else the repo's); Stop and Restart send it `POST /shutdown` (with predictd).
+  After Stop the app does not restart the engine on its own until Start.
 - Ports: saved to user config files outside the repo, then the engine restarts: `~/.config/homeword/config.json` (policy
   overrides, `serverPort`) and `~/.config/homeword/predictd.json` (predictd overrides, `httpPort`). This needs generic
   layering: predictd loads its `predictd.json`, then the user file if present; the policy loads `ghost/config.json`, then the user

@@ -15,7 +15,7 @@ Knobs follow the mechanism/policy split ([ARCHITECTURE.md](ARCHITECTURE.md)):
 (`$XDG_CONFIG_HOME/homeword/` if set) for the keys it contains. (The directory from before the project's rename is moved there on
 first use.) Homeword's Engine tab writes the ports there (`serverPort` in `config.json`, `httpPort` in `predictd.json`) and its
 General tab the words to suggest (`words`, `maxTokens`); any other knob works the same way. Benchmarks ignore the user's files
-(`Ghost(user=False)`, `predictd --user-config ""`).
+(`ghostd --no-user`, `predictd --user-config ""`).
 
 ```mermaid
 flowchart LR
@@ -84,13 +84,13 @@ greedy, `top_p`/`seed` → `topP`/`seed`, `response_format` → `schema`, `tool_
 | `format` | suffix | `suffix`: the model writes the rest of the word; `fullword`: it rewrites the last word (`instructions_fullword`) | suffix is better |
 | `output` | plain | `plain`, or `structured` (a one-field schema; shows off the mechanism) | structured is ~200 ms slower |
 | `guardrails` | permissive | the profile's guardrails | |
-| `serverPort`, `serverIdleExitSec` | 47321, 1800 | the ghost HTTP server's port and idle exit | |
+| `serverPort`, `serverIdleExitSec` | 47321, 1800 | ghostd's HTTP port and idle exit | |
 | `repeatNgram`, `repeatWindow` | 3, 60 | never complete a run of `repeatNgram` words already in the last `repeatWindow` words: the suggestion is cut before it (nothing shown: `suppressed: repetition`); 0 = off | stops the model echoing recent phrases, which loops when accepted again and again; also cuts an intended repeat |
 | `userPrompts` | `~/.config/homeword/prompts.json` | the user's versions of the prompts (instructions and examples, typing per style and proofreading), edited in the Mac app or by `POST /prompts` | outside the repo; a changed prompt is a new profile, so the next request is uncached |
 | `proofreadMaxInputTokens` | 2500 | the longest paragraph `/proofread` accepts (estimated tokens); a text is proofread one paragraph per request | the window is 8192: prefix + input + an answer of about the same length |
 | `proofreadGuardrails` | permissive | the proofreading profiles' guardrails | `default` refuses more texts and is ~100 ms slower |
 
-The proofreading prompts (instructions and examples per mode) are constants in `ghost/proofread.py`. Every prompt (each writing
+The proofreading prompts (instructions and examples per mode) are in `ghost/proofread.json`. Every prompt (each writing
 style, proofread, rewrite; instructions and examples) can be overridden per user without touching the repo: `userPrompts` above,
 edited in Homeword's Prompts tab or through `POST /prompts`.
 
@@ -103,11 +103,11 @@ general's instructions). A style without `shots` uses general's whole prompt. Sh
 with short instructions and 6 examples of their own; `chat` with general's instructions plus "The text is a casual chat message."
 and 6 chat examples; `code` with general's instructions, four of its mixed examples and two code examples (6 code-only examples lost
 4 of 25 cases). The benchmark suite: `bench/cases.json` + `bench/styles.json` (`run.py --styles`), at least 25 cases per category,
-none of them in an example (`python3 -I ghost/evaluate.py --check`; the benchmark also skips a case that shares text with an example
+none of them in an example (`python3 -I bench/check_cases.py`; the benchmark also skips a case that shares text with an example
 of the prompt it runs, e.g. a user's).
 
 Every typing knob except `serverPort` and `serverIdleExitSec` (read when the server starts) also works per request:
-`pred ask "text" --opts '{"words":8}'`, `pred try --opts ...`, or `opts` in a ghost HTTP request.
+`pred ask "text" --opts '{"words":8}'`, `pred try --opts ...`, or `opts` in a `/predict` request.
 Knobs that change the prompt (`shots`, `instructions`, `format`, `output`, `guardrails`, `words`) make a different profile
 (named by the hash of its content), registered on first use: the first request with them is uncached.
 
@@ -123,7 +123,7 @@ Knobs that change the prompt (`shots`, `instructions`, `format`, `output`, `guar
 A `completion` follows the suffix format: for `"text": "I will send you the docu"` it is `"ment by the end of the day"`. The
 `app` labels of the examples in the profile (the first `shots`: `mail`, `chat`, `notes`, `terminal`, `essay`) are the vocabulary
 the model knows best; any other label works too (the integrations send `coding agent prompt`). Add examples when you add a new kind
-of client. The prefix is ~280 tokens with 6 examples, paid on every request. After editing, restart `pred` clients (the profile
+of client. The prefix is ~280 tokens with 6 examples, paid on every request. After editing, restart ghostd (`pred stop`; the profile
 name changes with the content) and re-run the benchmark ([PERFORMANCE.md](PERFORMANCE.md)).
 
 ## pred CLI
@@ -132,8 +132,11 @@ name changes with the content) and re-run the benchmark ([PERFORMANCE.md](PERFOR
 |---|---|
 | `pred try` | `--app auto\|terminal\|mail\|chat\|...`, `--debounce ms` (0), `--min-chars` (2), `--words` (prefetch extends the ghost up to this), `--opts '{...}'`, `--log file`, `--no-spawn` |
 | `pred ask "text"` | `--app`, `--opts` |
-| `pred serve` | `--port` (the ghost server in the foreground) |
-| `pred start`, `pred stop`, `pred status` | predictd + the ghost server in the background |
+| `pred serve` | `--port` (ghostd in the foreground) |
+| `pred start`, `pred stop`, `pred status` | ghostd + predictd in the background |
+
+`ghostd` itself: `--port N` (0 = any free port, named in the ready line on stdout), `--socket PATH` (predictd's), `--config JSON`
+(policy overrides), `--no-user` (or `PRED_NO_USER=1`: without the user's config overrides and prompts), `--quiet`.
 
 ## Integrations
 

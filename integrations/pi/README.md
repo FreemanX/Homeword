@@ -1,8 +1,8 @@
 # pi integration: ghost text in pi's prompt editor
 
 `ghost-editor.ts` replaces pi's prompt editor with a subclass (pi's public `CustomEditor` / `ctx.ui.setEditorComponent` API) that
-asks the ghost policy server (`pred serve`, on top of predictd) for a continuation of the prompt as you type and draws it dim
-after the cursor, fish-style. The extension is only UI: what to ask and what to show is decided by the policy.
+asks Homeword's engine (ghostd, the policies over HTTP, on top of predictd) for a continuation of the prompt as you type and draws
+it dim after the cursor, fish-style. The extension is only UI: what to ask and what to show is decided by the policy.
 
 | Key | Effect |
 |---|---|
@@ -32,9 +32,9 @@ sequenceDiagram
 ```
 
 The ghost appears only with the cursor at the end of the text, and not for `/commands` or `!shell` lines. It talks to
-`http://127.0.0.1:$GHOST_PORT` (default 47321; if you change `serverPort` in `ghost/config.json`, set `GHOST_PORT` to match) and runs `bin/pred start` (predictd + the ghost
-server) if nothing answers. Optional environment: `GHOST_PORT`, `GHOST_APP` (the app label sent to the policy, default
-`coding agent prompt`), `PRED_CLI`.
+`http://127.0.0.1:$GHOST_PORT` (default 47321; if you change `serverPort` in `ghost/config.json`, set `GHOST_PORT` to match)
+and starts the repo's `ghostd` (run `./build.sh` once; it starts predictd) if nothing answers. Optional environment:
+`GHOST_PORT`, `GHOST_APP` (the app label sent to the policy, default `coding agent prompt`), `GHOSTD` (another ghostd binary).
 
 ## Try it
 

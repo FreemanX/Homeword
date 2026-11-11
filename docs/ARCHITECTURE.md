@@ -5,10 +5,10 @@ The project is split by one rule: **separate mechanism from policy.**
 - **Mechanism: `predictd`** (Swift) hosts Apple's on-device model and nothing else. It keeps named system prompts ("profiles"),
   keeps one of them warm, and generates plain or structured output with the limits the caller asks for. It assumes nothing about
   what the text is for.
-- **Policies: `ghost/`** (Python). The typing predictor decides what to ask while someone types and how to turn the answer into
-  ghost text. The proofreader fixes or rewrites a selected text. Each is one client of the mechanism; a summariser, a
-  commit-message writer or a triage bot would be others, side by side.
-- **Applications** use a policy: `pred try` imports it, pi, Claude Code and the Homeword Mac app reach it over HTTP.
+- **Policies: `ghost/`** (Swift, the `ghostd` binary and its HTTP server). The typing predictor decides what to ask while someone
+  types and how to turn the answer into ghost text. The proofreader fixes or rewrites a selected text. Each is one client of the
+  mechanism; a summariser, a commit-message writer or a triage bot would be others, side by side.
+- **Applications** reach the policies over HTTP: `pred try`, pi, Claude Code and the Homeword Mac app.
 
 ```mermaid
 flowchart TB
@@ -22,16 +22,16 @@ flowchart TB
     end
     subgraph policy["Policies"]
         direction LR
-        srv["policy server<br/>HTTP 127.0.0.1:47321<br/>/predict, /warm, /proofread,<br/>/prompts, /bench, /settings, ..."]
-        lib["ghost.policy (Python)<br/>prompt, trim, assemble"]
-        pr["ghost.proofread (Python)<br/>fix, rewrite, diff"]
+        srv["ghostd HTTP 127.0.0.1:47321<br/>/predict, /warm, /proofread,<br/>/prompts, /bench, /settings, ..."]
+        lib["typing policy<br/>prompt, trim, assemble"]
+        pr["proofreading policy<br/>fix, rewrite, diff"]
         other["other policies<br/>future"]:::future
     end
     subgraph mech["Mechanism"]
         predictd["predictd (Swift)<br/>profiles, sessions, generate, keep-alive<br/>unix socket, HTTP 127.0.0.1:47320"]
     end
     fm["FoundationModels<br/>on-device model"]
-    try --> lib
+    try --> srv
     pi --> srv
     cc --> srv
     mac --> srv
@@ -188,7 +188,7 @@ and checked on the suite; only work beats general's prompt on its category in bo
 ([bench/RESULTS.md](../bench/RESULTS.md)). Each style is its own profile: the first request after switching costs ~70 ms more, which
 `POST /warm` (pin + predictd's `prewarm`) moves to when the user switches apps.
 
-`ghost/policy.py` registers one profile built from `ghost/prompt.json` (instructions + the first `shots` examples, named by a hash
+`ghost/Policy.swift` registers one profile built from `ghost/prompt.json` (instructions + the first `shots` examples, named by a hash
 of its content) and pins it. Then, per keystroke:
 
 | Step | What happens | Knobs (ghost/config.json) |
@@ -233,7 +233,7 @@ sequenceDiagram
     autonumber
     participant U as User
     participant A as pi
-    participant G as ghost server
+    participant G as ghostd
     participant D as predictd
     participant M as model
     U->>A: types "...is fail"
@@ -258,7 +258,7 @@ sequenceDiagram
 ### The ghost answer
 
 `POST 127.0.0.1:47321/predict` with `{"app": "chat", "text": "See you tomor", "stream": "pi", "opts": {...}}` (`opts` overrides
-ghost/config.json for one request), or `Ghost.predict()` in Python:
+ghost/config.json for one request):
 
 | Field | Meaning |
 |---|---|
@@ -273,12 +273,13 @@ ghost/config.json for one request), or `Ghost.predict()` in Python:
 
 ## proofread: the proofreading policy
 
-`ghost/proofread.py` fixes (`mode: "fix"`: spelling, typos, grammar, punctuation, as few changes as possible) or rewrites
-(`mode: "rewrite"`: clearer, same meaning, intent, tone and about the same length) a text. It is an occasional policy, so it does not
-pin: one profile per mode (instructions + 2-3 examples, about 200-250 tokens), registered on first use. The first request after
-typing pays an uncached prefix, and the typing profile pays one on the next keystroke. A text is proofread **one paragraph per
-request** (paragraphs are separated by blank lines): asked for a whole text with a repeated passage, the model returned the first
-copy only, and a long text could hit the token cap. Paragraph requests share the cached prefix, so the total time stays the same.
+`ghost/Proofread.swift` fixes (`mode: "fix"`: spelling, typos, grammar, punctuation, as few changes as possible) or rewrites
+(`mode: "rewrite"`: clearer, same meaning, intent, tone and about the same length) a text. It is an occasional policy, so it does
+not pin: one profile per mode (instructions + 2-3 examples from `ghost/proofread.json`, about 200-250 tokens), registered on first
+use. The first request after typing pays an uncached prefix, and the typing profile pays one on the next keystroke. A text is
+proofread **one paragraph per request** (paragraphs are separated by blank lines): asked for a whole text with a repeated passage,
+the model returned the first copy only, and a long text could hit the token cap. Paragraph requests share the cached prefix, so
+the total time stays the same.
 
 | Step | What happens |
 |---|---|
@@ -295,7 +296,7 @@ model declined this text"`. A paragraph takes about 0.5-1 s (a 4-paragraph, 180-
 
 ### User prompts, history and benchmarks
 
-Every prompt (instructions and examples) can be replaced per user (`ghost/prompts.py`), in files outside the repo
+Every prompt (instructions and examples) can be replaced per user (`ghost/Prompts.swift`), in files outside the repo
 (`~/.config/homeword/`): `predict-<style>` for each writing style, `proofread-fix`, `proofread-rewrite`.
 
 | Endpoint | What |
@@ -313,14 +314,14 @@ Every prompt (instructions and examples) can be replaced per user (`ghost/prompt
 A changed prompt is a new profile (named by its content hash), so it applies to the next request; the typing policy re-pins whenever
 its profile changes.
 
-**The benchmark suite** (`ghost/evaluate.py`, shared with `bench/run.py --styles`): every case of `bench/cases.json` (the fixed
-80-case benchmark) and `bench/styles.json` (per style, and terminal), 200 in all, each tagged with a category (chat 26, email 25,
-work 25, academic 25, code 25, general 49, terminal 25) and keeping its own app label. A prompt runs on all of them, so one run shows
-how it does on every kind of text; results are reported per category. A case that shares text with one of the prompt's examples is
-skipped and counted (`skipped`): it would test recall of the example. No shipped example is in the suite or in the tuning cases
-(`bench/styles-dev.json`, 30 per style, used only to choose the style prompts): `python3 -I ghost/evaluate.py --check`. The
-user's cases run with the prompt's own label and are reported as a separate section. Metrics: latency p50/p90, next word right
-(`acc1`), words right (`lead`), word completions right (`mid_word_ok`), shown; proofreading: fully corrected, word match;
-rewriting: latency and length ratio. Benchmarks from the command line (`run.py`, `human_pty.py`, `openai_compare.py`) ignore the
-user's prompts and config overrides (`Ghost(user=False)`, `PRED_NO_USER=1`), so their numbers stay comparable; a benchmark run in
-Homeword uses the engine, so the user's settings (e.g. words to suggest) apply.
+**The benchmark suite** (`ghost/Evaluate.swift`, also run by `bench/run.py --styles` through `POST /bench`): every case of
+`bench/cases.json` (the fixed 80-case benchmark) and `bench/styles.json` (per style, and terminal), 200 in all, each tagged with a
+category (chat 26, email 25, work 25, academic 25, code 25, general 49, terminal 25) and keeping its own app label. A prompt runs
+on all of them, so one run shows how it does on every kind of text; results are reported per category. A case that shares text
+with one of the prompt's examples is skipped and counted (`skipped`): it would test recall of the example. No shipped example is
+in the suite or in the tuning cases (`bench/styles-dev.json`, 30 per style, used only to choose the style prompts): `python3 -I
+bench/check_cases.py`. The user's cases run with the prompt's own label and are reported as a separate section. Metrics: latency
+p50/p90, next word right (`acc1`), words right (`lead`), word completions right (`mid_word_ok`), shown; proofreading: fully
+corrected, word match; rewriting: latency and length ratio. Benchmarks from the command line (`run.py`, `human_pty.py`,
+`openai_compare.py`) ignore the user's prompts and config overrides (a private `ghostd --no-user`, `PRED_NO_USER=1`), so their
+numbers stay comparable; a benchmark run in Homeword uses the engine, so the user's settings (e.g. words to suggest) apply.

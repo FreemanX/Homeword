@@ -37,9 +37,9 @@ Three layers, keeping **mechanism and policy apart**:
 - **predictd**: a model host, mechanism only. It keeps named system prompts ("profiles") with their prefix cache warm and
   generates plain or structured output with the limits each caller asks for. It knows nothing about typing. It also speaks the
   **OpenAI chat API**, so agent harnesses can use the on-device model directly.
-- **ghost**: the policies (Python). Typing prediction owns the prompts and examples (one per writing style), the context trimming
-  and the rules that turn the model's answer into a ghost (word glue, spelling, one sentence, up to five words by default).
-  Proofreading fixes or rewrites a selected text. Together with predictd this is the engine.
+- **ghost**: the policies (Swift, `ghostd`, local HTTP for the apps). Typing prediction owns the prompts and examples (one per
+  writing style), the context trimming and the rules that turn the model's answer into a ghost (word glue, spelling, one sentence,
+  up to five words by default). Proofreading fixes or rewrites a selected text. Together with predictd this is the engine.
 - **Applications**: the Homeword Mac app, `pred try`, and the pi and Claude Code integrations. Other policies (summarise, commit
   messages, triage) can share the same predictd.
 
@@ -75,16 +75,30 @@ flowchart TB
     classDef future stroke-dasharray: 5 5
 ```
 
-## Quick start
+## Install the Mac app
 
-Requirements: macOS 27+ with Apple Intelligence enabled, the Xcode command line tools (`swiftc`), `python3` (standard library only,
-no virtualenv).
+Requirements: a Mac with Apple silicon, macOS 27 or later, Apple Intelligence turned on.
+
+1. Download `Homeword-<version>.dmg` from [Releases](../../releases), open it and drag Homeword to Applications.
+2. Open Homeword from Applications. It is not notarized by Apple (no paid developer account), so the first time macOS says it
+   cannot check it for malicious software: click Done, then open System Settings → Privacy & Security, click **Open Anyway** next
+   to Homeword and confirm. Or, in Terminal: `xattr -dr com.apple.quarantine /Applications/Homeword.app`.
+3. Allow Accessibility when Homeword asks (System Settings → Privacy & Security → Accessibility): it reads the text field you type
+   in and the keys you press, on your Mac only.
+
+The app contains the whole engine; nothing else to install. To check the download: `shasum -a 256 -c Homeword-<version>.dmg.sha256`
+in the folder holding both files. To build it yourself: [app](app/README.md).
+
+## Quick start (from source)
+
+Requirements: macOS 27+ with Apple Intelligence enabled, the Xcode command line tools (`swiftc`). The command line tool `pred` and
+the benchmarks also need `python3` (standard library only, no virtualenv); the engine and the app don't.
 
 ```sh
-./build.sh                    # swiftc -> ./predictd
+./build.sh                    # swiftc -> ./predictd (the model host) and ./ghostd (the policies and their HTTP server)
 bin/pred try                  # type and watch the ghost; Enter = new round with stats, Ctrl-C quits
 bin/pred ask "git sta"        # one prediction with timings
-bin/pred start                # predictd + the ghost HTTP server in the background (for pi, Claude Code)
+bin/pred start                # the engine (ghostd + predictd) in the background (for pi, Claude Code)
 bin/pred status               # daemon, profiles, policy knobs;  bin/pred stop
 
 curl -s 127.0.0.1:47321/predict -d '{"app":"chat","text":"See you tomor"}'          # the typing policy
@@ -94,8 +108,8 @@ curl -s 127.0.0.1:47320/ -d '{"profile":"haiku","prompt":"Autumn in the city","m
 curl -s 127.0.0.1:47320/v1/chat/completions -d '{"model":"apple-on-device","messages":[{"role":"user","content":"Hi!"}]}'
 ```
 
-predictd starts on demand (any `pred` command or ghost request starts it); the ghost server starts with `pred start` or `pred serve`,
-and the pi extension runs `pred start` itself. Both exit after 30 idle minutes.
+ghostd starts predictd when it needs it; ghostd starts with `pred start`, `pred serve` or any other `pred` command, and the pi
+extension and Homeword start it themselves. Both exit after 30 idle minutes.
 
 ## Applications
 
@@ -108,8 +122,10 @@ its meaning; Return replaces the selection. Settings has a writing style per app
 and version history, configurable shortcuts, engine controls and the OpenAI-compatible API's address. It logs latency and acceptance
 statistics (no text). Needs the Accessibility permission.
 
+[Install it](#install-the-mac-app) from the releases, or build it from source (it then runs the engine from the repo):
+
 ```sh
-app/build.sh && open app/build/Homeword.app
+./build.sh && app/build.sh && open app/build/Homeword.app
 ```
 
 Details, permissions and metrics: [app](app/README.md).
@@ -183,3 +199,7 @@ Details and raw data: [bench/RESULTS.md](bench/RESULTS.md).
   cut by the token cap is kept instead of dropped.
 - **Managed Macs**: Apple Intelligence can be restricted by the organization (MDM); check before relying on it.
 - The Mac app's own limits (caret position in some apps, pop-up instead of inline text, ...): [app/README.md](app/README.md#known-limits).
+
+## License
+
+[MIT](LICENSE).

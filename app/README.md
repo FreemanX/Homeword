@@ -55,13 +55,24 @@ flowchart LR
 ## Build and run
 
 ```sh
+./build.sh                                # the engine: ./predictd and ./ghostd
 app/build.sh                              # swiftc -> app/build/Homeword.app (ad-hoc signed)
 open app/build/Homeword.app
+app/release.sh                            # a self-contained app in dist/Homeword-<version>.dmg, for GitHub releases
 ```
 
-Needs macOS 27+ and the Xcode command line tools, the same as predictd. The app starts the engine itself (`bin/pred start` from the
-repo it was built in) when it is not running, unless you stopped it in Settings → Engine. To start Homeword at login, add it in
-System Settings → General → Login Items.
+Needs macOS 27+ and the Xcode command line tools, the same as predictd. The app starts the engine itself (the `ghostd` of the repo
+it was built in, or the one inside the app in a release build) when it is not running, unless you stopped it in Settings → Engine.
+To start Homeword at login, add it in System Settings → General → Login Items.
+
+**Releases.** `app/release.sh` (from a committed tree) builds the engine and the app, copies the engine into the app
+(`Contents/Resources/engine`: ghostd, predictd, predictd.json and the prompt and benchmark JSON files, in the repo's layout), signs
+it ad-hoc with the same bundle-ID requirement, checks that the bundled engine finds its data, and writes
+`dist/Homeword-<version>.dmg` (the app and an Applications link) with its SHA-256; it prints the `gh release create` command
+instead of running it. The version is `VERSION`, the build number the commit count. Without an Apple Developer ID the app is not
+notarized: users allow the first launch with Open Anyway (README "Install"). macOS still blocks quarantined helpers inside an
+allowed app, so on launch the app removes the quarantine mark from its own engine files; run from the disk image or Downloads
+(App Translocation), it asks to be moved to Applications first.
 
 **Permissions.** The app asks for **Accessibility** (System Settings → Privacy & Security → Accessibility). It needs it to read the
 focused text field and the caret position, to see key presses, and to insert accepted words. It starts working within 2 s of being

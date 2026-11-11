@@ -43,7 +43,7 @@ final class WordsModel: ObservableObject {
         }
     }
     /// The latency effect against the default, from the measured cost of an output token (docs/PERFORMANCE.md): the output cap
-    /// is words + 1 per 5 words (ghost/policy.py tokens_for_words), ~16 ms per token.
+    /// is words + 1 per 5 words (ghost/Policy.swift tokensForWords), ~16 ms per token.
     var cost: String {
         let tokens = { (w: Int) in w + (w + 4) / 5 }
         let ms = (tokens(words) - tokens(5)) * 16
@@ -443,6 +443,10 @@ struct EngineTab: View {
                     }
                 }
                 Text(model.detail).font(.caption).foregroundStyle(.secondary)
+                if let problem = Services.shared.availabilityProblem, model.state == .running {
+                    Label(problem, systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true)
+                }
                 HStack {
                     Text("Port")
                     Spacer()

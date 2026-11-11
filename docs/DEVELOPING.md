@@ -17,21 +17,23 @@ belongs in a policy; if every policy would need it (warm caches, cancelling, tok
 
 ```
 predictd.swift  predictd.json   mechanism: the model host (profiles, sessions, generate, keep-alive, socket + HTTP)
-build.sh                        swiftc -O -> ./predictd (git-ignored)
-ghost/                          policies (Python, standard library only): typing prediction, proofreading
-  predictd.py                     generic client for predictd, reusable by any Python policy
-  policy.py                       typing: profiles per writing style, trim, generate, assemble, warm
-  proofread.py                    proofreading: fix or rewrite a text, paragraph by paragraph, word diff
-  prompts.py                      the user's prompts, their history and benchmark results (outside the repo)
-  evaluate.py                     scoring and per-style benchmarks (shared by run.py and POST /bench)
-  server.py                       HTTP front end for non-Python apps (127.0.0.1:47321)
+build.sh                        swiftc -O -> ./predictd and ./ghostd (git-ignored)
+ghost/                          policies (Swift) -> ./ghostd: typing prediction, proofreading, their HTTP server (127.0.0.1:47321)
+  Policy.swift                    typing: profiles per writing style, trim, generate, assemble, warm
+  Proofread.swift                 proofreading: fix or rewrite a text, paragraph by paragraph, word diff
+  Prompts.swift                   the user's prompts, their history and benchmark results (outside the repo)
+  Evaluate.swift                  scoring and per-style benchmarks (POST /bench, run.py --styles)
+  Predictd.swift                  predictd client (unix socket), starts predictd
+  PyCompat.swift                  text, JSON and hash helpers (the policy was first written in Python and keeps its semantics)
+  main.swift                      the HTTP server and its routes
+  Selftest.swift                  ghostd --selftest: the pure functions on JSON lines (no model), for checks
   config.json  prompt.json        policy knobs and the general prompt
-  styles.json                     the other writing styles (chat, email, work, academic, code)
-bin/pred                        CLI: try, ask, serve, start, stop, status
+  styles.json  proofread.json     the other writing styles (chat, email, work, academic, code), the proofreading prompts
+bin/pred                        CLI (Python, a client of ghostd): try, ask, serve, start, stop, status
 integrations/pi/                application: pi extension (TypeScript)
 integrations/claude-code/       application: Claude Code mod (TypeScript)
 app/                            application: Homeword, menu bar Mac app, system-wide suggestions and proofreading (Swift)
-bench/                          benchmarks of the ghost policy, cases, baselines, RESULTS.md
+bench/                          benchmarks (Python, clients of ghostd), cases, baselines, RESULTS.md
 docs/                           these documents
 ```
 
@@ -67,22 +69,15 @@ stateDiagram-v2
 ```
 
 Skip what is not prose for your `app`: both integrations ignore `/commands`, `!shell` lines and texts under 2 characters. If nothing
-answers on 47321, run `bin/pred start` and show nothing meanwhile.
+answers on 47321, start the repo's `ghostd` in the background (it starts predictd; the pi extension does this) and show nothing
+meanwhile.
 
 ```sh
 curl -s 127.0.0.1:47321/predict -d '{"app":"chat","text":"See you tomor","stream":"demo"}'
 # {"ok":true,"suggestion":"row for coffee at the","first_word":"tomorrow","partial":"tomor",...}
 ```
 
-Python applications can skip HTTP and use the policy directly, as `pred try` does:
-
-```python
-from ghost import predictd
-from ghost.policy import Ghost
-ghost, link = Ghost(), predictd.start()
-ghost.ensure_profile(link, pin=True)
-print(ghost.predict(link, "chat", "See you tomor")["suggestion"])   # row for coffee at the
-```
+`pred try` is a full Python client (threads for the blocking requests, a stream per session); `bench/engine.py` has the helpers.
 
 ### The sample applications
 
@@ -115,16 +110,18 @@ metrics (counts and timings, no text) that `bench/app_metrics.py` summarises.
 ## A new policy on predictd
 
 A policy registers its own profile and calls `generate`; it shares the daemon (and the warm cache) with the ghost policy. Any
-language works: the socket protocol is one JSON object per line, and `ghost/predictd.py` is a ready Python client.
-`ghost/proofread.py` is a complete second policy in about 100 lines: one unpinned profile per mode, one `generate` sized to the
-input, clean-up of the answer, a word diff, and an HTTP route in `ghost/server.py`.
+language works: the socket protocol is one JSON object per line, and predictd's HTTP port takes the same objects as POST bodies.
+`ghost/Proofread.swift` is a complete second policy: one unpinned profile per mode, one `generate` sized to the input, clean-up of
+the answer, a word diff, and an HTTP route in `ghost/main.swift`. A new policy can live in ghostd the same way, or be its own
+program in any language:
 
 ```python
-from ghost import predictd
-link = predictd.start()
-link.call(op="profile.set", name="commit-msg", instructions="Write a one-line git commit message for the diff.",
-          examples=[{"prompt": "- retries = 3\n+ retries = 5", "response": "Raise the retry count to 5"}], defaults={"maxTokens": 24})
-print(link.call(op="generate", profile="commit-msg", prompt=diff)["text"])
+import json, urllib.request
+def call(**req):           # predictd over HTTP (127.0.0.1:47320); the unix socket takes the same JSON, one object per line
+    return json.load(urllib.request.urlopen("http://127.0.0.1:47320/", json.dumps(req).encode()))
+call(op="profile.set", name="commit-msg", instructions="Write a one-line git commit message for the diff.",
+     examples=[{"prompt": "- retries = 3\n+ retries = 5", "response": "Raise the retry count to 5"}], defaults={"maxTokens": 24})
+print(call(op="generate", profile="commit-msg", prompt=diff)["text"])
 ```
 
 ```zsh
@@ -162,7 +159,8 @@ flowchart LR
     cmp --> edit
 ```
 
-Policy edits (ghost/*.py, config.json, prompt.json) need no build: restart the `pred` process using them. Try knobs without editing
+Policy edits: `./build.sh` after changing ghost/*.swift; the JSON files (config.json, prompt.json, styles.json, proofread.json)
+need no build. Either way restart ghostd (`pred stop`). Try knobs without editing
 files: `pred ask "text" --opts '{...}'`, or `python3 -I bench/run.py --spawn --config '{...}'` (policy) and `--daemon-config '{...}'`
 (daemon). Benchmark rules (nothing else using the model, compare within one model mode) are in AGENTS.md; scenarios and metrics are
 in [PERFORMANCE.md](PERFORMANCE.md).
@@ -184,21 +182,20 @@ in [PERFORMANCE.md](PERFORMANCE.md).
   CONFIG.md.
 - **Per request** (what a caller asks for): read it from the merged request in `Engine.generate` (`r`, which already includes the
   profile's `defaults`), and add it to the profile/generate table in CONFIG.md.
-- **Policy** (how the typing predictor behaves): a key in ghost/config.json used in `ghost/policy.py`, and a row in CONFIG.md.
+- **Policy** (how the typing predictor behaves): a key in ghost/config.json used in `ghost/Policy.swift`, and a row in CONFIG.md.
 
 If it can change latency or quality, run the benchmark before and after and say so in the commit.
 
 ### Adding an op
 
 Add a `case` to `Engine.handle` and answer with `conn.send([...])` including the request's `id`. HTTP clients get it for free (any
-`POST` body is handled the same way). Document it in the protocol table in ARCHITECTURE.md and, if useful, wrap it in
-`ghost/predictd.py`.
+`POST` body is handled the same way). Document it in the protocol table in ARCHITECTURE.md.
 
 ## Testing
 
 - `python3 -I bench/try_pty_test.py`: drives `pred try` through a pty (smoke test of policy + mechanism).
 - `python3 -I bench/run.py --spawn`: the fixed benchmark; quality numbers must not drop without a reason.
-- `python3 -I ghost/evaluate.py --check`: no prompt example appears in the benchmark or tuning cases (after editing either).
+- `python3 -I bench/check_cases.py`: no prompt example appears in the benchmark or tuning cases (after editing either).
 - `python3 -I bench/run.py --spawn --styles`: every writing style's prompt on the suite, per category (after changing a prompt).
 - Integrations: run the real app in tmux and measure with `bench/integration_latency.py` (see its docstring). Test Claude Code with
   a throwaway `CLAUDE_CONFIG_DIR` holding the keybindings, never by editing `~/.claude/keybindings.json`.

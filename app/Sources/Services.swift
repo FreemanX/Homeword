@@ -1,4 +1,4 @@
-// Preferences, and the local engine the app talks to: the HTTP server of the typing and proofreading policies (`pred serve`,
+// Preferences, and the local engine the app talks to: the HTTP server of the typing and proofreading policies (ghostd,
 // 127.0.0.1:<port>) on top of predictd, which hosts Apple's on-device model and also serves the OpenAI-compatible API. The app holds
 // no prediction or proofreading logic itself. Users see all of it as one "Engine".
 import AppKit
@@ -34,6 +34,30 @@ enum Pref {
         let from = support.appendingPathComponent("InputPredictor"), to = support.appendingPathComponent("Homeword")
         if FileManager.default.fileExists(atPath: from.path) && !FileManager.default.fileExists(atPath: to.path) {
             try? FileManager.default.moveItem(at: from, to: to)
+        }
+    }
+}
+
+/// A release build carries the engine inside the app (Resources/engine: ghostd, predictd and their data; app/release.sh). It is not notarized, so a downloaded copy
+/// has every file quarantined: once the user allowed the app (Open Anyway), its own helpers are still blocked (killed at launch)
+/// until the quarantine mark is removed from them, which the app may do for files in its own bundle.
+enum Bundled {
+    static func prepare() {
+        guard let res = Bundle.main.resourceURL, FileManager.default.fileExists(atPath: res.appendingPathComponent("engine").path) else { return }
+        if Bundle.main.bundlePath.contains("/AppTranslocation/") {        // opened from the download: a read-only copy
+            let a = NSAlert()
+            a.messageText = "Move Homeword to your Applications folder"
+            a.informativeText = "macOS runs Homeword from a temporary read-only copy until it is in Applications. Drag it there from "
+                + "the disk image, then open it again."
+            a.addButton(withTitle: "Quit")
+            NSApp.activate(ignoringOtherApps: true)
+            a.runModal()
+            NSApp.terminate(nil)
+            return
+        }
+        let engine = res.appendingPathComponent("engine")
+        for case let rel as String in FileManager.default.enumerator(atPath: engine.path) ?? .init() {
+            removexattr(engine.appendingPathComponent(rel).path, "com.apple.quarantine", XATTR_NOFOLLOW)
         }
     }
 }
@@ -75,6 +99,18 @@ final class Services {
     enum State: String { case unknown = "Checking…", running = "Running", starting = "Starting…", stopping = "Stopping…", stopped = "Stopped" }
     private(set) var state: State = .unknown { didSet { if state != oldValue { onChange?() } } }
     private(set) var modelUp = false
+    /// The on-device model: "available", or why not (device_not_eligible, apple_intelligence_off, model_not_ready); nil = unknown.
+    private(set) var availability: String?
+    /// What to tell the user when the model cannot be used, else nil.
+    var availabilityProblem: String? {
+        switch availability {
+        case nil, "available": return nil
+        case "apple_intelligence_off": return "Apple Intelligence is turned off. Turn it on in System Settings → Apple Intelligence & Siri."
+        case "model_not_ready": return "Apple's on-device model is still downloading. Suggestions start when it is ready."
+        case "device_not_eligible": return "This Mac can't run Apple Intelligence (it needs Apple silicon, and a supported language and region)."
+        default: return "Apple's on-device model is not available on this Mac right now."
+        }
+    }
     var onChange: (() -> Void)?
     private var lastStart = Date.distantPast
     private(set) var port = EngineConfig.port
@@ -85,8 +121,13 @@ final class Services {
         get { Pref.d.bool(forKey: Pref.stoppedByUser) }
         set { Pref.d.set(newValue, forKey: Pref.stoppedByUser); onChange?() }
     }
-    /// The repo this app was built from (bin/pred starts and stops the engine).
-    var repo: String? { Bundle.main.object(forInfoDictionaryKey: "IPRepoPath") as? String }
+    /// The engine's server: inside the app (a release build: Resources/engine/ghostd), else in the repo this app was built from
+    /// (a development build, after ./build.sh). It starts predictd next to it.
+    var ghostd: String? {
+        let repo = Bundle.main.object(forInfoDictionaryKey: "HomewordRepoPath") as? String ?? ""
+        let candidates = [Bundle.main.resourceURL?.appendingPathComponent("engine/ghostd").path, repo.isEmpty ? nil : repo + "/ghostd"]
+        return candidates.compactMap { $0 }.first { FileManager.default.isExecutableFile(atPath: $0) }
+    }
 
     private let session: URLSession = {
         let c = URLSessionConfiguration.ephemeral
@@ -135,6 +176,7 @@ final class Services {
         get("/health", timeout: 2) { r, _ in
             let ok = r?["ok"] as? Bool ?? false
             self.modelUp = r?["model"] as? Bool ?? false
+            self.availability = r?["availability"] as? String
             if ok {
                 self.state = .running
             } else if self.state != .starting && self.state != .stopping {
@@ -154,44 +196,65 @@ final class Services {
         }.resume()
     }
 
-    /// Start the engine (`bin/pred start`). Automatic starts (a request found it down) happen at most every 10 s and never after
-    /// the user pressed Stop; `force` (the Start button) always runs.
+    /// Start the engine (ghostd, which starts predictd). Automatic starts (a request found it down) happen at most every 10 s and
+    /// never after the user pressed Stop; `force` (the Start button) always runs.
     func start(force: Bool = false) {
         if force { stoppedByUser = false }
         guard force || (!stoppedByUser && Date().timeIntervalSince(lastStart) > 10), state != .starting else { return }
         lastStart = Date()
-        run("start", during: .starting)
+        launch()
     }
 
     func stop() {
         stoppedByUser = true
-        run("stop", during: .stopping)
+        shutdown(port) { self.state = .stopped }
     }
 
     func restart() {
         stoppedByUser = false
-        run("stop", during: .stopping) { self.lastStart = Date(); self.run("start", during: .starting) }
+        shutdown(port) { self.lastStart = Date(); self.launch() }
     }
 
-    private func run(_ cmd: String, during: State, then: (() -> Void)? = nil) {
-        guard let repo else { state = .stopped; return }
-        state = during
+    /// Run ghostd in the background (it outlives the app and exits after 30 idle minutes), then wait until it answers.
+    private func launch() {
+        guard let exe = ghostd else { state = .stopped; return }
+        state = .starting
+        port = EngineConfig.port
+        let logPath = "/tmp/ghostd-\(getuid()).log"
+        if !FileManager.default.fileExists(atPath: logPath) { FileManager.default.createFile(atPath: logPath, contents: nil) }
+        let log = FileHandle(forWritingAtPath: logPath)
+        log?.seekToEndOfFile()
         let p = Process()
-        p.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
-        p.arguments = ["-I", repo + "/bin/pred", cmd]
-        p.currentDirectoryURL = URL(fileURLWithPath: repo)
-        p.standardOutput = FileHandle.nullDevice
-        p.standardError = FileHandle.nullDevice
-        p.terminationHandler = { _ in
-            DispatchQueue.main.async {
-                self.port = EngineConfig.port
-                if let then { return then() }
-                self.state = cmd == "stop" ? .stopped : .unknown
-                if cmd == "start" { self.check(autostart: false) }
-                self.onChange?()
+        p.executableURL = URL(fileURLWithPath: exe)
+        p.arguments = ["--port", String(port)]
+        p.standardInput = FileHandle.nullDevice
+        p.standardOutput = log ?? FileHandle.nullDevice
+        p.standardError = log ?? FileHandle.nullDevice
+        do { try p.run() } catch { state = .stopped; return }
+        waitUp(p, until: Date().addingTimeInterval(60))
+    }
+
+    private func waitUp(_ p: Process, until: Date) {
+        get("/health", timeout: 1) { r, _ in
+            if r?["ok"] as? Bool == true || !p.isRunning || Date() > until {   // up, or it failed (port taken: another engine?)
+                self.state = .unknown
+                self.check(autostart: false)
+            } else {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { self.waitUp(p, until: until) }
             }
         }
-        do { try p.run() } catch { state = .stopped }
+    }
+
+    /// Stop the engine on `port` (ghostd and predictd); `then` runs on the main thread once it is gone.
+    private func shutdown(_ port: Int, then: @escaping () -> Void) {
+        state = .stopping
+        guard let url = URL(string: "http://127.0.0.1:\(port)/shutdown") else { return then() }
+        var req = URLRequest(url: url, timeoutInterval: 3)
+        req.httpMethod = "POST"
+        req.httpBody = Data(#"{"predictd": true}"#.utf8)
+        session.dataTask(with: req) { _, _, _ in
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { self.port = EngineConfig.port; then() }   // let it exit
+        }.resume()
     }
 
     /// Save new ports for the engine and the OpenAI-compatible API (outside the app, so `pred` uses them too), then restart the
@@ -201,11 +264,6 @@ final class Services {
         try EngineConfig.set("config.json", "serverPort", engine == 47321 ? nil : engine)
         try EngineConfig.set("predictd.json", "httpPort", api == 47320 ? nil : api)
         stoppedByUser = false
-        state = .stopping
-        guard let url = URL(string: "http://127.0.0.1:\(oldPort)/shutdown") else { return restart() }
-        var req = URLRequest(url: url, timeoutInterval: 2)
-        req.httpMethod = "POST"
-        req.httpBody = Data("{}".utf8)
-        session.dataTask(with: req) { _, _, _ in DispatchQueue.main.async { self.restart() } }.resume()
+        shutdown(oldPort) { self.lastStart = Date(); self.launch() }
     }
 }

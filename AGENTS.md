@@ -21,44 +21,51 @@ proofreading of the selection).
   `stats`. Newline-delimited JSON on `/tmp/predictd-<uid>.sock`, the same over HTTP on `127.0.0.1:47320`, plus an
   OpenAI-compatible chat API there (`/v1/models`, `/v1/chat/completions`: streaming, tool calls returned to the caller, JSON schema;
   docs/OPENAI.md). The context window is 8192 tokens.
-- **Policy** `ghost/` (Python, standard library only): the typing predictor and the proofreader. `policy.py` (a profile per writing
-  style: general from `prompt.json`, the others from `styles.json`; trim, generate, assemble, warm), `proofread.py` (fix or rewrite
-  a text, per paragraph, word diff), `prompts.py` (the user's prompts, history and benchmark results, in
-  `~/.config/homeword/`), `evaluate.py` (scoring, per-style benchmarks), `config.json` (knobs; user overrides in
-  `~/.config/homeword/config.json`), `predictd.py` (generic predictd client), `server.py` (HTTP `127.0.0.1:47321`:
-  `/predict`, `/warm`, `/proofread`, `/prompts`, `/history`, `/tokens`, `/bench`, `/suite`, `/cases`, `/settings`, for non-Python
-  apps).
-- `bin/pred`: CLI on the policy. `pred try` (interactive line editor, Enter = new round with stats), `pred ask`, `pred serve`,
-  `pred start|stop|status` (predictd + ghost server).
-- `bench/`: `run.py` (fixed 80-case benchmark), `human_pty.py` (drives `pred try` like a typist), `compare.py`, `gen_cases.py` +
-  `corpus.md` → `cases.json`, `machine.py`, `try_pty_test.py` (smoke test), `integration_latency.py` (keystroke → ghost in a real
-  terminal app via tmux), `openai_compare.py` (native protocol vs OpenAI API on the typing workload), `styles.json` + `run.py
-  --styles` (the suite: cases.json + styles.json, 200 cases in 7 categories, at least 25 each; every style's prompt reported per
-  category, also run by Homeword's Prompts tab with the user's own cases), `styles-dev.json` (tuning cases for the style prompts,
-  never reported), `app_metrics.py` (summary of Homeword's usage metrics),
-  `baselines/` (shared results), `RESULTS.md`.
+- **Policy** `ghost/` → `./ghostd` (Swift, a second binary): the typing predictor and the proofreader, and their HTTP server for
+  every app. `Policy.swift` (a profile per writing style: general from `prompt.json`, the others from `styles.json`; trim,
+  generate, assemble, warm), `Proofread.swift` (fix or rewrite a text, per paragraph, word diff; prompts in `proofread.json`),
+  `Prompts.swift` (the user's prompts, history and benchmark results, in `~/.config/homeword/`), `Evaluate.swift` (scoring,
+  per-style benchmarks), `Predictd.swift` (predictd client, starts it), `PyCompat.swift` (string, JSON and hash helpers),
+  `main.swift` (HTTP `127.0.0.1:47321`: `/predict`, `/warm`, `/proofread`, `/prompts`, `/history`, `/tokens`, `/bench`,
+  `/suite`, `/cases`, `/settings`, `/config`, `/request`, `/health`, `/shutdown`), `Selftest.swift` (`ghostd --selftest`: the
+  pure functions on JSON lines, no model), `config.json` (knobs; user overrides in `~/.config/homeword/config.json`). The policy was
+  first written in Python; the Swift port gives identical answers (checked function by function and over HTTP on the whole suite).
+- `bin/pred`: CLI, a client of ghostd (Python, standard library only, like the benchmarks: developer tools, not shipped).
+  `pred try` (interactive line editor, Enter = new round with stats), `pred ask`, `pred serve` (runs ghostd), `pred
+  start|stop|status` (ghostd + predictd).
+- `bench/`: `engine.py` (ghostd and predictd from Python: a private ghostd for a run, the shared one), `run.py` (fixed 80-case
+  benchmark), `human_pty.py` (drives `pred try` like a typist), `compare.py`, `gen_cases.py` + `corpus.md` → `cases.json`,
+  `machine.py`, `try_pty_test.py` (smoke test), `integration_latency.py` (keystroke → ghost in a real terminal app via tmux),
+  `openai_compare.py` (native protocol vs OpenAI API on the typing workload), `styles.json` + `run.py --styles` (the suite:
+  cases.json + styles.json, 200 cases in 7 categories, at least 25 each; every style's prompt reported per category, also run by
+  Homeword's Prompts tab with the user's own cases), `styles-dev.json` (tuning cases for the style prompts, never reported),
+  `check_cases.py` (no prompt example in the cases), `app_metrics.py` (summary of Homeword's usage metrics), `baselines/` (shared
+  results), `RESULTS.md`.
 - `integrations/pi/ghost-editor.ts`: pi extension (a `CustomEditor` subclass drawing the ghost in the fake cursor and padding).
 - `integrations/claude-code/`: Claude Code mod (`prompt.edit` hook + `$.prompt.fill` decorations; Tab/→ through two commands bound in
   `keybindings.json`, since keys that do nothing at the end of the draft never reach the hook). Validate with `claude plugin validate`.
-- `app/`: Homeword, menu bar Mac app (Swift, AppKit + SwiftUI, `app/build.sh`, bundle ID `dev.homeword.app`). Accessibility reads
-  the focused field, caret and a browser page's host, a session event tap sees keys (consumes Tab/Esc while a suggestion shows, and
-  the configurable proofread/rewrite shortcuts), a non-activating panel shows the suggestion. Settings: General, Apps (style per
-  app), Prompts (editor, benchmark, history), Statistics, Engine. Metrics in `~/Library/Application Support/Homeword/metrics.jsonl`:
-  counts and timings only, never text. Keep it that way. User-facing text avoids internal terms (policy, profile, predictd): say
-  engine, writing style, prompt. Design notes: `app/DESIGN.md`. Icons: `app/Icon/*.svg`, rendered by `build.sh` with AppKit.
+- `app/`: Homeword, menu bar Mac app (Swift, AppKit + SwiftUI, `app/build.sh`, bundle ID `dev.homeword.app`; it runs ghostd from
+  the repo, or from inside the app in a release build: `app/release.sh` packages a self-contained app in a disk image for GitHub
+  releases, ad-hoc signed, no Python). Accessibility reads the focused field, caret and a browser page's host, a session event tap
+  sees keys (consumes Tab/Esc while a suggestion shows, and the configurable proofread/rewrite shortcuts), a non-activating panel
+  shows the suggestion. Settings: General, Apps (style per app), Prompts (editor, benchmark, history), Statistics, Engine. Metrics
+  in `~/Library/Application Support/Homeword/metrics.jsonl`: counts and timings only, never text. Keep it that way. User-facing
+  text avoids internal terms (policy, profile, predictd): say engine, writing style, prompt. Design notes: `app/DESIGN.md`. Icons:
+  `app/Icon/*.svg`, rendered by `build.sh` with AppKit.
 
 ## Build and run
 
 ```sh
-./build.sh                         # swiftc -O; also burns the slow first launch of a fresh binary (macOS verifies it)
-bin/pred try                       # starts predictd if needed (it exits after 30 idle minutes)
+./build.sh                         # predictd + ghostd (swiftc -O); also burns the slow first launch of a fresh binary
+bin/pred try                       # starts the engine if needed (it exits after 30 idle minutes)
 bin/pred ask "git sta"             # one prediction with timings
-bin/pred start                     # predictd + the ghost HTTP server, for the integrations
+bin/pred start                     # ghostd + predictd, for the integrations (they also start ghostd themselves)
 bin/pred status; bin/pred stop
+app/release.sh                     # the release disk image (dist/), from a committed tree
 ```
 
-Needs macOS 27+ with Apple Intelligence enabled, the Xcode command line tools and `python3` (standard library only: keep it that way,
-no venv). Run Python with `-I`.
+Needs macOS 27+ with Apple Intelligence enabled and the Xcode command line tools. The engine and the app are Swift only; the
+developer tools (`pred`, `bench/`) need `python3` (standard library only: keep it that way, no venv). Run Python with `-I`.
 
 ## How it works (details in docs/ARCHITECTURE.md)
 
@@ -101,13 +108,13 @@ Policy (ghost, typing):
 
 ## Benchmarking rules
 
-- Before a run, make sure nothing else uses the model: quit Homeword (it restarts the engine on its own), `bin/pred stop` (also
-  stops the ghost server), quit any open `pred try` and pi/Claude Code sessions with the integrations (they restart the services),
+- Before a run, make sure nothing else uses the model: quit Homeword (it restarts the engine on its own), `bin/pred stop` (stops
+  ghostd and predictd), quit any open `pred try` and pi/Claude Code sessions with the integrations (they restart the services),
   no other `predictd` (`pgrep -fl predictd`). Results taken with a concurrent user are invalid (cache misses, different outputs).
   `run.py --spawn` and `human_pty.py` refuse to start while another model user runs (`bench/machine.py` `model_users()`:
-  predictd, the ghost server, Homeword, `pred try`) and warn if one appeared (`concurrent_daemon` in a run.py result).
+  predictd, ghostd, Homeword, `pred try`) and warn if one appeared (`concurrent_daemon` in a run.py result).
 - Fixed benchmark: `cd bench && python3 -I run.py --spawn --label <name> [--config '{...}'] [--daemon-config '{...}']` (private
-  predictd; `--config` overrides the policy, `--daemon-config` predictd).
+  predictd and ghostd; `--config` overrides the policy, `--daemon-config` predictd).
   Typing: `SEED=1 python3 -I bench/human_pty.py` and `ACCEPT=1 ...` (Tab when the ghost is right). Both save to `bench/results/`.
 - Compare with `python3 -I bench/compare.py a.json b.json` and only within one model mode (matching `mode_fingerprint`). If a result
   looks odd, re-run before bisecting: a mode switch once made a harmless change look like a 70 ms regression.
@@ -120,13 +127,13 @@ Policy (ghost, typing):
   as a link. No personal context ("this laptop", "my machine", "here"), no narrative. Put before/after numbers in the commit
   message.
 - Changing `cases.json` or `corpus.md` breaks comparability with older runs: record a new baseline.
-- Benchmarks must not see the user's prompts or config overrides: scripts use `Ghost(user=False)`, spawned `pred` processes get
-  `PRED_NO_USER=1`, a spawned predictd `--user-config ""`. `integration_latency.py` drives the running engine, which uses them.
+- Benchmarks must not see the user's prompts or config overrides: scripts run a private `ghostd --no-user` (`bench/engine.py`),
+  spawned `pred` processes get `PRED_NO_USER=1` (a private ghostd too), a spawned predictd `--user-config ""`. `integration_latency.py` drives the running engine, which uses them.
 - Writing styles: the general prompt (prompt.json) is the one all earlier baselines used; keep its profile unchanged unless you mean
   to break comparability. Choose a style's prompt on `bench/styles-dev.json`, then confirm on its category of the suite
   (`run.py --styles`); 25-30 cases per category means one case is 3-4 points, so a single-set win of one or two cases is noise
   (a round tuned on 16 cases did not hold up). Examples must never appear in the suite or the tuning cases:
-  `python3 -I ghost/evaluate.py --check` (the benchmark also skips such cases). Code-only examples lost to mixed ones.
+  `python3 -I bench/check_cases.py` (the benchmark also skips such cases). Code-only examples lost to mixed ones.
 
 ## Recording results for a machine
 
@@ -136,7 +143,7 @@ different machine (outputs can differ, see "macOS versions" in bench/RESULTS.md)
 benchmark: the best run. To measure this Mac and record it:
 
 1. **Prepare.** AC power. Quit Homeword, `pred try` and pi/Claude Code sessions with the integrations; `bin/pred stop`;
-   `pgrep -fl "predictd|Homeword|pred serve"` prints nothing (the scripts refuse to start otherwise). `./build.sh`. Test a
+   `pgrep -fl "predictd|ghostd|Homeword"` prints nothing (the scripts refuse to start otherwise). `./build.sh`. Test a
    committed tree (`git status` clean) and note `git rev-parse --short HEAD` for the steady row.
 2. **Run** from `bench/`, each benchmark twice in a row. Two runs that agree (outputs, p50 within a few ms) are in one model mode;
    if they differ by ~70 ms or in quality, the mode switched: run again until two agree.

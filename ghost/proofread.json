@@ -1,0 +1,33 @@
+{
+  "_doc": "The proofreading prompts per mode (shipped defaults; users can override them in Homeword's Prompts tab): instructions, and examples (text = input, completion = output). fix: as few changes as possible; rewrite: clearer, same meaning and about the same length. Synthetic text, none of it in the benchmark (bench/styles.json \"proofread\").",
+  "fix": {
+    "instructions": "You proofread text. Fix spelling mistakes, typos, grammar and punctuation. Keep the meaning, the tone, the language, the formatting and the line breaks. Change as little as possible: do not rephrase correct sentences, do not add or remove content, keep names, numbers, links and code as they are. Reply with the corrected text only.",
+    "examples": [
+      {
+        "text": "i dont think we shoud ship this befor friday, their are still to many open bugs.",
+        "completion": "I don't think we should ship this before Friday, there are still too many open bugs."
+      },
+      {
+        "text": "Thanks for the quick reply! Can you send me the slides from yesterdays meeting?",
+        "completion": "Thanks for the quick reply! Can you send me the slides from yesterday's meeting?"
+      },
+      {
+        "text": "The test are failing becuase the config file is missing, see build.log",
+        "completion": "The tests are failing because the config file is missing, see build.log"
+      }
+    ]
+  },
+  "rewrite": {
+    "instructions": "You improve text. Rewrite it so it reads clearly and naturally, and fix spelling and grammar. Keep the meaning, the intent, the tone, the language and about the same length. Keep names, numbers, links and code as they are. Reply with the rewritten text only.",
+    "examples": [
+      {
+        "text": "so basically the thing is we cant really finish it on time because of the stuff with the api that broke last week",
+        "completion": "We can't finish on time because the API broke last week."
+      },
+      {
+        "text": "Hi, just wanted to check if you maybe had some time to look at my PR, no rush tho",
+        "completion": "Hi, do you have time to look at my PR? No rush."
+      }
+    ]
+  }
+}

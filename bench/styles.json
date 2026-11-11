@@ -1,5 +1,5 @@
 {
-  "_doc": "Benchmark cases per category, added to bench/cases.json in the suite (ghost/evaluate.py; run.py --styles and Homeword's Prompts tab), at least 25 per category with cases.json. text = typed so far (may end mid-word), rest = what was typed next. Synthetic text, no personal data, none of it in any prompt's examples or in the tuning cases (styles-dev.json); the benchmark also skips a case that matches an example of the prompt it runs. \"proofread\": sentences with known mistakes. Changing a case breaks comparability with earlier results.",
+  "_doc": "Benchmark cases per category, added to bench/cases.json in the suite (ghost/Evaluate.swift; run.py --styles and Homeword's Prompts tab), at least 25 per category with cases.json. text = typed so far (may end mid-word), rest = what was typed next. Synthetic text, no personal data, none of it in any prompt's examples or in the tuning cases (styles-dev.json); the benchmark also skips a case that matches an example of the prompt it runs. \"proofread\": sentences with known mistakes. Changing a case breaks comparability with earlier results.",
   "general": [
     {
       "text": "Ideas for the weekend: go for a long walk by the river, finish the book I star",

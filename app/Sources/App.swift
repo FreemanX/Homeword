@@ -27,6 +27,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func applicationDidFinishLaunching(_ note: Notification) {
         Pref.migrate()
+        Bundled.prepare()
         Pref.register()
         status = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         let icon = NSImage(named: "MenuBarIcon") ?? NSImage(systemSymbolName: "house", accessibilityDescription: nil)
@@ -123,12 +124,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let engine = e.state == .stopped ? (e.stoppedByUser ? "Engine: stopped (click to start)" : "Engine: stopped, starts when needed (click to start)")
             : "Engine: \(e.state.rawValue.lowercased())"
         menu.addItem(NSMenuItem(title: engine, action: e.state == .stopped ? #selector(startServices) : nil, keyEquivalent: ""))
+        if let problem = e.availabilityProblem, e.state == .running {
+            let item = NSMenuItem(title: problem, action: #selector(openSystemSettings), keyEquivalent: "")
+            item.image = NSImage(systemSymbolName: "exclamationmark.triangle.fill", accessibilityDescription: nil)
+            menu.addItem(item)
+        }
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "Statistics…", action: #selector(showStats), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "Settings…", action: #selector(showSettingsGeneral), keyEquivalent: ","))
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "Quit Homeword", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
         for item in menu.items where item.action != nil && item.action != #selector(NSApplication.terminate(_:)) { item.target = self }
+    }
+
+    @objc private func openSystemSettings() {
+        NSWorkspace.shared.open(URL(fileURLWithPath: "/System/Applications/System Settings.app"))
     }
 
     @objc private func togglePredictions() {

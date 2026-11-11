@@ -21,13 +21,14 @@ def machine_info():
     }
 
 
-def model_users():
-    """What else would use the on-device model during a benchmark: a running predictd or ghost server, Homeword (it restarts
-    the engine on its own), `pred try`. Another user evicts the run's cache and changes outputs, so results would be invalid."""
+def model_users(mine=()):
+    """What else would use the on-device model during a benchmark: a running predictd or ghostd (the engine), Homeword (it
+    restarts the engine on its own), `pred try`. Another user evicts the run's cache and changes outputs, so results would be
+    invalid. `mine`: pids of this run's own processes, left out."""
     found = []
-    for pattern, what in (("-x predictd", "predictd"), ("-f bin/pred serve", "the ghost server (pred serve)"),
+    for pattern, what in (("-x predictd", "predictd"), ("-x ghostd", "ghostd (the engine)"),
                           ("-x Homeword", "Homeword"), ("-f bin/pred try", "pred try")):
-        pids = _run("pgrep", *pattern.split(" ", 1)).split()
+        pids = [p for p in _run("pgrep", *pattern.split(" ", 1)).split() if int(p) not in mine]
         if pids:
             found.append(f"{what} (pid {', '.join(pids)})")
     return found

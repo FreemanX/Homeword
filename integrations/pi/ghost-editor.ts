@@ -1,15 +1,15 @@
 /**
  * Homeword ghost text for the pi coding agent.
  *
- * Replaces pi's prompt editor with a subclass that asks the ghost policy server (`pred serve`, on top of the predictd model host)
+ * Replaces pi's prompt editor with a subclass that asks Homeword's engine (ghostd, the policies over HTTP, on top of predictd)
  * for a continuation of what you are typing and draws it as dim "ghost" text after the cursor.
  *
  *   Tab         accept one word of the ghost (pi's own Tab completion runs when no ghost is shown)
  *   → / Ctrl+F  accept the whole ghost (at the end of the text, where these keys do nothing in pi)
  *   typing      a character that matches the ghost keeps the rest of it; anything else asks again
  *
- * Install: see integrations/pi/README.md. Talks to http://127.0.0.1:$GHOST_PORT (default 47321) and runs `bin/pred start`
- * (predictd + the ghost server) if nothing answers. Ghost text is shown only when the cursor is at the end of the text, and not for /commands or
+ * Install: see integrations/pi/README.md. Talks to http://127.0.0.1:$GHOST_PORT (default 47321) and starts the repo's `ghostd`
+ * (it starts predictd) if nothing answers. Ghost text is shown only when the cursor is at the end of the text, and not for /commands or
  * !shell lines.
  */
 import { spawn } from "node:child_process";
@@ -22,22 +22,28 @@ const PORT = Number(process.env.GHOST_PORT ?? 47321);
 const APP = process.env.GHOST_APP ?? "coding agent prompt";
 const FAKE_CURSOR_START = "\x1b_pi:fc\x07"; // pi-tui wraps the cursor cell in these markers (renderFakeCursor)
 const FAKE_CURSOR_END = "\x1b_pi:/fc\x07";
-const PRED_CLI = process.env.PRED_CLI ?? fileURLToPath(new URL("../../bin/pred", import.meta.url));
+const GHOSTD = process.env.GHOSTD ?? fileURLToPath(new URL("../../ghostd", import.meta.url));
 
 let daemonStart: Promise<void> | undefined;
 let lastStart = 0;
 
-/** Start predictd and the ghost server (bin/pred start returns when both answer). One start at a time, and at most one every
+/** Start ghostd in the background (it starts predictd) and wait until it answers. One start at a time, and at most one every
  * 10 s: the services exit after 30 idle minutes, so a long pi session may need to start them again. */
 function startDaemon(): Promise<void> {
 	if (!daemonStart && Date.now() - lastStart > 10_000) {
 		lastStart = Date.now();
-		daemonStart = new Promise<void>((resolve) => {
-			if (!existsSync(PRED_CLI)) return resolve();
-			const p = spawn(PRED_CLI, ["start"], { stdio: "ignore", detached: true });
-			p.on("exit", () => resolve());
-			p.on("error", () => resolve());
-		}).finally(() => {
+		daemonStart = (async () => {
+			if (!existsSync(GHOSTD)) return;
+			const p = spawn(GHOSTD, ["--port", String(PORT)], { stdio: "ignore", detached: true });
+			p.on("error", () => {});
+			p.unref();
+			for (let i = 0; i < 150; i++) {
+				try {
+					if ((await fetch(`http://127.0.0.1:${PORT}/health`)).ok) return;
+				} catch {}
+				await new Promise((r) => setTimeout(r, 200));
+			}
+		})().finally(() => {
 			daemonStart = undefined;
 		});
 	}
