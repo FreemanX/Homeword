@@ -17,12 +17,14 @@ on-device model through the local engine, so your words never leave home (the Ma
   **⌘C** copies the result, **Esc** cancels. The app being edited keeps its undo. A warning appears when a paragraph came back much
   shorter than it was (the model dropped something): check before replacing. Long texts take about 1 s per paragraph.
 - **Prompts you can tune**: every prompt (one per writing style, proofread, rewrite) is editable, instructions and examples, with
-  token counts, a built-in benchmark against the default, and the last 20 saved versions.
+  token counts, a benchmark on built-in test cases (viewable) and your own, compared with the default, and the last 20 saved
+  versions.
 - **Statistics** for improving it: latency, acceptance, keystrokes saved, per writing style and app, proofreading outcomes. Counts
   and timings only, never text.
 
 The app is UI only, with no prediction or proofreading logic. It calls the engine: the policies' HTTP server on `127.0.0.1:47321`
-(`/predict`, `/warm`, `/proofread`, `/prompts`, `/tokens`, `/bench`, `/history`; see [docs/ARCHITECTURE.md](../docs/ARCHITECTURE.md)),
+(`/predict`, `/warm`, `/proofread`, `/prompts`, `/tokens`, `/bench`, `/history`, `/suite`, `/cases`, `/settings`; see
+[docs/ARCHITECTURE.md](../docs/ARCHITECTURE.md)),
 which uses predictd.
 
 ```mermaid
@@ -120,15 +122,16 @@ Rewrite); a dot marks your version. For the selected one:
 - Save (⌘S) applies it to the next request; Revert drops unsaved edits; Reset to Default restores the shipped prompt.
 - **Your test cases**: the same two-box editor (typed text | what comes next; for proofreading, text | corrected text). Saved per
   prompt as you type, on this Mac, outside the repo.
-- **Benchmark**: the built-in test cases (200 texts from `bench/cases.json` and `bench/styles.json`, at least 25 per category),
-  each tagged with a category: Chat, Email, Work documents, Academic, Code, General, Terminal. View… opens them read-only, per
-  category (typed text | what comes next, the same paired view as the editors). A case that shares text with one of the prompt's
-  examples is left out (a note says how many, and the viewer marks its line): it would test recall, not prediction. Run Full Benchmark runs the draft (or the saved prompt) on all of
-  them plus your cases; Run Your Cases runs only yours; Run Default runs the shipped prompt for comparison. A progress bar counts
-  the cases (a full run takes about a minute; suggestions pause meanwhile). The results table has a row per category, All categories,
-  and Your cases as its own row: cases, next word right, words right (mean matching leading words), word completions right, shown
-  and latency p50, with the difference to the default prompt in green or red. Proofreading: fully corrected and word match on 12
-  sentences with known mistakes; rewriting: length and latency only.
+- **Benchmark**: the built-in test cases (200 texts from `bench/cases.json` and `bench/styles.json`, at least 25 per category), each
+  tagged with a category: Chat, Email, Work documents, Academic, Code, General, Terminal. View… opens them read-only, per category
+  (typed text | what comes next, the same paired view as the editors). A case that shares text with one of the prompt's examples is
+  left out (a note says how many, and the viewer marks its line): it would test recall, not prediction. Run Full Benchmark runs the
+  draft (or the saved prompt) on all of them plus your cases; Run Your Cases runs only yours; Run Default runs the shipped prompt
+  for comparison. A progress bar counts the cases (a full run takes about a minute; suggestions pause meanwhile). It runs with your
+  settings, so words to suggest changes the numbers. The results table has a row per category, All categories, and Your cases as its
+  own row: cases, next word right, words right (mean matching leading words), word completions right, shown and latency p50, with
+  the difference to the default prompt in green or red. Proofreading: fully corrected and word match on 12 sentences with known
+  mistakes; rewriting: length and latency only.
 - **Saved versions**: the last 20 per prompt, with their benchmark results. Load puts one back in the editor.
 - An ⓘ next to each section and column name explains it when the pointer rests on it (also on the Statistics tab).
 
@@ -137,7 +140,8 @@ Email, Work documents and Academic have their own instructions and six examples;
 chat and six chat examples; Code keeps General's instructions, four of its mixed examples and two code examples, because six
 code-only examples lost to the mixed ones.
 Prompts and history are kept by the engine in `~/.config/input-predictor/` (`prompts.json`, `prompt-history.json`), outside the
-repo, so `pred try` and the agent integrations use them too.
+repo, so `pred try` and the agent integrations use them too; your test cases are in `test-cases.json` there. Results from an
+older version of the built-in cases are not shown (they are not comparable).
 
 **Statistics.** Suggestions shown and accepted, words, keystrokes saved, key → pop-up latency, by writing style and by app, and
 proofreading outcomes. Reveal the file, Reset, Refresh.
@@ -201,6 +205,9 @@ compile without it). Launch arguments for checking the UI without a target app:
 ```sh
 open app/build/Homeword.app --args -show prompts                # general, apps, prompts, stats, engine
 open app/build/Homeword.app --args -show prompts -promptsSelect predict-chat -promptsAnchor bench   # a prompt's benchmark
+open app/build/Homeword.app --args -show prompts -promptsSuite 1      # the built-in test cases viewer
+open app/build/Homeword.app --args -show prompts -infoTip "How often"  # opens the ⓘ whose text starts with this
+open app/build/Homeword.app --args -show prompts -pairedHighlight 2    # line 3 of the paired editors shown as current
 open app/build/Homeword.app --args -demoProofread file.txt [-demoMode rewrite]   # the panel on a file's text; Replace is off
 ```
 
@@ -209,7 +216,7 @@ open app/build/Homeword.app --args -demoProofread file.txt [-demoMode rewrite]  
 - Prototype. Single-line `NSTextField`s in some apps report no caret rect: the pop-up sits under the field.
 - Proofreading a long text shows a spinner until all paragraphs are done (about 1 s each); no progress per paragraph yet.
 - Synthetic typing goes to the focused app. If focus moves between the Tab press and the insertion, the word lands there.
-- The first keystroke in a style with a different prompt (Work documents, or one you changed) is ~70 ms slower; switching apps warms
-  it in advance. After a proofread, the first keystroke is slower once too.
+- Every writing style has its own prompt, so the first keystroke after switching to another style is ~70 ms slower; switching apps
+  warms it in advance. After a proofread, the first keystroke is slower once too.
 - Web app detection is untested in Firefox; where no page URL is exposed, web apps use the browser's style (General).
 - On a managed Mac, check whether Apple Intelligence features may be used before relying on this.

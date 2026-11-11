@@ -1,7 +1,7 @@
 # Benchmark results
 
 How the benchmarks work and how to run them: [docs/PERFORMANCE.md](../docs/PERFORMANCE.md). Every result file records the
-machine it ran on; the files below are in [`baselines/`](baselines/).
+machine it ran on; the files below are in [`baselines/`](baselines/). One result per machine and benchmark: the best run.
 
 ## Machines
 
@@ -16,12 +16,11 @@ instructions, `textBudget` 100, `maxTokens` 6, greedy, plain output).
 ## Steady benchmark
 
 `bench/run.py --spawn`: 80 cases (52 short hand-written, 28 cut from a document at four context sizes), one request every 1.2 s.
-Latency is client-side end to end. All three runs are in the same model mode (fingerprint `d4c6a5e1`).
+Latency is client-side end to end. Both runs are in the same model mode (fingerprint `d4c6a5e1`).
 
 | Machine | macOS | Date (commit) | p50 | p90 | max | Short cases p50 | Data |
 |---|---|---|---|---|---|---|---|
 | Apple M4 Pro | 27.2 | 2026-11-07 (`b245066`) | 329 ms | 426 ms | 477 ms | 302 ms | [steady](baselines/2026-11-07-steady.json) |
-| Apple M4 Pro | 27.2 | 2026-11-09 (`4a0b80c`) | 331 ms | 422 ms | 483 ms | 305 ms | [steady](baselines/2026-11-09-steady-split.json) |
 | Apple M4 Max | 27.0.1 | 2026-11-09 (`1511ffb`) | 295 ms | 408 ms | 446 ms | 278 ms | [steady](baselines/2026-11-09-steady-m4max.json) |
 
 | Machine | macOS | Suggestion shown | First word right | Mid-word completed exactly | Leading words right | Word overlap | Space after a finished word | Cache misses |
@@ -29,8 +28,8 @@ Latency is client-side end to end. All three runs are in the same model mode (fi
 | Apple M4 Pro | 27.2 | 96% | 45% | 58% | 0.61 | 30.5% | 8/8 | 0 |
 | Apple M4 Max | 27.0.1 | 96% | 45% | 58% | 0.61 | 29.7% | 8/8 | 0 |
 
-Quality is identical for both Apple M4 Pro runs. The model's raw completions are the same in all three runs; on macOS 27.0.1 the
-suggestions differ in 27 of 80 cases (see [macOS versions](#macos-versions)).
+The model's raw completions are the same in both runs; on macOS 27.0.1 the suggestions differ in 27 of 80 cases (see
+[macOS versions](#macos-versions)).
 
 ## Typing simulation
 

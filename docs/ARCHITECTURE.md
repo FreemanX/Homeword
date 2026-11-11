@@ -22,7 +22,7 @@ flowchart TB
     end
     subgraph policy["Policies"]
         direction LR
-        srv["policy server<br/>HTTP 127.0.0.1:47321<br/>/predict, /warm, /proofread,<br/>/prompts, /tokens, /bench"]
+        srv["policy server<br/>HTTP 127.0.0.1:47321<br/>/predict, /warm, /proofread,<br/>/prompts, /bench, /settings, ..."]
         lib["ghost.policy (Python)<br/>prompt, trim, assemble"]
         pr["ghost.proofread (Python)<br/>fix, rewrite, diff"]
         other["other policies<br/>future"]:::future
@@ -181,12 +181,12 @@ parameters and harness setup: [OPENAI.md](OPENAI.md).
 
 **Writing styles.** One prompt per style: `general` (`ghost/prompt.json`, the prompt the benchmarks have always used) and `chat`,
 `email`, `work`, `academic`, `code` (`ghost/styles.json`). A request names its style (`context`) and gets that style's prompt and
-its label in the `App:` line. Chat, email, academic and code use general's instructions and its 6 mixed examples (the user's
-version, if any) followed by 2 examples in their own register; work has its own instructions and examples. Measured on the suite:
-6 style-only examples did worse than general's prompt (broken word completions in code, 68% vs 79% next word right), while the 6
-mixed examples teach the answer format and 2 more add the register ([bench/RESULTS.md](../bench/RESULTS.md)). Each style is its
-own profile: the first request after switching costs ~70 ms more, which `POST /warm` (pin + predictd's `prewarm`) moves to when
-the user switches apps.
+its label in the `App:` line. Every style has 6 examples: email, work and academic with their own short instructions and examples;
+chat with general's instructions plus a line about chat and 6 chat examples; code with general's instructions, 4 of its mixed
+examples and 2 code examples (6 code-only examples lost 4 of 25 cases). Each was chosen on tuning cases (`bench/styles-dev.json`)
+and checked on the suite; only work beats general's prompt on its category in both model modes, the others are within a few cases
+([bench/RESULTS.md](../bench/RESULTS.md)). Each style is its own profile: the first request after switching costs ~70 ms more, which
+`POST /warm` (pin + predictd's `prewarm`) moves to when the user switches apps.
 
 `ghost/policy.py` registers one profile built from `ghost/prompt.json` (instructions + the first `shots` examples, named by a hash
 of its content) and pins it. Then, per keystroke:
@@ -318,7 +318,9 @@ its profile changes.
 work 25, academic 25, code 25, general 49, terminal 25) and keeping its own app label. A prompt runs on all of them, so one run shows
 how it does on every kind of text; results are reported per category. A case that shares text with one of the prompt's examples is
 skipped and counted (`skipped`): it would test recall of the example. No shipped example is in the suite or in the tuning cases
-(`bench/styles-dev.json`, 30 per style, used only to choose the style prompts): `python3 -I ghost/evaluate.py --check`. The user's cases run with the prompt's own label and are reported
-as a separate section. Metrics: latency p50/p90, next word right (`acc1`), words right (`lead`), word completions right
-(`mid_word_ok`), shown; proofreading: fully corrected, word match; rewriting: latency and length ratio. Benchmarks from the command line (`run.py`, `human_pty.py`, `openai_compare.py`) ignore the user's prompts
-and config overrides (`Ghost(user=False)`, `PRED_NO_USER=1`), so their numbers stay comparable.
+(`bench/styles-dev.json`, 30 per style, used only to choose the style prompts): `python3 -I ghost/evaluate.py --check`. The
+user's cases run with the prompt's own label and are reported as a separate section. Metrics: latency p50/p90, next word right
+(`acc1`), words right (`lead`), word completions right (`mid_word_ok`), shown; proofreading: fully corrected, word match;
+rewriting: latency and length ratio. Benchmarks from the command line (`run.py`, `human_pty.py`, `openai_compare.py`) ignore the
+user's prompts and config overrides (`Ghost(user=False)`, `PRED_NO_USER=1`), so their numbers stay comparable; a benchmark run in
+Homeword uses the engine, so the user's settings (e.g. words to suggest) apply.

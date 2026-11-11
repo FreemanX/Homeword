@@ -8,11 +8,12 @@ It is built in three layers, keeping **mechanism and policy apart**:
 - **predictd**: a model host, mechanism only. It keeps named system prompts ("profiles") with their prefix cache warm and
   generates plain or structured output with the limits each caller asks for. It knows nothing about typing. It also speaks the
   **OpenAI chat API**, so agent harnesses can use the on-device model directly.
-- **ghost**: the policies (Python). Typing prediction owns the prompt and examples, the context trimming and the rules that turn
-  the model's answer into a ghost (word glue, spelling, one sentence, five words). Proofreading fixes or rewrites a selected text.
+- **ghost**: the policies (Python). Typing prediction owns the prompt and examples, the context trimming and the rules that turn the
+  model's answer into a ghost (word glue, spelling, one sentence, up to five words by default). Proofreading fixes or rewrites a
+  selected text.
 - **Applications**: `pred try` in a terminal, ghost text in the pi and Claude Code prompt boxes, and Homeword, a menu bar Mac app
-  that suggests the next words in any text field (in a writing style that follows the app) and proofreads the selection. Other policies (summarise, commit messages, triage) can share the same
-  predictd.
+  that suggests the next words in any text field (in a writing style that follows the app) and proofreads the selection. Other
+  policies (summarise, commit messages, triage) can share the same predictd.
 
 ```mermaid
 flowchart TB
@@ -94,11 +95,11 @@ Details and permanent install: [integrations/pi](integrations/pi/README.md).
 
 ### Claude Code: ghost text in the prompt box
 
-A Claude Code mod (a plugin with a hooks module) that paints the ghost as dim virtual text after the cursor. Accepting with Tab and →
-needs two entries in `keybindings.json`, which apply to every session: read [integrations/claude-code](integrations/claude-code/README.md)
-before installing it.
+A Claude Code mod (a plugin with a hooks module) that paints the ghost as dim virtual text after the cursor. Accepting with Tab and
+→ needs two entries in `keybindings.json`, which apply to every session: read
+[integrations/claude-code](integrations/claude-code/README.md) before installing it.
 
-Last keystroke → ghost on screen, human-like typing in tmux (Apple M4 Pro, macOS 27.2): pi 117-156 ms p50, Claude Code 157-161 ms p50.
+Last keystroke → ghost on screen, human-like typing in tmux (Apple M4 Pro, macOS 27.2): pi 117 ms p50, Claude Code 157 ms p50.
 
 ### Homeword: any text field, plus proofreading
 
@@ -136,11 +137,11 @@ prompts small. Setup for the `openai` SDK, pi and others: [docs/OPENAI.md](docs/
 
 ## Status
 
-A research prototype. Benchmark results:
+A research prototype. Benchmark results (the best run per machine):
 
 | Machine | Steady p50 | Typing key → ghost p50 |
 |---|---|---|
-| Apple M4 Pro, 16-core GPU, 48 GB, macOS 27.2 | 329-331 ms | 259 ms |
+| Apple M4 Pro, 16-core GPU, 48 GB, macOS 27.2 | 329 ms | 259 ms |
 | Apple M4 Max, 32-core GPU, 36 GB, macOS 27.0.1 | 295 ms | 258 ms |
 
 Details and raw data: [bench/RESULTS.md](bench/RESULTS.md).

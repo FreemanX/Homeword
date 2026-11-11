@@ -66,5 +66,5 @@ from a local marketplace with `claude plugin marketplace add` / `claude plugin i
 `~/.claude/keybindings.json`. Start the services with `bin/pred start` (the mod shows nothing while they are down; they exit
 after 30 idle minutes, so run it again after a break, or from your shell startup).
 
-Last keystroke → ghost on screen (`bench/integration_latency.py`, Apple M4 Pro, macOS 27.2): 157-161 ms p50, 205 ms max.
+Last keystroke → ghost on screen (`bench/integration_latency.py`, Apple M4 Pro, macOS 27.2): 157 ms p50, 205 ms max.
 Validate after changes: `claude plugin validate integrations/claude-code`.

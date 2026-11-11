@@ -97,18 +97,20 @@ print(ghost.predict(link, "chat", "See you tomor")["suggestion"])   # row for co
 pi and Claude Code send `app: "coding agent prompt"` and no style (general), which is not an example label: the model treats it as
 chat-like prose. Homeword sends a writing style (`context`) picked per app and per web app (`app/Sources/Styles.swift`), warms it
 on app switch (`POST /warm`), uses the proofreading policy (`POST /proofread`) on the selection, edits and benchmarks prompts
-(`/prompts`, `/tokens`, `/bench`, `/history`), and logs usage metrics (counts and timings, no text) that `bench/app_metrics.py`
-summarises.
+(`/prompts`, `/tokens`, `/bench`, `/history`, `/suite`, `/cases`), sets the words to suggest (`/settings`), and logs usage
+metrics (counts and timings, no text) that `bench/app_metrics.py` summarises.
 
 ### Ideas for the next applications
 
 - **Shell (zsh)**: a ZLE widget on `self-insert` showing the answer as `POSTDISPLAY` (fish-style). Shells already complete commands,
-  so the value is in commit messages, quoted strings and comments; send `app: "terminal"` (the prompt has a few `terminal` examples; add more).
+  so the value is in commit messages, quoted strings and comments; send `app: "terminal"` (the prompt has a few `terminal` examples;
+  add more).
 - **Other terminal agents**: anything with a prompt-editor hook works like the samples. Codex has no extension point for its prompt
   box today (it would need a patch).
 - **Homeword, next steps**: inline ghost text instead of a pop-up needs an input method (InputMethodKit), which owns the marked text
-  in every app; more benchmark cases per style (14 is coarse); tuning from the collected metrics (acceptance by style and app,
-  latency tail). Still open: whether the on-device model may be used on a managed Mac (check the policy first).
+  in every app; more benchmark cases per style (25 is still coarse: one case is 4 points); tuning from the collected metrics
+  (acceptance by style and app, latency tail). Still open: whether the on-device model may be used on a managed Mac (check the
+  policy first).
 
 ## A new policy on predictd
 
@@ -196,6 +198,8 @@ Add a `case` to `Engine.handle` and answer with `conn.send([...])` including the
 
 - `python3 -I bench/try_pty_test.py`: drives `pred try` through a pty (smoke test of policy + mechanism).
 - `python3 -I bench/run.py --spawn`: the fixed benchmark; quality numbers must not drop without a reason.
+- `python3 -I ghost/evaluate.py --check`: no prompt example appears in the benchmark or tuning cases (after editing either).
+- `python3 -I bench/run.py --spawn --styles`: every writing style's prompt on the suite, per category (after changing a prompt).
 - Integrations: run the real app in tmux and measure with `bench/integration_latency.py` (see its docstring). Test Claude Code with
   a throwaway `CLAUDE_CONFIG_DIR` holding the keybindings, never by editing `~/.claude/keybindings.json`.
 - `claude plugin validate integrations/claude-code` after changing the mod.

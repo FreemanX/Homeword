@@ -1,8 +1,15 @@
 # Mac app, version 2: design
 
-Status: implemented (Homeword). Changes from the plan after measuring: chat, email, academic and code default to
-general's prompt (prompts written for them did worse on their cases, see bench/RESULTS.md); switching between prompts costs ~70 ms
-on the first request, not the ~0.4 s assumed below.
+Status: implemented (Homeword). Changes from the plan below, after measuring or later requests:
+
+- Benchmark: every prompt runs on the whole suite (`bench/cases.json` + `bench/styles.json`, 200 cases, at least 25 per category)
+  and is reported per category, plus the user's own test cases as a separate section; the built-in cases can be viewed read-only.
+  Not "12-15 cases per style". A case that shares text with the prompt's examples is skipped.
+- Style prompts: chosen on separate tuning cases (`bench/styles-dev.json`) and checked on the suite; each has 6 examples (email,
+  work, academic their own instructions; chat and code general's instructions; code keeps 4 of general's mixed examples). See
+  bench/RESULTS.md.
+- Switching between prompts costs ~70 ms on the first request, not the ~0.4 s assumed below.
+- Added: words to suggest (1-10) in General, info tips (ⓘ) on the Prompts and Statistics tabs. Window 880 × 660.
 
 Scope of this round: user-facing names, a writing style per app (detected automatically, adjustable), a prompt per style with a
 built-in benchmark and a history of versions, custom shortcuts, an app picker instead of bundle IDs, and an Engine tab that

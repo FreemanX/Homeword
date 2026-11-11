@@ -8,9 +8,9 @@ Context for an AI agent (or a human) who develops, benchmarks or extends this pr
 ## What this is
 
 A research prototype of a typing predictor on Apple's on-device language model (FoundationModels framework, macOS 27): given the app
-and the text typed so far, show a gray "ghost" with the rest of the unfinished word plus up to 5 more words, within one sentence. The
-owner works experiment-first: measure, then decide. It runs in `pred try`, in two coding agents (pi, Claude Code) and in Homeword,
-a prototype menu bar Mac app (any text field, a writing style per app, proofreading of the selection).
+and the text typed so far, show a gray "ghost" with the rest of the unfinished word plus up to 5 more words (adjustable, 1-10),
+within one sentence. The owner works experiment-first: measure, then decide. It runs in `pred try`, in two coding agents (pi, Claude
+Code) and in Homeword, a prototype menu bar Mac app (any text field, a writing style per app, proofreading of the selection).
 
 **Design principle: separate mechanism from policy.** The owner asked for this explicitly; keep it when changing anything.
 
@@ -76,7 +76,7 @@ Policy (ghost, typing):
 3. **Ask**: `generate` with `App: <app>\nText: <tail>`, plain text (a schema cost ~200 ms), greedy, `maxTokens` 6.
 4. **Assemble**: the model returns the remaining letters of the unfinished word, then next words. Glue + spell check (predictd's
    `spell` op), re-space when the model dropped the space after a finished word, drop a word cut by the token cap, stop at the end of
-   the first sentence, cap at 5 words.
+   the first sentence, cap at `words` (5).
 5. **Applications** (`pred try`, pi, Claude Code): request on every keystroke, follow the ghost when the typed char matches it;
    `pred try` also remembers answers by exact text and prefetches the continuation of a shown ghost.
 
@@ -111,7 +111,8 @@ Policy (ghost, typing):
   looks odd, re-run before bisecting: a mode switch once made a harmless change look like a 70 ms regression.
 - Quality metrics are exact word matches against one real continuation: treat them as relative. Mid-word completion accuracy is the
   most objective number.
-- To share a run, copy it to `bench/baselines/` (name: `<date>-<scenario>-<chip>.json`) and add a row to the tables in
+- Results keep one run per machine spec and benchmark: the best one (lowest latency at equal quality). To share a run that beats
+  the current one, replace its file in `bench/baselines/` (name: `<date>-<scenario>-<chip>.json`) and its row in the tables in
   `bench/RESULTS.md`. Present results plainly: the machine by its specs (chip, GPU, memory, macOS version) in the Machines table and
   a Machine column, the numbers in the tables, the JSON file only as a link. No personal context ("this laptop", "my machine",
   "here"), no narrative. Put before/after numbers in the commit message.
@@ -136,9 +137,10 @@ Policy (ghost, typing):
 - **Mechanism vs policy**: predictd must not learn what its text is for (no words, keystrokes, apps, typing rules in Swift). If
   every policy would need it (caching, cancelling, limits, OS services), it goes in predictd as a generic op or field; otherwise in
   the policy. The integrations are UI only: no prediction logic in TypeScript.
-- A new tunable is a knob, not a constant: daemon-wide → `Config` + predictd.json; per request → a `generate`/profile field; policy →
-  ghost/config.json. Plus a row in docs/CONFIG.md (steps in docs/DEVELOPING.md). Results must not record machine paths (`run.py`
-  drops the daemon's `socketPath`). Mermaid diagrams in docs must render on GitHub: quoted labels, `<br/>` for line breaks, no node ids named `style`, `end` or `class`.
+- A new tunable is a knob, not a constant: daemon-wide → `Config` + predictd.json; per request → a `generate`/profile field; policy
+  → ghost/config.json. Plus a row in docs/CONFIG.md (steps in docs/DEVELOPING.md). Results must not record machine paths (`run.py`
+  drops the daemon's `socketPath`). Mermaid diagrams in docs must render on GitHub: quoted labels, `<br/>` for line breaks, no node
+  ids named `style`, `end` or `class`.
 
 ## Testing the integrations
 
@@ -154,10 +156,10 @@ cursor). Test Claude Code with a throwaway `CLAUDE_CONFIG_DIR` holding the keybi
 - zsh: never name a loop variable `path` (it is tied to `PATH`).
 - A freshly compiled binary is slow on its very first launch; `build.sh` runs it once.
 - `python3` may be a wrapper on some machines; any Python 3.9+ works.
-- Mac app: no SwiftUI `@State` (a macro on macOS 27 SDKs; its plugin ships with Xcode only, and `app/build.sh` uses the command
-  line tools): keep view state in `ObservableObject`s. Check UI with `--args -show <tab>` / `-demoProofread file` / `-infoTip <text prefix>` (opens that ⓘ popover) / `-promptsSuite 1`
-  (opens the built-in test cases) and a window
-  screenshot (`screencapture -l <window id>`), never a full-screen one.
+- Mac app: no SwiftUI `@State` (a macro on macOS 27 SDKs; its plugin ships with Xcode only, and `app/build.sh` uses the command line
+  tools): keep view state in `ObservableObject`s. Check UI with `--args -show <tab>` / `-demoProofread file` / `-infoTip <text
+  prefix>` (opens that ⓘ popover) / `-promptsSuite 1` (opens the built-in test cases) and a window screenshot (`screencapture -l
+  <window id>`), never a full-screen one.
 - Importing `bench/run.py` used to start a benchmark; it now has a `__main__` guard. Keep scripts importable.
 
 ## Open questions and future work
@@ -169,5 +171,6 @@ cursor). Test Claude Code with a throwaway `CLAUDE_CONFIG_DIR` holding the keybi
 - Quality on the owner's real typing (keep that data local and out of git); the 80 cases are a small proxy.
 - Known misses: an abbreviation the spell checker accepts ("fri") gets split from the model's next word when the model ignores it;
   one-letter prefixes are guesses ("won't j" → "job").
-- Untested: CJK and other languages (trimming and word logic assume spaces), the Private Cloud Compute model, the trigger of the slow mode.
+- Untested: CJK and other languages (trimming and word logic assume spaces), the Private Cloud Compute model, the trigger of the
+  slow mode.
 - Further latency means trading quality (fewer examples, shorter answers) or a different, smaller local model (not Apple's).
