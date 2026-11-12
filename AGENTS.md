@@ -197,7 +197,8 @@ benchmark: the best run. To measure this Mac and record it:
 
 Drive the real apps in tmux (they render to a terminal; nothing else shows the ghost). The Mac app needs the Accessibility
 permission, which only the owner can grant (it survives rebuilds: `build.sh` signs with a bundle-ID requirement); `status.json` in
-the app's support folder shows the permission state. Clear a Claude Code draft with `C-e` then `C-u` (`C-u` only kills before the
+the app's support folder shows the permission state, `fields.json` there why a field was or was not read, per app (role and
+attribute names, no text). Clear a Claude Code draft with `C-e` then `C-u` (`C-u` only kills before the
 cursor). Test Claude Code with a throwaway `CLAUDE_CONFIG_DIR` holding the keybindings, never by editing
 `~/.claude/keybindings.json`: that binds Tab and → in every session, including ones without the mod. Agent sandboxes may block
 `claude`/`pi` (they use `sandbox-exec` themselves); run them in a tmux session the agent owns.

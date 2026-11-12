@@ -88,18 +88,24 @@ to an older signature: remove it (–), or `tccutil reset Accessibility dev.home
 Monitoring, event posting). If Accessibility is allowed but the menu says "Keyboard: blocked", also allow the app in Privacy &
 Security → Input Monitoring.
 
+**No suggestions in one app.** `~/Library/Application Support/Homeword/fields.json` shows, per app, the outcome of the last read of
+the field being typed in (`ok`, `not a text field`, `no caret`, `selection`, `unreadable`, ...) and the shape of the focused element:
+its role, subrole and the names of its Accessibility attributes. Names only, never text. Type in the app, then compare its entry
+with one that works.
+
 **macOS inline predictions.** macOS shows its own inline predictive text in many apps. With both on you see two suggestions, and Tab
 may go to either. Turn off System Settings → Keyboard → Text Input → "Show inline predictive text", or Homeword's suggestions.
 
 ## Where it works
 
 Suggestions need a text field that exposes its text and caret through Accessibility: native apps (TextEdit, Mail, Notes, Messages,
-Pages, Xcode), and Safari. In Chrome-based browsers and Electron apps (Slack, VS Code) the app turns on their accessibility tree
-(the "Chrome-based browsers" setting), which makes some of them slower. Where the caret position is unknown the pop-up sits at the
-field's bottom left. Suggestions appear only at the end of a line, as in the other integrations.
+Pages, Xcode), and Safari. WebKit editors that expose no character ranges (Mail's message body, an editable `AXWebArea`) are read
+through WebKit's text markers instead. In Chrome-based browsers and Electron apps (Slack, VS Code) the app turns on their
+accessibility tree (the "Chrome-based browsers" setting), which makes some of them slower. Where the caret position is unknown the
+pop-up sits at the field's bottom left. Suggestions appear only at the end of a line, as in the other integrations.
 
-Proofreading uses the Accessibility selection, or copies the selection (⌘C, the pasteboard is restored) where that is not exposed.
-Replace pastes the result, so it works wherever paste does.
+Proofreading uses the Accessibility selection (or its text markers in WebKit editors), or copies the selection (⌘C, the pasteboard
+is restored) where that is not exposed. Replace pastes the result, so it works wherever paste does.
 
 Terminals and password managers are Off by default: shells have their own completion and Tab.
 

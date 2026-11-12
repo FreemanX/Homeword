@@ -38,12 +38,14 @@ enum AX {
         string(e, kAXRoleAttribute) == "AXSecureTextField" || string(e, kAXSubroleAttribute) == kAXSecureTextFieldSubrole
     }
 
+    /// A text field, or an editable element with a caret: a settable value and a selection, as a character range or, in WebKit
+    /// editors without one (Mail's message body: an editable AXWebArea), as text markers.
     static func isTextInput(_ e: AXUIElement) -> Bool {
         let role = string(e, kAXRoleAttribute) ?? ""
         if ["AXTextField", "AXTextArea", "AXComboBox", "AXSearchField"].contains(role) { return true }
         var settable: DarwinBoolean = false
         return AXUIElementIsAttributeSettable(e, kAXValueAttribute as CFString, &settable) == .success && settable.boolValue
-            && attr(e, kAXSelectedTextRangeAttribute) != nil
+            && (attr(e, kAXSelectedTextRangeAttribute) != nil || TextMarkers.selection(e) != nil)
     }
 
     static func selectedRange(_ e: AXUIElement) -> CFRange? {
@@ -127,10 +129,17 @@ struct FieldSnapshot {
 
     /// nil, with the reason, when there is nothing to predict for.
     static func read() -> (FieldSnapshot?, String) {
-        guard let e = AX.focused() else { return (nil, "no focus") }
+        let e = AX.focused()
+        let (snap, reason) = read(e)
+        FieldDiag.note(e, snap?.bundle, reason)
+        return (snap, reason)
+    }
+
+    private static func read(_ focused: AXUIElement?) -> (FieldSnapshot?, String) {
+        guard let e = focused else { return (nil, "no focus") }
         if AX.isSecure(e) { return (nil, "secure field") }
         guard AX.isTextInput(e) else { return (nil, "not a text field") }
-        guard let sel = AX.selectedRange(e) else { return (nil, "no caret") }
+        guard let sel = AX.selectedRange(e) else { return readMarkers(e) }
         if sel.length != 0 { return (nil, "selection") }
         let caret = sel.location
         let start = max(0, caret - window)
@@ -156,6 +165,66 @@ struct FieldSnapshot {
         return (FieldSnapshot(element: e, pid: pid, bundle: bundle, before: b, atLineEnd: a.isEmpty || a == "\n" || a == "\r",
                               caret: caretRect, field: AX.frame(e), host: host), "ok")
     }
+
+    /// The same through WebKit's text markers, for editors without character ranges (Mail's message body).
+    private static func readMarkers(_ e: AXUIElement) -> (FieldSnapshot?, String) {
+        guard let (start, end) = TextMarkers.selection(e) else { return (nil, "no caret") }
+        guard TextMarkers.length(e, start, end) == 0 else { return (nil, "selection") }
+        let caret = start
+        let from = TextMarkers.index(e, caret).flatMap { TextMarkers.marker(e, index: max(0, $0 - window)) }
+            ?? TextMarkers.documentStart(e) ?? caret
+        guard var b = TextMarkers.string(e, from, caret) else { return (nil, "unreadable") }
+        b = String(b.suffix(window)).replacingOccurrences(of: "\u{00A0}", with: " ")   // editors type a trailing space as a no-break space
+        let next = TextMarkers.next(e, caret)
+        let a = next.flatMap { TextMarkers.string(e, caret, $0) } ?? ""
+        var caretRect: CGRect? = nil
+        if !b.isEmpty, b.last != "\n", let prev = TextMarkers.previous(e, caret), let r = TextMarkers.bounds(e, prev, caret) {
+            caretRect = CGRect(x: r.maxX, y: r.minY, width: 1, height: r.height)
+        } else if let r = TextMarkers.bounds(e, caret, caret) {
+            caretRect = r
+        }
+        let pid = AX.pid(e)
+        let bundle = NSRunningApplication(processIdentifier: pid)?.bundleIdentifier ?? ""
+        let host = Style.browsers.contains(bundle) ? AX.pageHost(e) : nil
+        return (FieldSnapshot(element: e, pid: pid, bundle: bundle, before: b, atLineEnd: a.isEmpty || a == "\n" || a == "\r",
+                              caret: caretRect, field: AX.frame(e), host: host), "ok")
+    }
+}
+
+/// WebKit's text markers: opaque positions in a web area's text (AXTextMarker), used where an editor exposes no character ranges.
+enum TextMarkers {
+    private static func param(_ e: AXUIElement, _ name: String, _ arg: CFTypeRef) -> CFTypeRef? {
+        var v: CFTypeRef?
+        return AXUIElementCopyParameterizedAttributeValue(e, name as CFString, arg, &v) == .success ? v : nil
+    }
+    private static func asMarker(_ v: CFTypeRef?) -> AXTextMarker? {
+        guard let v, CFGetTypeID(v) == AXTextMarkerGetTypeID() else { return nil }
+        return (v as! AXTextMarker)
+    }
+    private static func range(_ a: AXTextMarker, _ b: AXTextMarker) -> AXTextMarkerRange { AXTextMarkerRangeCreate(nil, a, b) }
+
+    /// The selection's start and end (equal: a caret).
+    static func selection(_ e: AXUIElement) -> (AXTextMarker, AXTextMarker)? {
+        guard let v = AX.attr(e, "AXSelectedTextMarkerRange"), CFGetTypeID(v) == AXTextMarkerRangeGetTypeID() else { return nil }
+        let r = v as! AXTextMarkerRange
+        return (AXTextMarkerRangeCopyStartMarker(r), AXTextMarkerRangeCopyEndMarker(r))
+    }
+    static func documentStart(_ e: AXUIElement) -> AXTextMarker? { asMarker(AX.attr(e, "AXStartTextMarker")) }
+    static func index(_ e: AXUIElement, _ m: AXTextMarker) -> Int? { param(e, "AXIndexForTextMarker", m) as? Int }
+    static func marker(_ e: AXUIElement, index: Int) -> AXTextMarker? { asMarker(param(e, "AXTextMarkerForIndex", index as CFNumber)) }
+    static func next(_ e: AXUIElement, _ m: AXTextMarker) -> AXTextMarker? { asMarker(param(e, "AXNextTextMarkerForTextMarker", m)) }
+    static func previous(_ e: AXUIElement, _ m: AXTextMarker) -> AXTextMarker? { asMarker(param(e, "AXPreviousTextMarkerForTextMarker", m)) }
+    static func length(_ e: AXUIElement, _ a: AXTextMarker, _ b: AXTextMarker) -> Int? { param(e, "AXLengthForTextMarkerRange", range(a, b)) as? Int }
+    static func string(_ e: AXUIElement, _ a: AXTextMarker, _ b: AXTextMarker) -> String? {
+        param(e, "AXStringForTextMarkerRange", range(a, b)) as? String
+    }
+    /// Screen rectangle of the text between two markers (AX coordinates), nil when the editor gives none.
+    static func bounds(_ e: AXUIElement, _ a: AXTextMarker, _ b: AXTextMarker) -> CGRect? {
+        guard let v = param(e, "AXBoundsForTextMarkerRange", range(a, b)), CFGetTypeID(v) == AXValueGetTypeID() else { return nil }
+        var rect = CGRect.zero
+        guard AXValueGetValue(v as! AXValue, .cgRect, &rect), rect.height > 0, rect.origin != .zero else { return nil }
+        return rect
+    }
 }
 
 /// The selected text of the focused element, and where it is on screen.
@@ -170,9 +239,48 @@ struct SelectionSnapshot {
         guard let e = AX.focused(), !AX.isSecure(e) else { return nil }
         let pid = AX.pid(e)
         let bundle = NSRunningApplication(processIdentifier: pid)?.bundleIdentifier ?? ""
-        guard let text = AX.string(e, kAXSelectedTextAttribute), !text.isEmpty else { return nil }
         var rect: CGRect? = nil
-        if let r = AX.selectedRange(e) { rect = AX.bounds(e, range: r) }
+        var text = AX.string(e, kAXSelectedTextAttribute)
+        if text == nil, let (a, b) = TextMarkers.selection(e) {           // WebKit editors without AXSelectedText (Mail)
+            text = TextMarkers.string(e, a, b)?.replacingOccurrences(of: "\u{00A0}", with: " ")
+            rect = TextMarkers.bounds(e, a, b)
+        }
+        guard let text, !text.isEmpty else { return nil }
+        if rect == nil, let r = AX.selectedRange(e) { rect = AX.bounds(e, range: r) }
         return SelectionSnapshot(element: e, pid: pid, bundle: bundle, text: text, rect: rect ?? AX.frame(e))
+    }
+}
+
+/// Troubleshooting "no suggestions in this app": per app, the outcome of the last field read and the shape of the focused element
+/// (role, subrole, attribute names, whether its value is settable). Names only, never text or values. Written to fields.json next
+/// to the metrics whenever an app's outcome changes.
+enum FieldDiag {
+    private static let lock = NSLock()
+    private static var entries: [String: [String: Any]] = [:]       // bundle -> entry
+    private static var lastKey: [String: String] = [:]              // bundle -> role + outcome, to write only on a change
+
+    static func note(_ e: AXUIElement?, _ bundle: String?, _ outcome: String) {
+        let pid = e.map(AX.pid) ?? 0
+        let app = bundle ?? NSRunningApplication(processIdentifier: pid)?.bundleIdentifier ?? "?"
+        let role = e.flatMap { AX.string($0, kAXRoleAttribute) } ?? ""
+        lock.lock(); defer { lock.unlock() }
+        let key = role + "|" + outcome
+        guard lastKey[app] != key else { return }
+        lastKey[app] = key
+        var entry: [String: Any] = ["outcome": outcome, "role": role, "t": ISO8601DateFormatter().string(from: Date())]
+        if let e {
+            entry["subrole"] = AX.string(e, kAXSubroleAttribute) ?? ""
+            var names: CFArray?
+            if AXUIElementCopyAttributeNames(e, &names) == .success { entry["attributes"] = (names as? [String] ?? []).sorted() }
+            if AXUIElementCopyParameterizedAttributeNames(e, &names) == .success { entry["parameterized"] = (names as? [String] ?? []).sorted() }
+            var settable: DarwinBoolean = false
+            entry["valueSettable"] = AXUIElementIsAttributeSettable(e, kAXValueAttribute as CFString, &settable) == .success && settable.boolValue
+            if let parent = AX.attr(e, kAXParentAttribute), CFGetTypeID(parent) == AXUIElementGetTypeID() {
+                entry["parentRole"] = AX.string(parent as! AXUIElement, kAXRoleAttribute) ?? ""
+            }
+        }
+        entries[app] = entry
+        let url = Metrics.shared.url.deletingLastPathComponent().appendingPathComponent("fields.json")
+        try? JSONSerialization.data(withJSONObject: entries, options: [.prettyPrinted, .sortedKeys]).write(to: url)
     }
 }
