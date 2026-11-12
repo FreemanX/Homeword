@@ -721,11 +721,14 @@ struct SuiteSheet: View {
                 Button(L("Done")) { model.suiteShown = false }.keyboardShortcut(.defaultAction)
             }
             if model.suite.count > 1 {
-                Picker(L("Category"), selection: $model.suiteCategory) {
-                    ForEach(model.suite) { Text($0.title).tag($0.id) }
+                HStack {                                    // a menu: 7 categories plus one per writing language never fit as segments
+                    Picker(L("Category"), selection: $model.suiteCategory) {
+                        ForEach(model.suite) { Text($0.title).tag($0.id) }
+                    }
+                    .pickerStyle(.menu)
+                    .fixedSize()
+                    Spacer()
                 }
-                .pickerStyle(.segmented)
-                .labelsHidden()
             }
             Text(proof ? L("Read-only. Left: a sentence with mistakes; right: the corrected sentence the output is compared with.")
                        : L("Read-only. Left: the text typed so far; right: what was typed next. A suggestion counts as right when it "
