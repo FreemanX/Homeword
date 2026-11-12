@@ -5,12 +5,12 @@ measured on; results show the best run per machine.
 
 ## Summary
 
-| Measurement | Apple M4 Pro, macOS 27.2 | Apple M4 Max, macOS 27.0.1 | Apple M1 Pro, macOS 27.2 |
-|---|---|---|---|
-| Steady benchmark, p50 / p90 (`bench/run.py`) | 329 / 426 ms | 295 / 408 ms | 517 / 634 ms |
-| Typing simulation, key → ghost p50 / p90 (`bench/human_pty.py`) | 259 / 284 ms | 258 / 291 ms | 354 / 416 ms |
-| pi extension, last keystroke → ghost on screen p50 (`bench/integration_latency.py`) | 117 ms | not measured | not measured |
-| Claude Code mod, last keystroke → ghost on screen p50 | 157 ms | not measured | not measured |
+| Measurement | Apple M4 Pro, macOS 27.2 | Apple M4 Max, macOS 27.0.1 | Apple M1 Pro, macOS 27.2 | Apple M2, macOS 27.2.1 |
+|---|---|---|---|---|
+| Steady benchmark, p50 / p90 (`bench/run.py`) | 329 / 426 ms | 295 / 408 ms | 517 / 634 ms | 286 / 357 ms |
+| Typing simulation, key → ghost p50 / p90 (`bench/human_pty.py`) | 259 / 284 ms | 258 / 291 ms | 354 / 416 ms | 256 / 412 ms |
+| pi extension, last keystroke → ghost on screen p50 (`bench/integration_latency.py`) | 117 ms | not measured | not measured | not measured |
+| Claude Code mod, last keystroke → ghost on screen p50 | 157 ms | not measured | not measured | not measured |
 
 The rows measure different things. The steady benchmark sends unrelated texts, so only the prompt prefix is cached. While typing,
 the previous keystroke's text is cached too. In the integration runs, the ghost from an earlier keystroke often still fits and is

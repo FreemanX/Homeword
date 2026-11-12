@@ -196,6 +196,7 @@ A research prototype. Benchmark results (the best run per machine):
 | Apple M4 Pro, 16-core GPU, 48 GB, macOS 27.2 | 329 ms | 259 ms |
 | Apple M4 Max, 32-core GPU, 36 GB, macOS 27.0.1 | 295 ms | 258 ms |
 | Apple M1 Pro, 14-core GPU, 16 GB, macOS 27.2 | 517 ms | 354 ms |
+| Apple M2, 8-core GPU, 16 GB, macOS 27.2.1 | 286 ms | 256 ms |
 
 Details and raw data: [bench/RESULTS.md](bench/RESULTS.md).
 
