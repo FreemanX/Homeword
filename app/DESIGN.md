@@ -133,13 +133,15 @@ Permissions                              ● Accessibility allowed   [Open Setti
 
 - Dots: green = running, yellow = starting / stopping / restarting, red = stopped (with the reason: "stopped by you:
   predictions are paused", or "starts when you type" after it shut down when idle, or an error).
-- Start runs ghostd (bundled in a release build, else the repo's); Stop and Restart send it `POST /shutdown` (with predictd).
+- Start runs ghostd (bundled in a release build, else the repo's) unless a ghostd already answers on the port; Stop and Restart
+  send it `POST /shutdown` (with predictd).
   After Stop the app does not restart the engine on its own until Start.
 - Ports: saved to user config files outside the repo, then the engine restarts: `~/.config/homeword/config.json` (policy
   overrides, `serverPort`) and `~/.config/homeword/predictd.json` (predictd overrides, `httpPort`). This needs generic
   layering: predictd loads its `predictd.json`, then the user file if present; the policy loads `ghost/config.json`, then the user
   file. The pi and Claude Code integrations keep their own port settings; the tab says so.
-- Status: the app polls `GET /health` (engine) and predictd's HTTP `ping` (API) every 2 s while the tab is open, and on use.
+- Status: the app polls `GET /health` (engine: `service` must be `ghostd`; `availability` explains a model that cannot run) and
+  `GET /v1/models` (API) every 2 s while the tab is open, and on use.
 
 ## 7. Statistics
 

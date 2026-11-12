@@ -20,7 +20,7 @@ Where the time of one keystroke goes (Apple M4 Pro, short typing prompt):
 
 ```mermaid
 flowchart LR
-    key["keystroke"] --> send["client sends<br/>under 1 ms"]
+    key["keystroke"] --> send["client to ghostd to predictd<br/>HTTP + socket, 1-3 ms"]
     send --> model["model call, short prompt<br/>~100 ms fixed<br/>+ 0.55 ms per cached token<br/>+ 2 ms per new token<br/>+ 16 ms per output token"]
     model --> asm["assemble<br/>~1 ms"]
     asm --> draw["client draws<br/>a few ms"]
@@ -28,15 +28,15 @@ flowchart LR
 
 ## How the benchmarks work
 
-The benchmarks measure the ghost policy on predictd end to end: `run.py` imports `ghost.policy` and talks to a private predictd, so
-a run covers both layers (a change in either shows up). `bench/run.py` scenarios: `steady` (1.2 s between requests), `burst` (back
-to back), `idle` (15 s gaps: does the keep-alive keep the model loaded), `typing` (a request per keystroke on one stream, time from
-the last keystroke to its answer). Metrics: client-side end-to-end time (p50/p90/max, by context size), model time, prefix-cache hit
-rate, and quality against what the user really typed next: suggestion shown, first word right, completed-word exact match for
-mid-word cuts, leading words right, word overlap, echo, misspelled words. Each run is saved to `bench/results/` (git-ignored) with
-its rows, machine spec and a model-mode fingerprint, so two runs can be compared; shared runs live in `bench/baselines/`. To
-measure a machine (hardware + macOS) and record its results, step by step: "Recording results for a machine" in
-[AGENTS.md](../AGENTS.md#recording-results-for-a-machine).
+The benchmarks measure the typing policy on predictd end to end: `run.py` starts a private predictd and a private ghostd
+(`--no-user`) and sends its requests over HTTP, so a run covers both layers (a change in either shows up). `bench/run.py`
+scenarios: `steady` (1.2 s between requests), `burst` (back to back), `idle` (15 s gaps: does the keep-alive keep the model
+loaded), `typing` (a request per keystroke on one stream, time from the last keystroke to its answer). Metrics: client-side
+end-to-end time (p50/p90/max, by context size), model time, prefix-cache hit rate, and quality against what the user really typed
+next: suggestion shown, first word right, completed-word exact match for mid-word cuts, leading words right, word overlap, echo,
+misspelled words. Each run is saved to `bench/results/` (git-ignored) with its rows, machine spec and a model-mode fingerprint, so
+two runs can be compared; shared runs live in `bench/baselines/`. To measure a machine (hardware + macOS) and record its results,
+step by step: "Recording results for a machine" in [AGENTS.md](../AGENTS.md#recording-results-for-a-machine).
 
 Quality is exact word match against one real continuation, so it is harsh on the next-word part; the mid-word completion number is
 the most objective. Hand-written cases (52: mail, chat, notes, review, terminal, code, editor) are short; the 28 generated ones are
@@ -98,16 +98,16 @@ Apple M4 Pro, macOS 27.2, slow model mode, 40 steady cases (unrelated texts, so 
 | Path | p50 / p90 | Raw outputs vs native |
 |---|---|---|
 | native `generate` | 375 / 407 ms | |
-| ghost server `POST :47321/predict` (policy: trim, generate, spell, assemble, + one HTTP hop) | 377 / 425 ms | 40/40 identical |
+| policy server `POST :47321/predict` (policy: trim, generate, spell, assemble, + one HTTP hop; measured with the Python version of the policy, before ghostd) | 377 / 425 ms | 40/40 identical |
 | `/v1/chat/completions`, `apple-on-device-permissive`, examples as messages | 370 / 409 ms | 40/40 identical |
 | `/v1/chat/completions`, the typing profile as the model | 369 / 412 ms | 40/40 identical |
 | `/v1/chat/completions`, `apple-on-device` (default guardrails) | 467 / 510 ms | 40/40 identical |
 | burst of 12 keystrokes 40 ms apart, last key → answer: native with a `stream` | 358 ms | |
-| the same burst through the ghost server (`stream`) | 342 ms | |
+| the same burst through the policy server (`stream`) | 342 ms | |
 | the same burst through the OpenAI API (no cancellation) | 2,918 ms | |
 
 The model call is the whole cost: the policy layer adds ~2 ms and the OpenAI translation nothing. What the OpenAI API lacks for
-typing is cancellation, plus pinning and the `spell` op, which is why the ghost policy talks to the native protocol.
+typing is cancellation, plus pinning and the `spell` op, which is why ghostd talks to the native protocol.
 
 ## Caveats when measuring
 

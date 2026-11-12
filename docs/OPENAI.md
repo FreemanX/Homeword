@@ -10,7 +10,8 @@ models     apple-on-device, apple-on-device-permissive, and every registered pro
 ```
 
 It is part of the mechanism layer ([ARCHITECTURE.md](ARCHITECTURE.md)): a translation of OpenAI requests onto predictd's sessions,
-with no policy of its own. Start predictd with `bin/pred start` (or `./predictd`); it exits after 30 idle minutes.
+with no policy of its own. predictd runs while the engine does (Homeword or `bin/pred start` start it through ghostd), or start it
+alone with `./predictd`; it exits after 30 idle minutes.
 
 ```sh
 curl -s 127.0.0.1:47320/v1/chat/completions -H 'Content-Type: application/json' -d '{
@@ -138,11 +139,12 @@ guardrails returns `finish_reason: "content_filter"` with empty content. `GET /v
   prompt takes ~3.1 s before the first word; with tools defined, a turn of a pi-sized prompt took 5-8 s. Short prompts answer in
   well under a second.
 - **The translation costs nothing.** The typing workload through `/v1/chat/completions` (permissive model, same examples as
-  messages, or the typing profile as the model) gave the same outputs (40/40) and the same latency as the native `generate` op
-  and the ghost server (370, 375 and 377 ms p50). `apple-on-device` (default guardrails) is ~100 ms slower per request than
-  `apple-on-device-permissive`, with the same outputs on these cases. Re-measure with `bench/openai_compare.py`.
+  messages, or the typing profile as the model) gave the same outputs (40/40) and the same latency as the native `generate` op and
+  the typing policy's `/predict` (370, 375 and 377 ms p50). `apple-on-device` (default guardrails) is ~100 ms slower per request
+  than `apple-on-device-permissive`, with the same outputs on these cases. Re-measure with `bench/openai_compare.py`.
 - **No cancellation.** OpenAI requests have no "newest wins": a burst of 12 keystroke requests 40 ms apart took 3.1 s to answer the
-  last one, against 0.34-0.36 s with the native protocol's or the ghost server's `stream`. Keystroke-rate clients (the ghost policy) use the native protocol.
+  last one, against 0.34-0.36 s with the native protocol's or `/predict`'s `stream`. Keystroke-rate clients (ghostd) use the
+  native protocol.
 - **One model for the whole machine.** The typing predictor, other policies and API calls share it. predictd keeps the most recent
   session warm for `followRecentSec` (30 s) so an agent loop keeps its cache between turns, then returns to the pinned profile.
 - Usage of a turn that ends in tool calls is approximate: `prompt_tokens` counts the transcript without the last prompt, cached and

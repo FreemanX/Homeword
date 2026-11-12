@@ -6,7 +6,7 @@ Knobs follow the mechanism/policy split ([ARCHITECTURE.md](ARCHITECTURE.md)):
 |---|---|---|
 | Mechanism | `predictd.json`, daemon flags | how the host runs: socket, port, keep-alive, idle exit |
 | Mechanism, per caller | `profile.set` and `generate` fields | what a client asks for: instructions, examples, schema, guardrails, token limit, sampling |
-| Policy | `ghost/config.json`, `ghost/prompt.json`, `ghost/styles.json` | how the typing predictor uses the model: context size, words, spell rules, its prompts per writing style |
+| Policy | `ghost/config.json`, `ghost/prompt.json`, `ghost/styles.json`, `ghost/proofread.json`, ghostd flags | how the policies use the model: context size, words, spell rules, the prompts per writing style and for proofreading |
 | User | `~/.config/homeword/` | the user's overrides, outside the repo: `config.json` (policy knobs), `predictd.json` (daemon), `prompts.json` and `prompt-history.json` (their prompts, versions and benchmark results), `test-cases.json` (their benchmark cases) |
 
 `pred status` prints the daemon's config, its profiles and the policy's config in effect.
@@ -19,17 +19,24 @@ General tab the words to suggest (`words`, `maxTokens`); any other knob works th
 
 ```mermaid
 flowchart LR
-    subgraph policy["ghost (policy)"]
-        pj["ghost/prompt.json"] --> prof["profile.set"]
-        gc["ghost/config.json"] --> prof
+    subgraph user["~/.config/homeword (the user's)"]
+        uc["config.json<br/>prompts.json"]
+        ud["predictd.json"]
+    end
+    subgraph policy["ghostd (policy)"]
+        pj["ghost/prompt.json<br/>styles.json, proofread.json"] --> prof["profile.set"]
+        gc["ghost/config.json<br/>+ --config"] --> prof
         gc --> req["generate"]
         opts["per-request opts"] --> req
     end
     subgraph mech["predictd (mechanism)"]
-        dj["predictd.json + flags"] --> host["host"]
+        dj["predictd.json<br/>+ flags"] --> host["host"]
         prof --> host
         req --> host
     end
+    uc -->|"overrides, unless --no-user"| gc
+    uc --> pj
+    ud -->|"overrides, unless --user-config empty"| dj
 ```
 
 ## predictd.json (mechanism)

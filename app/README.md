@@ -22,10 +22,10 @@ on-device model through the local engine, so your words never leave home (the Ma
 - **Statistics** for improving it: latency, acceptance, keystrokes saved, per writing style and app, proofreading outcomes. Counts
   and timings only, never text.
 
-The app is UI only, with no prediction or proofreading logic. It calls the engine: the policies' HTTP server on `127.0.0.1:47321`
-(`/predict`, `/warm`, `/proofread`, `/prompts`, `/tokens`, `/bench`, `/history`, `/suite`, `/cases`, `/settings`; see
-[docs/ARCHITECTURE.md](../docs/ARCHITECTURE.md)),
-which uses predictd.
+The app is UI only, with no prediction or proofreading logic. It calls the engine: ghostd, the policies' HTTP server on
+`127.0.0.1:47321` (`/predict`, `/warm`, `/proofread`, `/prompts`, `/tokens`, `/bench`, `/history`, `/suite`, `/cases`,
+`/settings`, `/health`), which uses predictd ([docs/ARCHITECTURE.md](../docs/ARCHITECTURE.md)). It starts ghostd when no ghostd
+answers: the one inside the app in a release build, the repo's in a development build.
 
 ```mermaid
 flowchart LR
@@ -38,7 +38,7 @@ flowchart LR
         set["Settings<br/>apps, prompts, benchmark, engine"]
         met["metrics.jsonl"]
     end
-    srv["engine :47321<br/>policies' HTTP server"]
+    srv["ghostd :47321<br/>the policies over HTTP"]
     d["predictd<br/>on-device model, OpenAI API :47320"]
     tap --> ax
     ax --> sty
@@ -46,10 +46,11 @@ flowchart LR
     srv --> pop
     ax -->|"selection"| srv
     srv --> proof
-    set -->|"prompts, benchmarks, start/stop"| srv
+    set -->|"prompts, benchmarks, stop"| srv
+    app -.->|"starts it if no ghostd answers"| srv
     pop --> met
     proof --> met
-    srv --> d
+    srv -->|"starts it if needed"| d
 ```
 
 ## Build and run

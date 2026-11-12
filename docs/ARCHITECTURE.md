@@ -2,50 +2,57 @@
 
 The project is split by one rule: **separate mechanism from policy.**
 
-- **Mechanism: `predictd`** (Swift) hosts Apple's on-device model and nothing else. It keeps named system prompts ("profiles"),
-  keeps one of them warm, and generates plain or structured output with the limits the caller asks for. It assumes nothing about
-  what the text is for.
-- **Policies: `ghost/`** (Swift, the `ghostd` binary and its HTTP server). The typing predictor decides what to ask while someone
-  types and how to turn the answer into ghost text. The proofreader fixes or rewrites a selected text. Each is one client of the
-  mechanism; a summariser, a commit-message writer or a triage bot would be others, side by side.
-- **Applications** reach the policies over HTTP: `pred try`, pi, Claude Code and the Homeword Mac app.
+- **Mechanism: `predictd`** (Swift, `predictd.swift`) hosts Apple's on-device model and nothing else. It keeps named system
+  prompts ("profiles"), keeps one of them warm, and generates plain or structured output with the limits the caller asks for. It
+  assumes nothing about what the text is for. It also serves an OpenAI-compatible chat API for agent harnesses.
+- **Policies: `ghostd`** (Swift, `ghost/`): the typing predictor decides what to ask while someone types and how to turn the
+  answer into ghost text; the proofreader fixes or rewrites a selected text. Both run in one process, `ghostd`, which serves them
+  over HTTP and talks to predictd over its unix socket. A summariser, a commit-message writer or a triage bot would be other
+  clients of predictd, side by side.
+- **Applications** reach the policies over HTTP and draw the results: the Homeword Mac app, `pred try`, the pi extension and the
+  Claude Code mod. They hold no prediction logic.
+
+Together, ghostd and predictd are "the engine". Both are plain binaries next to their data files: in the repo after `./build.sh`,
+or inside `Homeword.app` in a release.
 
 ```mermaid
 flowchart TB
     subgraph apps["Applications"]
         direction LR
-        try["pred try"]
+        mac["Homeword Mac app<br/>menu bar, any text field"]
+        try["pred try<br/>terminal"]
         pi["pi extension"]
         cc["Claude Code mod"]
-        mac["Homeword Mac app<br/>menu bar, any text field"]
         next["shell completer<br/>future"]:::future
     end
     subgraph policy["Policies"]
         direction LR
-        srv["ghostd HTTP 127.0.0.1:47321<br/>/predict, /warm, /proofread,<br/>/prompts, /bench, /settings, ..."]
-        lib["typing policy<br/>prompt, trim, assemble"]
-        pr["proofreading policy<br/>fix, rewrite, diff"]
+        subgraph gd["ghostd: HTTP 127.0.0.1:47321"]
+            direction LR
+            typing["typing prediction<br/>prompts per writing style,<br/>trim, assemble"]
+            proof["proofreading<br/>fix, rewrite, word diff"]
+            prompts["user prompts,<br/>benchmarks"]
+        end
         other["other policies<br/>future"]:::future
     end
     subgraph mech["Mechanism"]
-        predictd["predictd (Swift)<br/>profiles, sessions, generate, keep-alive<br/>unix socket, HTTP 127.0.0.1:47320"]
+        predictd["predictd<br/>profiles, sessions, generate, keep-alive<br/>unix socket, HTTP 127.0.0.1:47320"]
     end
+    harness["agent harnesses<br/>OpenAI-compatible clients"]
     fm["FoundationModels<br/>on-device model"]
-    try --> srv
-    pi --> srv
-    cc --> srv
-    mac --> srv
-    next -.-> srv
-    srv --> lib
-    srv --> pr
-    lib -->|"profile.set, generate, spell"| predictd
-    pr -->|"profile.set, generate"| predictd
+    mac -->|"HTTP"| gd
+    try -->|"HTTP"| gd
+    pi -->|"HTTP"| gd
+    cc -->|"HTTP"| gd
+    next -.-> gd
+    gd -->|"socket: profile.set, generate, spell"| predictd
     other -.-> predictd
+    harness -->|"/v1/chat/completions"| predictd
     predictd --> fm
     classDef future stroke-dasharray: 5 5
 ```
 
-| predictd provides (mechanism) | ghost decides (policy) |
+| predictd provides (mechanism) | ghostd decides (policy) |
 |---|---|
 | host the model, keep a profile's prefix warm (`pin`) | pin its own profile |
 | profiles: instructions, example turns, optional schema, guardrails, default options | the instructions, the examples, the `App: … Text: …` template |
@@ -55,6 +62,45 @@ flowchart TB
 | finish reason (`length` or `stop`) | drop a word cut by the token cap |
 | OS text services: `tokens`, `spell` | what counts as a word, when to show nothing |
 | an OpenAI-compatible chat API (`/v1`), a pure translation onto sessions | nothing: harnesses bring their own prompts and tools |
+
+## Processes: who starts what
+
+Nothing is installed as a service. Each layer starts the one below it when it finds it missing, and each exits after 30 idle
+minutes, so the engine runs only while something uses it.
+
+```mermaid
+flowchart TD
+    client["Homeword, pi or pred"] --> ask{"GET /health on 47321<br/>answers service ghostd?"}
+    ask -- yes --> reuse["use it"]
+    ask -- no --> spawn["start ghostd in the background"]
+    spawn --> port{"port 47321 free?"}
+    port -- "no: a ghostd answers there" --> quit["exit at once, status 0<br/>already running"]
+    port -- yes --> sock{"predictd answers<br/>on its socket?"}
+    sock -- yes --> pin["register and pin<br/>the general prompt"]
+    sock -- no --> startd["start predictd, detached<br/>wait for its socket"]
+    startd --> pin
+    pin --> serve["serve HTTP<br/>exit after 30 idle minutes"]
+```
+
+- **Is the engine running?** `GET 127.0.0.1:47321/health` answers `{"ok": true, "service": "ghostd", "version", "build", "pid",
+  "started", "port", "model", "availability"}`. `service` tells ghostd from any other program on the port; `model` says whether
+  predictd answers; `availability` whether Apple's model can be used (`available`, `apple_intelligence_off`, `model_not_ready`,
+  `device_not_eligible`); `build` is the binary's modification time, to spot a ghostd started before a rebuild. Details:
+  [DEVELOPING.md](DEVELOPING.md#the-contract).
+- **One ghostd per port, one predictd per socket.** ghostd claims its port before anything else, so a second start (two apps racing)
+  exits without touching predictd; a predictd that finds a live one on its socket exits too.
+- **Who starts ghostd**: Homeword (on launch and when a request finds it down, unless the user pressed Stop), the pi extension, and
+  `pred` (`pred start`, `pred try`, `pred ask`). The Claude Code mod only asks. Benchmarks run a private ghostd (`--port 0
+  --no-user`) on a private predictd. Detached starts survive the app that started them.
+- **Stop**: `POST /shutdown` (with `{"predictd": true}` also stops predictd): Homeword's Stop button and `pred stop`.
+
+| | Development | Release |
+|---|---|---|
+| Binaries | `./ghostd`, `./predictd` in the repo (`./build.sh`) | `Homeword.app/Contents/Resources/engine/` (`app/release.sh`) |
+| Data next to them | `predictd.json`, `VERSION`, `ghost/*.json` (prompts, styles, knobs), `bench/cases.json` and `bench/styles.json` (the benchmark suite) | the same files in the same layout |
+| Started by | Homeword (a build of the repo knows its path), pi, `pred` | Homeword |
+| User data | `~/.config/homeword/`: knob overrides, prompts, history, benchmark cases | the same |
+| Logs | `/tmp/ghostd-UID.log`, `/tmp/predictd-UID.log` | the same |
 
 ## predictd: the mechanism
 
@@ -168,17 +214,65 @@ parameters and harness setup: [OPENAI.md](OPENAI.md).
 
 ### Lifecycle
 
-- **Start**: `pred start` (or any client through `ghost.predictd.start`) runs `./predictd`; it listens within a second. No profiles
-  exist until clients register them.
+- **Start**: ghostd starts `predictd` (next to its own binary) when nothing answers on the socket: detached, in its own session.
+  It listens within a second; loading the model takes a few more. No profiles exist until clients register them.
 - **One per user**: a new daemon that finds a live one on the socket exits; a daemon whose socket file is removed or replaced exits.
 - **Idle**: keep-alive for `keepAliveMaxIdleSec` (5 min) after the last request, exit after `idleExitSec` (30 min).
 - **Config**: `predictd.json` next to the binary (`--config`), then the user's overrides in `~/.config/homeword/predictd.json`
   if present (`$XDG_CONFIG_HOME` respected; `--user-config ""` ignores them, as the benchmarks do).
-- **Logs**: stderr, `/tmp/predictd-UID.log` when started by `pred`.
+- **Logs**: stderr, `/tmp/predictd-UID.log` when started by ghostd.
 - **Non-public bits**: the finish reason is read from the transcript through `Mirror` (`Transcript.Response.finishReason`). macOS
   27.0.1 does not have it: there every answer reports `stop`. Settable `session.transcript` is macOS 27 API.
 
-## ghost: the typing policy
+## ghostd: the policy server
+
+`ghostd` (`ghost/*.swift`) runs the typing and proofreading policies and serves them, with the user's prompts and the benchmarks,
+on `127.0.0.1:47321`. It is a client of predictd like any other: it registers profiles and calls `generate` and `spell` over the
+unix socket.
+
+```mermaid
+flowchart LR
+    subgraph threads["Threads"]
+        acc["HTTP accept loop<br/>127.0.0.1:47321"]
+        task["one task per request<br/>HTTP/1.1, connection close"]
+        watch["idle watchdog<br/>exit after serverIdleExitSec"]
+    end
+    subgraph pols["Policies"]
+        typing["typing<br/>Policy.swift"]
+        proof["proofreading<br/>Proofread.swift"]
+        user["user prompts, history,<br/>cases, results<br/>Prompts.swift"]
+        jobs["benchmark jobs<br/>one at a time<br/>Evaluate.swift"]
+    end
+    pool["connection pool<br/>Predictd.swift"]
+    d["predictd<br/>unix socket"]
+    acc --> task
+    task --> typing
+    task --> proof
+    task --> user
+    task --> jobs
+    jobs --> typing
+    jobs --> proof
+    typing --> pool
+    proof --> pool
+    pool --> d
+```
+
+- **Startup**: claim the port (exit if a ghostd answers there), connect to predictd (start it if needed), register and pin the
+  general prompt, then accept requests. A request that finds predictd gone (it exits when idle) restarts it and registers the
+  profiles again.
+- **Profiles** are named by a hash of their content (`ghost-` + 8 hex digits of a SHA-1), so an unchanged prompt keeps its name
+  and predictd's warm session across restarts, and any change (a user's prompt, `words`) is a new profile.
+- **Routes**: `/predict`, `/warm` (typing), `/proofread`, the prompt routes (`/prompts`, `/history`, `/tokens`, `/bench`, `/suite`,
+  `/cases`, `/settings`, below), `/health`, `/config` (the knobs in effect), `/request` (the profile and `generate` request a
+  prediction would use, without running it), `/shutdown`. The full list is at the top of `ghost/main.swift`.
+- **Flags**: `--port N` (0 = a free port, named in the ready line on stdout), `--socket` (predictd's), `--config JSON` (knob
+  overrides), `--no-user` (ignore the user's overrides and prompts: benchmarks), `--quiet`; `--selftest` runs the pure functions on
+  JSON lines without a model (`Selftest.swift`, for checks such as `bench/check_cases.py`).
+- **Text semantics**: the policy was first written in Python, and ghostd keeps Python's string rules (`PyCompat.swift`: code
+  points, character classes, split and strip, JSON encoding, rounding), so it gives the same answers, profile names and benchmark
+  results as before (checked on every suite case before the Python version was removed).
+
+## The typing policy
 
 **Writing styles.** One prompt per style: `general` (`ghost/prompt.json`, the prompt the benchmarks have always used) and `chat`,
 `email`, `work`, `academic`, `code` (`ghost/styles.json`). A request names its style (`context`) and gets that style's prompt and
@@ -189,8 +283,8 @@ and checked on the suite; only work beats general's prompt on its category in bo
 ([bench/RESULTS.md](../bench/RESULTS.md)). Each style is its own profile: the first request after switching costs ~70 ms more, which
 `POST /warm` (pin + predictd's `prewarm`) moves to when the user switches apps.
 
-`ghost/Policy.swift` registers one profile built from `ghost/prompt.json` (instructions + the first `shots` examples, named by a hash
-of its content) and pins it. Then, per keystroke:
+At startup ghostd registers the general profile from `ghost/prompt.json` (instructions + the first `shots` examples) and pins it;
+a request in another style registers and pins that style's profile. Then, per keystroke (`ghost/Policy.swift`):
 
 | Step | What happens | Knobs (ghost/config.json) |
 |---|---|---|
@@ -272,7 +366,7 @@ ghost/config.json for one request):
 | `tokens` | `in`, `cached`, `out` from predictd, plus the trim details |
 | `ok:false` | `error: "cancelled"` when a newer request on the stream replaced this one: ignore it |
 
-## proofread: the proofreading policy
+## The proofreading policy
 
 `ghost/Proofread.swift` fixes (`mode: "fix"`: spelling, typos, grammar, punctuation, as few changes as possible) or rewrites
 (`mode: "rewrite"`: clearer, same meaning, intent, tone and about the same length) a text. It is an occasional policy, so it does

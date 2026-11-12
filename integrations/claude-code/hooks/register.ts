@@ -54,7 +54,7 @@ export const register: Register = on => {
           const body = JSON.parse(res.text)
           suggestion = body.ok ? (body.suggestion ?? '') : ''
         } catch {
-          return // ghost server not running or request refused: no ghost
+          return // ghostd not running or request refused: no ghost
         }
         if (my !== seq || !suggestion.trim()) return
         const box = await $.prompt.read()
@@ -166,7 +166,7 @@ export const register: Register = on => {
           ghostFor = text
           await $.prompt.fill({ text, mode: 'replace', cursor: text.length, decorations: paint(text, suggestion) })
         } catch {
-          // ghost server not running or request refused: no ghost
+          // ghostd not running or request refused: no ghost
         }
       })
     }

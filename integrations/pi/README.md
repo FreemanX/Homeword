@@ -14,7 +14,7 @@ it dim after the cursor, fish-style. The extension is only UI: what to ask and w
 sequenceDiagram
     participant U as User
     participant E as GhostEditor in pi
-    participant D as ghost server
+    participant D as ghostd
     U->>E: key
     alt Tab or Right while a ghost is shown
         E->>E: insert one word or all, keep the rest as the ghost

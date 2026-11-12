@@ -161,14 +161,14 @@ Things to decide in a policy, not in predictd:
 - **Re-registering.** predictd starts with no profiles and exits when idle: on `unknown_profile`, send `profile.set` again and
   retry (`profile.set` with an unchanged definition is free and keeps the warm session).
 
-## Changing the mechanism
+## Changing the engine (predictd, ghostd)
 
 ### Development loop
 
 ```mermaid
 flowchart LR
-    edit["edit predictd.swift<br/>or ghost/"] --> build["./build.sh<br/>(Swift only)"]
-    build --> restart["pred stop<br/>pred start"]
+    edit["edit predictd.swift,<br/>ghost/*.swift or ghost/*.json"] --> build["./build.sh<br/>predictd + ghostd"]
+    build --> restart["pred stop<br/>the next client starts it"]
     restart --> ask["pred ask<br/>pred try"]
     ask --> bench["bench/run.py --spawn"]
     bench --> cmp["bench/compare.py<br/>vs bench/baselines"]
@@ -176,10 +176,10 @@ flowchart LR
 ```
 
 Policy edits: `./build.sh` after changing ghost/*.swift; the JSON files (config.json, prompt.json, styles.json, proofread.json)
-need no build. Either way restart ghostd (`pred stop`). Try knobs without editing
-files: `pred ask "text" --opts '{...}'`, or `python3 -I bench/run.py --spawn --config '{...}'` (policy) and `--daemon-config '{...}'`
-(daemon). Benchmark rules (nothing else using the model, compare within one model mode) are in AGENTS.md; scenarios and metrics are
-in [PERFORMANCE.md](PERFORMANCE.md).
+need no build. Either way restart the engine (`pred stop`; Homeword, pi or the next `pred` command starts it again; Homeword's
+Engine tab also has Restart). Try knobs without editing files: `pred ask "text" --opts '{...}'`, or `python3 -I bench/run.py
+--spawn --config '{...}'` (policy) and `--daemon-config '{...}'` (daemon). Benchmark rules (nothing else using the model, compare
+within one model mode) are in AGENTS.md; scenarios and metrics are in [PERFORMANCE.md](PERFORMANCE.md).
 
 ### Where things are in predictd.swift
 
@@ -191,6 +191,19 @@ in [PERFORMANCE.md](PERFORMANCE.md).
 | engine | `Engine`: keep-alive, `options`, `generate`, `handle` (every op) |
 | OpenAI-compatible API | `parseChat` (messages → transcript, options), `chat`/`runChat` (sessions, streaming, tool-call capture) |
 | socket server, HTTP | listeners; `main` parses the flags |
+
+### Where things are in ghost/ (ghostd)
+
+| File | What is there |
+|---|---|
+| `main.swift` | the flags; claiming the port (one ghostd per port) and `/health`'s identity; the predictd connection pool (`withLink`: reconnect and re-register when predictd went away); prompt names (`predict-<style>`, `proofread-<mode>`); benchmark jobs; the routes (`handleGET`, `handlePOST`, listed in the header comment); the HTTP server |
+| `Policy.swift` | typing: text rules (unfinished word, sentence ends, repetition cut), `Speller`, `assemble`; config loading with the user's overrides; `Ghost`: styles, profiles, `request`/`finish`/`predict`, `warm` |
+| `Proofread.swift` | `Proofreader`: prompts from proofread.json, a profile per mode, one request per paragraph; the word diff (`SequenceMatcher`) |
+| `Prompts.swift` | the user's prompts, history, benchmark results and cases (files in `~/.config/homeword/`) |
+| `Evaluate.swift` | the benchmark suite, scoring, the overlap rule, `benchPrompt`, `benchProofread` |
+| `Predictd.swift` | `Link` (the unix-socket client), `startPredictd`, `spawnDetached`, `ROOT` (where the data files are) |
+| `PyCompat.swift` | Python's string and JSON semantics, which the policy keeps (code points, character classes, `json.dumps`) |
+| `Selftest.swift` | `ghostd --selftest`: the pure functions on JSON lines, no model |
 
 ### Adding a knob
 
@@ -206,6 +219,12 @@ If it can change latency or quality, run the benchmark before and after and say 
 
 Add a `case` to `Engine.handle` and answer with `conn.send([...])` including the request's `id`. HTTP clients get it for free (any
 `POST` body is handled the same way). Document it in the protocol table in ARCHITECTURE.md.
+
+### Adding a ghostd route
+
+A `case` in `handleGET` or `handlePOST` (`ghost/main.swift`) answering a JSON object with `ok`; a client error is a thrown
+`ClientError` (HTTP 400 with its message). List it in the header comment of main.swift and in ARCHITECTURE.md. Clients: Homeword
+(`Services.post`/`get`), the integrations (`fetch`), the Python tools (`bench/engine.py` `http`).
 
 ## Testing
 

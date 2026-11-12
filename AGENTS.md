@@ -67,6 +67,10 @@ app/release.sh                     # the release disk image (dist/), from a comm
 Needs macOS 27+ with Apple Intelligence enabled and the Xcode command line tools. The engine and the app are Swift only; the
 developer tools (`pred`, `bench/`) need `python3` (standard library only: keep it that way, no venv). Run Python with `-I`.
 
+Processes: Homeword, pi and `pred` start ghostd when `GET 127.0.0.1:47321/health` shows no ghostd (`"service": "ghostd"`);
+ghostd starts predictd when its socket is silent. One ghostd per port (a second one exits at once), one predictd per socket; both
+exit after 30 idle minutes. Nothing runs as a system service. Details: "Processes" in docs/ARCHITECTURE.md.
+
 ## How it works (details in docs/ARCHITECTURE.md)
 
 Mechanism (predictd):
@@ -78,8 +82,9 @@ Mechanism (predictd):
 2. **Generate**: `respond(to: prompt)` with the caller's `maxTokens` and sampling, plain or with a schema. The finish reason is read by
    reflection (`hitTokenCap`) and reported as `finish: length|stop`.
 
-Policy (ghost, typing):
-1. **Profile**: instructions + 6 examples from `ghost/prompt.json`, named by a content hash, registered and pinned.
+Policy (ghostd, typing):
+1. **Profile**: instructions + 6 examples from `ghost/prompt.json` (or the style's from `ghost/styles.json`), named by a content
+   hash, registered and pinned.
 2. **Trim**: last `textBudget` (100) tokens of typed text, cut on a word boundary (char-based estimate).
 3. **Ask**: `generate` with `App: <app>\nText: <tail>`, plain text (a schema cost ~200 ms), greedy, `maxTokens` 6.
 4. **Assemble**: the model returns the remaining letters of the unfinished word, then next words. Glue + spell check (predictd's
@@ -128,7 +133,8 @@ Policy (ghost, typing):
   message.
 - Changing `cases.json` or `corpus.md` breaks comparability with older runs: record a new baseline.
 - Benchmarks must not see the user's prompts or config overrides: scripts run a private `ghostd --no-user` (`bench/engine.py`),
-  spawned `pred` processes get `PRED_NO_USER=1` (a private ghostd too), a spawned predictd `--user-config ""`. `integration_latency.py` drives the running engine, which uses them.
+  spawned `pred` processes get `PRED_NO_USER=1` (a private ghostd too), a spawned predictd `--user-config ""`.
+  `integration_latency.py` drives the running engine, which uses them.
 - Writing styles: the general prompt (prompt.json) is the one all earlier baselines used; keep its profile unchanged unless you mean
   to break comparability. Choose a style's prompt on `bench/styles-dev.json`, then confirm on its category of the suite
   (`run.py --styles`); 25-30 cases per category means one case is 3-4 points, so a single-set win of one or two cases is noise

@@ -13,7 +13,7 @@ sequenceDiagram
     participant U as User
     participant CC as Claude Code
     participant H as register.ts
-    participant D as ghost server
+    participant D as ghostd
     U->>CC: types a character
     CC->>H: prompt.edit hook
     H->>CC: next(e) applies the edit at once

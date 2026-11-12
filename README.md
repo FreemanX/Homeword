@@ -37,11 +37,12 @@ Three layers, keeping **mechanism and policy apart**:
 - **predictd**: a model host, mechanism only. It keeps named system prompts ("profiles") with their prefix cache warm and
   generates plain or structured output with the limits each caller asks for. It knows nothing about typing. It also speaks the
   **OpenAI chat API**, so agent harnesses can use the on-device model directly.
-- **ghost**: the policies (Swift, `ghostd`, local HTTP for the apps). Typing prediction owns the prompts and examples (one per
+- **ghostd**: the policies (Swift, `ghost/`), served over local HTTP. Typing prediction owns the prompts and examples (one per
   writing style), the context trimming and the rules that turn the model's answer into a ghost (word glue, spelling, one sentence,
-  up to five words by default). Proofreading fixes or rewrites a selected text. Together with predictd this is the engine.
-- **Applications**: the Homeword Mac app, `pred try`, and the pi and Claude Code integrations. Other policies (summarise, commit
-  messages, triage) can share the same predictd.
+  up to five words by default). Proofreading fixes or rewrites a selected text. ghostd starts predictd when it needs it; together
+  they are the engine, inside the app in a release.
+- **Applications**: the Homeword Mac app, `pred try`, and the pi and Claude Code integrations. They only draw: they ask ghostd and
+  start it when no ghostd answers. Other policies (summarise, commit messages, triage) can share the same predictd.
 
 ```mermaid
 flowchart TB
@@ -55,7 +56,7 @@ flowchart TB
     end
     subgraph policy["Policy"]
         direction LR
-        ghost["ghost<br/>typing prediction, proofreading<br/>HTTP :47321"]
+        ghost["ghostd<br/>typing prediction, proofreading<br/>HTTP :47321"]
         other["other policies<br/>future"]:::future
     end
     subgraph mech["Mechanism"]
@@ -68,7 +69,7 @@ flowchart TB
     cc --> ghost
     mac --> ghost
     next -.-> ghost
-    ghost --> predictd
+    ghost -->|"unix socket"| predictd
     other -.-> predictd
     harness --> predictd
     predictd --> fm
@@ -167,7 +168,7 @@ prompts small. Setup for the `openai` SDK, pi and others: [docs/OPENAI.md](docs/
 
 | Document | For |
 |---|---|
-| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | the mechanism/policy split, how predictd works (profiles, sessions, cache, protocol), the ghost pipeline |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | the mechanism/policy split, which process starts which, how predictd works (profiles, sessions, cache, protocol), ghostd and the typing and proofreading pipelines |
 | [docs/OPENAI.md](docs/OPENAI.md) | the OpenAI-compatible API: connecting a harness, tool calls, parameters, limits |
 | [docs/CONFIG.md](docs/CONFIG.md) | every knob: predictd.json, profile and generate fields, ghost/config.json, prompt.json, recipes |
 | [docs/DEVELOPING.md](docs/DEVELOPING.md) | a new application, a new policy, changing predictd, testing |
