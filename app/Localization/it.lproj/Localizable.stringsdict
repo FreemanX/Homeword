@@ -1,0 +1,182 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>%d cases</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@n@</string>
+		<key>n</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>d</string>
+			<key>one</key>
+			<string>%d caso</string>
+			<key>other</key>
+			<string>%d casi</string>
+		</dict>
+	</dict>
+	<key>%d cases saved for this prompt (kept on this Mac, outside the repo). They run as their own section.</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@n@</string>
+		<key>n</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>d</string>
+			<key>one</key>
+			<string>%d caso salvato per questo prompt (conservato su questo Mac, fuori dal repository). Viene eseguito in una sezione a parte.</string>
+			<key>other</key>
+			<string>%d casi salvati per questo prompt (conservati su questo Mac, fuori dal repository). Vengono eseguiti in una sezione a parte.</string>
+		</dict>
+	</dict>
+	<key>%d cases were left out: they share text with this prompt's examples, so they would test recall, not prediction.</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@n@</string>
+		<key>n</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>d</string>
+			<key>one</key>
+			<string>%d caso è stato escluso: ha testo in comune con gli esempi di questo prompt, quindi verificherebbe la memoria, non la previsione.</string>
+			<key>other</key>
+			<string>%d casi sono stati esclusi: hanno testo in comune con gli esempi di questo prompt, quindi verificherebbero la memoria, non la previsione.</string>
+		</dict>
+	</dict>
+	<key>%d categories</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@n@</string>
+		<key>n</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>d</string>
+			<key>one</key>
+			<string>%d categoria</string>
+			<key>other</key>
+			<string>%d categorie</string>
+		</dict>
+	</dict>
+	<key>%d changes</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@n@</string>
+		<key>n</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>d</string>
+			<key>one</key>
+			<string>%d modifica</string>
+			<key>other</key>
+			<string>%d modifiche</string>
+		</dict>
+	</dict>
+	<key>%d characters</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@n@</string>
+		<key>n</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>d</string>
+			<key>one</key>
+			<string>%d carattere</string>
+			<key>other</key>
+			<string>%d caratteri</string>
+		</dict>
+	</dict>
+	<key>%d examples</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@n@</string>
+		<key>n</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>d</string>
+			<key>one</key>
+			<string>%d esempio</string>
+			<key>other</key>
+			<string>%d esempi</string>
+		</dict>
+	</dict>
+	<key>%d sentences with known mistakes</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@n@ con errori noti</string>
+		<key>n</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>d</string>
+			<key>one</key>
+			<string>%d frase</string>
+			<key>other</key>
+			<string>%d frasi</string>
+		</dict>
+	</dict>
+	<key>%d texts</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@n@</string>
+		<key>n</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>d</string>
+			<key>one</key>
+			<string>%d testo</string>
+			<key>other</key>
+			<string>%d testi</string>
+		</dict>
+	</dict>
+	<key>Asking the on-device model… (%d characters)</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>Richiesta al modello on-device… (%#@n@)</string>
+		<key>n</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>d</string>
+			<key>one</key>
+			<string>%d carattere</string>
+			<key>other</key>
+			<string>%d caratteri</string>
+		</dict>
+	</dict>
+	<key>up to %d words</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>fino a %#@n@</string>
+		<key>n</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>d</string>
+			<key>one</key>
+			<string>%d parola</string>
+			<key>other</key>
+			<string>%d parole</string>
+		</dict>
+	</dict>
+</dict>
+</plist>

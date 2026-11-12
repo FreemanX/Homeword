@@ -29,24 +29,24 @@ struct ProofreadView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Text(model.mode == "fix" ? "Proofread" : "Rewrite").font(.headline)
+                Text(model.mode == "fix" ? L("Proofread") : L("Rewrite")).font(.headline)
                 if model.phase == .result {
-                    Text(model.changed ? "\(model.edits) change\(model.edits == 1 ? "" : "s") · \(String(format: "%.1f", model.seconds)) s" : "no changes needed")
+                    Text(model.changed ? L("%d changes", model.edits) + " · " + String(format: "%.1f s", locale: Interface.locale, model.seconds) : L("no changes needed"))
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 Spacer()
                 if model.phase == .working { ProgressView().controlSize(.small) }
                 if model.phase == .result && model.changed {
                     Picker("", selection: $model.showResult) {
-                        Text("Changes").tag(false)
-                        Text("Result").tag(true)
+                        Text(L("Changes")).tag(false)
+                        Text(L("Result")).tag(true)
                     }
                     .pickerStyle(.segmented).labelsHidden().fixedSize()
                 }
             }
             switch model.phase {
             case .working:
-                Text("Asking the on-device model… (\(model.original.count) characters)").foregroundStyle(.secondary)
+                Text(L("Asking the on-device model… (%d characters)", model.original.count)).foregroundStyle(.secondary)
             case .failed:
                 Text(model.message).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true)
             case .result:
@@ -66,11 +66,11 @@ struct ProofreadView: View {
                 }
             }
             HStack {
-                if model.demo { Text("demo: Replace is off").font(.caption).foregroundStyle(.secondary) }
+                if model.demo { Text(L("demo: Replace is off")).font(.caption).foregroundStyle(.secondary) }
                 Spacer()
-                Button("Cancel", action: cancel).keyboardShortcut(.cancelAction)
-                Button("Copy", action: copy).keyboardShortcut("c", modifiers: .command).disabled(model.phase != .result)
-                Button("Replace", action: replace).keyboardShortcut(.defaultAction)
+                Button(L("Cancel"), action: cancel).keyboardShortcut(.cancelAction)
+                Button(L("Copy"), action: copy).keyboardShortcut("c", modifiers: .command).disabled(model.phase != .result)
+                Button(L("Replace"), action: replace).keyboardShortcut(.defaultAction)
                     .disabled(model.phase != .result || !model.changed || model.demo)
             }
         }
@@ -189,7 +189,7 @@ final class Proofreader {
             guard let self, self.panel.isVisible else { return }
             self.answeredAt = CACurrentMediaTime()
             guard let r, r["ok"] as? Bool == true, let out = r["text"] as? String else {
-                self.model.message = (r?["error"] as? String) ?? err ?? "no answer"
+                self.model.message = (r?["error"] as? String) ?? err ?? L("no answer")
                 self.model.phase = .failed
                 return
             }

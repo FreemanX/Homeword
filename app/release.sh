@@ -30,7 +30,7 @@ E="$RES/engine"                                          # the repo's layout: gh
 mkdir -p "$E/ghost" "$E/bench"
 cp ghostd predictd predictd.json VERSION "$E/"
 cp ghost/*.json "$E/ghost/"
-cp bench/cases.json bench/styles.json "$E/bench/"        # the benchmark in the Prompts tab
+cp bench/cases.json bench/styles.json bench/languages.json "$E/bench/"   # the benchmark in the Prompts tab
 cp LICENSE "$RES/"
 
 echo "== sign (ad-hoc)"

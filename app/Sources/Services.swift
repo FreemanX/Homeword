@@ -47,10 +47,10 @@ enum Bundled {
         guard let res = Bundle.main.resourceURL, FileManager.default.fileExists(atPath: res.appendingPathComponent("engine").path) else { return }
         if Bundle.main.bundlePath.contains("/AppTranslocation/") {        // opened from the download: a read-only copy
             let a = NSAlert()
-            a.messageText = "Move Homeword to your Applications folder"
-            a.informativeText = "macOS runs Homeword from a temporary read-only copy until it is in Applications. Drag it there from "
-                + "the disk image, then open it again."
-            a.addButton(withTitle: "Quit")
+            a.messageText = L("Move Homeword to your Applications folder")
+            a.informativeText = L("macOS runs Homeword from a temporary read-only copy until it is in Applications. Drag it there from "
+                                  + "the disk image, then open it again.")
+            a.addButton(withTitle: L("Quit"))
             NSApp.activate(ignoringOtherApps: true)
             a.runModal()
             NSApp.terminate(nil)
@@ -97,7 +97,18 @@ enum EngineConfig {
 
 final class Services {
     static let shared = Services()
-    enum State: String { case unknown = "Checking…", running = "Running", starting = "Starting…", stopping = "Stopping…", stopped = "Stopped" }
+    enum State {
+        case unknown, running, starting, stopping, stopped
+        var title: String {
+            switch self {
+            case .unknown: return L("Checking…")
+            case .running: return L("Running")
+            case .starting: return L("Starting…")
+            case .stopping: return L("Stopping…")
+            case .stopped: return L("Stopped")
+            }
+        }
+    }
     private(set) var state: State = .unknown { didSet { if state != oldValue { onChange?() } } }
     private(set) var modelUp = false
     /// The on-device model: "available", or why not (device_not_eligible, apple_intelligence_off, model_not_ready); nil = unknown.
@@ -106,10 +117,10 @@ final class Services {
     var availabilityProblem: String? {
         switch availability {
         case nil, "available": return nil
-        case "apple_intelligence_off": return "Apple Intelligence is turned off. Turn it on in System Settings → Apple Intelligence & Siri."
-        case "model_not_ready": return "Apple's on-device model is still downloading. Suggestions start when it is ready."
-        case "device_not_eligible": return "This Mac can't run Apple Intelligence (it needs Apple silicon, and a supported language and region)."
-        default: return "Apple's on-device model is not available on this Mac right now."
+        case "apple_intelligence_off": return L("Apple Intelligence is turned off. Turn it on in System Settings → Apple Intelligence & Siri.")
+        case "model_not_ready": return L("Apple's on-device model is still downloading. Suggestions start when it is ready.")
+        case "device_not_eligible": return L("This Mac can't run Apple Intelligence (it needs Apple silicon, and a supported language and region).")
+        default: return L("Apple's on-device model is not available on this Mac right now.")
         }
     }
     var onChange: (() -> Void)?

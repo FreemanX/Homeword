@@ -13,11 +13,11 @@ struct SettingsView: View {
 
     var body: some View {
         TabView(selection: $nav.tab) {
-            GeneralTab().tabItem { Label("General", systemImage: "gearshape") }.tag("general")
-            AppsTab().tabItem { Label("Apps", systemImage: "square.grid.2x2") }.tag("apps")
-            PromptsView().tabItem { Label("Prompts", systemImage: "text.bubble") }.tag("prompts")
-            StatsTab().tabItem { Label("Statistics", systemImage: "chart.bar") }.tag("stats")
-            EngineTab().tabItem { Label("Engine", systemImage: "cpu") }.tag("engine")
+            GeneralTab().tabItem { Label(L("General"), systemImage: "gearshape") }.tag("general")
+            AppsTab().tabItem { Label(L("Apps"), systemImage: "square.grid.2x2") }.tag("apps")
+            PromptsView().tabItem { Label(L("Prompts"), systemImage: "text.bubble") }.tag("prompts")
+            StatsTab().tabItem { Label(L("Statistics"), systemImage: "chart.bar") }.tag("stats")
+            EngineTab().tabItem { Label(L("Engine"), systemImage: "cpu") }.tag("engine")
         }
         .padding(12)
         .frame(width: 880, height: 660)
@@ -37,9 +37,11 @@ final class WordsModel: ObservableObject {
     @Published var words = 5
     @Published var available = false
     init() { load() }
-    func load() {
+    func load(tries: Int = 30) {
         Services.shared.get("/settings") { r, _ in
-            if let w = r?["words"] as? Int { self.words = w; self.available = true } else { self.available = false }
+            if let w = r?["words"] as? Int { self.words = w; self.available = true; return }
+            self.available = false
+            if tries > 1 { DispatchQueue.main.asyncAfter(deadline: .now() + 2) { self.load(tries: tries - 1) } }   // the engine is starting
         }
     }
     /// The latency effect against the default, from the measured cost of an output token (docs/PERFORMANCE.md): the output cap
@@ -47,9 +49,10 @@ final class WordsModel: ObservableObject {
     var cost: String {
         let tokens = { (w: Int) in w + (w + 4) / 5 }
         let ms = (tokens(words) - tokens(5)) * 16
-        if ms == 0 { return "The default. Each word more or fewer changes every suggestion's time by up to about 20 ms." }
-        return "Up to about \(abs(ms)) ms \(ms > 0 ? "slower" : "faster") per suggestion than the default (5 words)"
-            + (ms > 0 ? "; longer suggestions are right all the way less often." : ".")
+        if ms == 0 { return L("The default. Each word more or fewer changes every suggestion's time by up to about 20 ms.") }
+        return ms > 0 ? L("Up to about %d ms slower per suggestion than the default (5 words); longer suggestions are right all the way "
+                          + "less often.", ms)
+            : L("Up to about %d ms faster per suggestion than the default (5 words).", -ms)
     }
 
     func set(_ w: Int) {
@@ -58,6 +61,102 @@ final class WordsModel: ObservableObject {
         Services.shared.post("/settings", ["words": w]) { r, _ in
             if let w = r?["words"] as? Int { self.words = w }
         }
+    }
+}
+
+/// The languages the user writes in: an engine setting (GET/POST /settings: `languages`, and `supported`, the model's), so pred and
+/// the integrations use it too. The engine detects which of them a text is in, among those only.
+final class LanguagesModel: ObservableObject {
+    struct Option: Identifiable { let id: String, name: String, native: String }
+    @Published var chosen: [String] = []
+    @Published var options: [Option] = []
+    @Published var isDefault = true             // nothing chosen yet: the system's language (or English)
+    @Published var available = false
+    @Published var editing = false
+    @Published var interface = Interface.chosen ?? ""      // "" = the system's
+    let startInterface = Interface.chosen ?? ""
+    init() { load() }
+
+    func load(tries: Int = 30) {
+        Services.shared.get("/settings") { r, _ in
+            guard let langs = r?["languages"] as? [String], let sup = r?["supported"] as? [[String: Any]] else {
+                self.available = false
+                if tries > 1 { DispatchQueue.main.asyncAfter(deadline: .now() + 2) { self.load(tries: tries - 1) } }   // the engine is starting
+                return
+            }
+            let ids = sup.compactMap { $0["id"] as? String }
+            self.options = sup.compactMap { o in
+                (o["id"] as? String).map {
+                    Option(id: $0, name: LanguageNames.display($0, among: ids), native: LanguageNames.display($0, among: ids, in: Locale(identifier: $0)))
+                }
+            }.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+            self.chosen = langs
+            self.isDefault = !(r?["languagesSet"] as? Bool ?? false)
+            self.available = true
+            if UserDefaults(suiteName: UserDefaults.argumentDomain)?.object(forKey: "languagesSheet") != nil {
+                self.editing = true                             // for development: `-languagesSheet 1` opens the list
+            }
+        }
+    }
+
+    func name(_ id: String) -> String { options.first { $0.id == id }?.name ?? id }
+    var summary: String { ListFormatter.localizedString(byJoining: chosen.map(name)) }
+
+    private var sending = false, pending = false
+
+    /// Add or remove a language; at least one stays.
+    func toggle(_ id: String, _ on: Bool) {
+        var l = chosen.filter { $0 != id }
+        if on { l.append(id) }
+        guard !l.isEmpty else { return }
+        chosen = l
+        send()
+    }
+
+    /// One request at a time, the latest list last (quick clicks must not arrive out of order).
+    private func send() {
+        guard !sending else { pending = true; return }
+        sending = true
+        Services.shared.post("/settings", ["languages": chosen]) { r, _ in
+            self.sending = false
+            if self.pending { self.pending = false; self.send(); return }
+            if let l = r?["languages"] as? [String] { self.chosen = l; self.isDefault = false }
+        }
+    }
+
+    func setInterface(_ id: String) {
+        interface = id
+        Interface.chosen = id.isEmpty ? nil : id
+    }
+}
+
+struct LanguagesSheet: View {
+    @ObservedObject var model: LanguagesModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(L("Languages you write in")).font(.title3.bold())
+                Spacer()
+                Button(L("Done")) { model.editing = false }.keyboardShortcut(.defaultAction)
+            }
+            Text(L("Choose every language you type in, and only those. Homeword works out which of them you are typing and suggests "
+                   + "in that language; a short list keeps it from mixing up similar languages (Danish and Norwegian, Spanish and "
+                   + "Portuguese)."))
+                .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            List(model.options) { o in
+                Toggle(isOn: Binding(get: { model.chosen.contains(o.id) }, set: { model.toggle(o.id, $0) })) {
+                    HStack {
+                        Text(o.name)
+                        if o.native.caseInsensitiveCompare(o.name) != .orderedSame { Text(o.native).foregroundStyle(.secondary) }
+                    }
+                }
+                .disabled(model.chosen == [o.id])                   // the last one stays
+            }
+            .listStyle(.bordered(alternatesRowBackgrounds: true))
+        }
+        .padding(16)
+        .frame(width: 440, height: 520)
     }
 }
 
@@ -76,56 +175,89 @@ struct GeneralTab: View {
     @AppStorage(Pref.typedFallback) var typedFallback = true
     @StateObject private var keys = ShortcutsModel()
     @StateObject private var words = WordsModel()
+    @StateObject private var languages = LanguagesModel()
 
     var body: some View {
         Form {
-            Section("Next-word suggestions") {
-                Toggle("Suggest while typing", isOn: $predictions)
-                Picker("Pop-up position", selection: $position) {
-                    Text("Below the cursor").tag("below")
-                    Text("Next to the cursor").tag("beside")
+            Section(L("Next-word suggestions")) {
+                Toggle(L("Suggest while typing"), isOn: $predictions)
+                Picker(L("Pop-up position"), selection: $position) {
+                    Text(L("Below the cursor")).tag("below")
+                    Text(L("Next to the cursor")).tag("beside")
                 }
                 VStack(alignment: .leading, spacing: 3) {
                     HStack {
-                        Text("Words to suggest")
-                        InfoTip("How many words a suggestion can have after the word you are typing. Every word costs model time on "
+                        Text(L("Words to suggest"))
+                        InfoTip(L("How many words a suggestion can have after the word you are typing. Every word costs model time on "
                                 + "each suggestion (about 16 ms per token, ~1.2 tokens per word), and words further ahead are right "
-                                + "less often. The model stops earlier at the end of a sentence, so the cost is a maximum.")
+                                + "less often. The model stops earlier at the end of a sentence, so the cost is a maximum."))
                         Spacer()
-                        Text("up to \(words.words) word\(words.words == 1 ? "" : "s")").monospacedDigit().foregroundStyle(.secondary)
+                        Text(L("up to %d words", words.words)).monospacedDigit().foregroundStyle(.secondary)
                         Stepper("", value: Binding(get: { words.words }, set: { words.set($0) }), in: 1...10).labelsHidden()
                     }
-                    Text(words.available ? words.cost : "Start the engine to change this.")
+                    Text(words.available ? words.cost : L("Start the engine to change this."))
                         .font(.caption).foregroundStyle(.secondary).monospacedDigit()
                 }
                 .disabled(!words.available)
                 HStack {                                        // the value right next to its stepper
-                    Text("Start suggesting after")
+                    Text(L("Start suggesting after"))
                     Spacer()
-                    Text("\(minChars) character\(minChars == 1 ? "" : "s")").monospacedDigit().foregroundStyle(.secondary)
+                    Text(L("%d characters", minChars)).monospacedDigit().foregroundStyle(.secondary)
                     Stepper("", value: $minChars, in: 1...20).labelsHidden()
                 }
-                Toggle("Add a space after a word taken with Tab", isOn: $spaceAfterWord)
+                Toggle(L("Add a space after a word taken with Tab"), isOn: $spaceAfterWord)
                 Toggle(isOn: $typedFallback) {
                     HStack {
-                        Text("Suggest in apps whose text can't be read")
-                        InfoTip("Some apps draw their text themselves and don't share it (Google Docs, Figma, Sublime Text, games). "
+                        Text(L("Suggest in apps whose text can't be read"))
+                        InfoTip(L("Some apps draw their text themselves and don't share it (Google Docs, Figma, Sublime Text, games). "
                                 + "There Homeword uses what you typed since your last click instead, kept in memory only. It starts "
                                 + "after the first word, resets on clicks, arrows, Return and shortcuts, and is off while an input "
-                                + "method is active. The pop-up shows where you last clicked.")
+                                + "method is active. The pop-up shows where you last clicked."))
                     }
                 }
-                Toggle("Support Chrome-based browsers and Electron apps", isOn: $chromium)
-                Text("Tab inserts the highlighted word, Esc dismisses. Typing the suggestion's next letters keeps it. The writing style "
-                     + "follows the app you type in (Apps tab).")
+                Toggle(L("Support Chrome-based browsers and Electron apps"), isOn: $chromium)
+                Text(L("Tab inserts the highlighted word, Esc dismisses. Typing the suggestion's next letters keeps it. The writing style "
+                       + "follows the app you type in (Apps tab)."))
                     .font(.caption).foregroundStyle(.secondary)
             }
-            Section("Proofreading") {
-                Toggle("Proofread and rewrite selected text", isOn: $proofreading)
-                ShortcutRow(title: "Proofread selection", model: keys.proofread, other: keys.rewrite, fallback: .defaultProofread)
-                ShortcutRow(title: "Rewrite selection", model: keys.rewrite, other: keys.proofread, fallback: .defaultRewrite)
-                Text("Proofread fixes typos and grammar; rewrite makes the text clearer. Both keep your meaning. Return replaces the "
-                     + "selection, ⌘C copies the result, Esc cancels.")
+            Section(L("Languages")) {
+                Picker(L("Homeword's language"), selection: Binding(get: { languages.interface }, set: { languages.setInterface($0) })) {
+                    Text(L("System default")).tag("")
+                    Divider()
+                    ForEach(Interface.languages, id: \.self) { Text(Interface.nativeName($0)).tag($0) }
+                }
+                if languages.interface != languages.startInterface {
+                    HStack {
+                        Text(L("Homeword shows the new language after it restarts.")).font(.caption).foregroundStyle(.secondary)
+                        Spacer()
+                        Button(L("Restart Homeword")) { Interface.relaunch() }
+                    }
+                }
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack {
+                        Text(L("Languages you write in"))
+                        InfoTip(L("Suggestions come in the language you are typing, out of these. Homeword detects it as you type; "
+                                  + "listing only the languages you use makes that more accurate. Apple's on-device model supports "
+                                  + "these languages. By default: your system's language, or English if the model doesn't support it."))
+                        Spacer()
+                        Text(languages.available ? languages.summary : "–").foregroundStyle(.secondary).lineLimit(1).truncationMode(.tail)
+                        Button(L("Choose…")) { languages.editing = true }
+                    }
+                    if !languages.available {
+                        Text(L("Start the engine to change this.")).font(.caption).foregroundStyle(.secondary)
+                    } else if languages.isDefault {
+                        Text(L("The default: your system's language, or English. Add the other languages you write in.")).font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+                .disabled(!languages.available)
+                .sheet(isPresented: $languages.editing) { LanguagesSheet(model: languages) }
+            }
+            Section(L("Proofreading")) {
+                Toggle(L("Proofread and rewrite selected text"), isOn: $proofreading)
+                ShortcutRow(title: L("Proofread selection"), model: keys.proofread, other: keys.rewrite, fallback: .defaultProofread)
+                ShortcutRow(title: L("Rewrite selection"), model: keys.rewrite, other: keys.proofread, fallback: .defaultRewrite)
+                Text(L("Proofread fixes typos and grammar; rewrite makes the text clearer. Both keep your meaning. Return replaces the "
+                       + "selection, ⌘C copies the result, Esc cancels."))
                     .font(.caption).foregroundStyle(.secondary)
             }
         }
@@ -145,7 +277,7 @@ struct ShortcutRow: View {
                 Text(title)
                 Spacer()
                 HotkeyRecorder(model: model)
-                Button("Default") { model.reset(to: fallback) }
+                Button(L("Default")) { model.reset(to: fallback) }
                     .disabled(model.hotkey == fallback)
             }
             if let w = model.hotkey.warning(other: other.hotkey) {
@@ -225,8 +357,8 @@ struct AppsTab: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Homeword picks a writing style for the app you type in, and for web apps in browsers (Gmail is Email, Google Docs is "
-                 + "Work documents). Change it per app here, or turn suggestions off for an app.")
+            Text(L("Homeword picks a writing style for the app you type in, and for web apps in browsers (Gmail is Email, Google Docs is "
+                   + "Work documents). Change it per app here, or turn suggestions off for an app."))
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             List(selection: $model.selection) {
@@ -240,11 +372,11 @@ struct AppsTab: View {
                         Text(row.info.name).foregroundStyle(row.info.installed ? Color.primary : Color.secondary)
                         Spacer()
                         Picker("", selection: Binding(get: { row.choice }, set: { model.set(row.id, $0) })) {
-                            Text("Automatic (\(Style.title(row.automatic)))").tag("auto")
+                            Text(L("Automatic (%@)", Style.title(row.automatic))).tag("auto")
                             Divider()
                             ForEach(Style.all, id: \.self) { Text(Style.title($0)).tag($0) }
                             Divider()
-                            Text("Off").tag("off")
+                            Text(L("Off")).tag("off")
                         }
                         .labelsHidden()
                         .frame(width: 250, alignment: .trailing)
@@ -265,18 +397,18 @@ struct AppsTab: View {
                         }
                     }
                     Divider()
-                    Button("Choose an App…") { model.choose() }
+                    Button(L("Choose an App…")) { model.choose() }
                 } label: {
                     Image(systemName: "plus").frame(width: 16, height: 16)
                 }
                 .menuIndicator(.hidden)
                 .fixedSize()
-                .help("Add a running app, or choose one from Applications")
+                .help(L("Add a running app, or choose one from Applications"))
                 Button { model.removeSelected() } label: { Image(systemName: "minus").frame(width: 16, height: 16) }  // same size as +
                     .disabled(model.selection.map { Style.userChoices[$0] == nil } ?? true)
-                    .help("Remove your setting for the selected app (built-in apps go back to Automatic)")
+                    .help(L("Remove your setting for the selected app (built-in apps go back to Automatic)"))
                 Spacer()
-                Text("Apps not listed use Automatic.").font(.caption).foregroundStyle(.secondary)
+                Text(L("Apps not listed use Automatic.")).font(.caption).foregroundStyle(.secondary)
             }
         }
         .padding(8)
@@ -298,50 +430,50 @@ struct StatsTab: View {
     var body: some View {
         VStack(spacing: 8) {
             Form {
-                Section("Suggestions") {
-                    row("Suggestions shown", "\(s.shown)")
-                    row("Accepted (at least one word)", s.shown > 0 ? "\(s.accepted) (\(pct(s.accepted, s.shown)))" : "–",
-                        info: "Suggestions of which you took at least one word with Tab, out of all shown.")
-                    row("Words accepted", "\(s.acceptedWords)")
-                    row("Keystrokes saved", s.keys > 0 ? "\(s.acceptedChars - s.acceptedWords) of \(s.keys + s.acceptedChars - s.acceptedWords) (\(pct(s.acceptedChars - s.acceptedWords, s.keys + s.acceptedChars - s.acceptedWords)))" : "–",
-                        info: "Characters that accepted words typed for you (minus the Tab per word), out of all "
-                        + "characters that went into the text while suggestions were on.")
-                    row("Characters typed along a suggestion", "\(s.typedAlong)",
-                        info: "Characters you typed that matched the suggestion shown: it was right, but you typed instead of accepting.")
-                    row("Key → pop-up, p50 / p90", ms(MetricsSummary.pct(s.latencies, 50)) + " / " + ms(MetricsSummary.pct(s.latencies, 90)),
-                        info: "Time from a key press to the suggestion on screen. p50: half were faster; p90: 9 in 10 were faster.")
-                    row("Model time, p50", ms(MetricsSummary.pct(s.models, 50)), info: "The part of that time the model took to answer (median).")
-                    row("Requests with nothing to show / errors", "\(s.empty) / \(s.errors)",
-                        info: "Requests whose answer had no usable suggestion, and requests that failed (e.g. the engine was not running).")
+                Section(L("Suggestions")) {
+                    row(L("Suggestions shown"), "\(s.shown)")
+                    row(L("Accepted (at least one word)"), s.shown > 0 ? "\(s.accepted) (\(pct(s.accepted, s.shown)))" : "–",
+                        info: L("Suggestions of which you took at least one word with Tab, out of all shown."))
+                    row(L("Words accepted"), "\(s.acceptedWords)")
+                    row(L("Keystrokes saved"), s.keys > 0 ? L("%d of %d (%@)", s.acceptedChars - s.acceptedWords, s.keys + s.acceptedChars - s.acceptedWords, pct(s.acceptedChars - s.acceptedWords, s.keys + s.acceptedChars - s.acceptedWords)) : "–",
+                        info: L("Characters that accepted words typed for you (minus the Tab per word), out of all "
+                                + "characters that went into the text while suggestions were on."))
+                    row(L("Characters typed along a suggestion"), "\(s.typedAlong)",
+                        info: L("Characters you typed that matched the suggestion shown: it was right, but you typed instead of accepting."))
+                    row(L("Key → pop-up, p50 / p90"), ms(MetricsSummary.pct(s.latencies, 50)) + " / " + ms(MetricsSummary.pct(s.latencies, 90)),
+                        info: L("Time from a key press to the suggestion on screen. p50: half were faster; p90: 9 in 10 were faster."))
+                    row(L("Model time, p50"), ms(MetricsSummary.pct(s.models, 50)), info: L("The part of that time the model took to answer (median)."))
+                    row(L("Requests with nothing to show / errors"), "\(s.empty) / \(s.errors)",
+                        info: L("Requests whose answer had no usable suggestion, and requests that failed (e.g. the engine was not running)."))
                 }
                 if !s.perStyle.isEmpty {
-                    Section("By writing style") {
+                    Section(L("By writing style")) {
                         ForEach(s.perStyle.sorted { $0.value.shown > $1.value.shown }, id: \.key) { st, v in
-                            row(Style.title(st), "\(v.shown) shown, \(pct(v.accepted, v.shown)) accepted, p50 \(ms(MetricsSummary.pct(v.latencies, 50)))")
+                            row(Style.title(st), L("%d shown, %@ accepted, p50 %@", v.shown, pct(v.accepted, v.shown), ms(MetricsSummary.pct(v.latencies, 50))))
                         }
                     }
                 }
                 if !s.perApp.isEmpty {
-                    Section("By app") {
+                    Section(L("By app")) {
                         ForEach(s.perApp.sorted { $0.value.shown > $1.value.shown }.prefix(8), id: \.key) { app, v in
-                            row(AppInfo.of(app).name, "\(v.shown) shown, \(pct(v.accepted, v.shown)) accepted")
+                            row(AppInfo.of(app).name, L("%d shown, %@ accepted", v.shown, pct(v.accepted, v.shown)))
                         }
                     }
                 }
-                Section("Proofreading") {
-                    row("Requests", "\(s.proofreads)")
-                    row("Replaced / copied / cancelled / failed", "\(s.replaced) / \(s.copied) / \(s.cancelled) / \(s.failed)",
-                        info: "What happened to each proofread or rewrite: put into the text, copied, closed without using it, or failed.")
-                    row("Answer time, p50", ms(MetricsSummary.pct(s.proofLatencies, 50)))
+                Section(L("Proofreading")) {
+                    row(L("Requests"), "\(s.proofreads)")
+                    row(L("Replaced / copied / cancelled / failed"), "\(s.replaced) / \(s.copied) / \(s.cancelled) / \(s.failed)",
+                        info: L("What happened to each proofread or rewrite: put into the text, copied, closed without using it, or failed."))
+                    row(L("Answer time, p50"), ms(MetricsSummary.pct(s.proofLatencies, 50)))
                 }
             }
             .formStyle(.grouped)
             HStack {
-                Text("Counts and timings only, never your text. Stored on this Mac.").font(.caption).foregroundStyle(.secondary)
+                Text(L("Counts and timings only, never your text. Stored on this Mac.")).font(.caption).foregroundStyle(.secondary)
                 Spacer()
-                Button("Reveal File") { NSWorkspace.shared.activateFileViewerSelecting([Metrics.shared.url]) }
-                Button("Reset…") { confirmReset() }
-                Button("Refresh") { model.refresh() }
+                Button(L("Reveal File")) { NSWorkspace.shared.activateFileViewerSelecting([Metrics.shared.url]) }
+                Button(L("Reset…")) { confirmReset() }
+                Button(L("Refresh")) { model.refresh() }
             }
             .padding(.horizontal, 8)
         }
@@ -350,9 +482,9 @@ struct StatsTab: View {
 
     private func confirmReset() {
         let a = NSAlert()
-        a.messageText = "Delete all collected statistics?"
-        a.addButton(withTitle: "Delete")
-        a.addButton(withTitle: "Cancel")
+        a.messageText = L("Delete all collected statistics?")
+        a.addButton(withTitle: L("Delete"))
+        a.addButton(withTitle: L("Cancel"))
         if a.runModal() == .alertFirstButtonReturn {
             Metrics.shared.reset()
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { model.refresh() }
@@ -406,12 +538,12 @@ final class EngineModel: ObservableObject {
     }
     var detail: String {
         switch state {
-        case .running: return "Runs Apple's on-device model on this Mac. Nothing you type leaves it."
-        case .starting: return "Loading the on-device model…"
-        case .stopping: return "Stopping…"
-        case .unknown: return "Checking…"
-        case .stopped: return stoppedByUser ? "Stopped. Suggestions and proofreading are paused until you start it."
-            : "Not running. It shuts down after 30 idle minutes and starts again when you type."
+        case .running: return L("Runs Apple's on-device model on this Mac. Nothing you type leaves it.")
+        case .starting: return L("Loading the on-device model…")
+        case .stopping: return L("Stopping…")
+        case .unknown: return L("Checking…")
+        case .stopped: return stoppedByUser ? L("Stopped. Suggestions and proofreading are paused until you start it.")
+            : L("Not running. It shuts down after 30 idle minutes and starts again when you type.")
         }
     }
 
@@ -426,9 +558,9 @@ final class EngineModel: ObservableObject {
         guard portsValid, let a = Int(port), let b = Int(apiPort) else { return }
         do {
             try Services.shared.setPorts(engine: a, api: b)
-            message = "Restarting the engine on the new ports…"
+            message = L("Restarting the engine on the new ports…")
         } catch {
-            message = "Could not save: \(error.localizedDescription)"
+            message = L("Could not save: %@", error.localizedDescription)
         }
     }
 }
@@ -443,14 +575,14 @@ struct EngineTab: View {
             Section {
                 HStack(spacing: 8) {
                     StatusDot(color: model.color)
-                    Text(model.state.rawValue).bold()
+                    Text(model.state.title).bold()
                     Spacer()
                     if model.state == .stopped {
-                        Button("Start") { Services.shared.start(force: true); model.refresh() }
+                        Button(L("Start")) { Services.shared.start(force: true); model.refresh() }
                     } else {
-                        Button("Stop") { Services.shared.stop(); model.refresh() }
+                        Button(L("Stop")) { Services.shared.stop(); model.refresh() }
                             .disabled(model.state == .stopping || model.state == .starting)
-                        Button("Restart") { Services.shared.restart(); model.refresh() }
+                        Button(L("Restart")) { Services.shared.restart(); model.refresh() }
                             .disabled(model.state == .stopping || model.state == .starting)
                     }
                 }
@@ -460,56 +592,56 @@ struct EngineTab: View {
                         .font(.caption).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true)
                 }
                 HStack {
-                    Text("Port")
+                    Text(L("Port"))
                     Spacer()
                     TextField("", text: $model.port).frame(width: 80).multilineTextAlignment(.trailing).labelsHidden()
                 }
-                Text("Used by Homeword and the pred command line tool. The pi and Claude Code integrations have their own port setting.")
+                Text(L("Used by Homeword and the pred command line tool. The pi and Claude Code integrations have their own port setting."))
                     .font(.caption).foregroundStyle(.secondary)
             } header: {
-                Text("Engine")
+                Text(L("Engine"))
             }
             Section {
                 HStack(spacing: 8) {
                     StatusDot(color: model.apiUp ? .green : (model.state == .starting ? .yellow : .red))
-                    Text(model.apiUp ? "Available" : "Not available").bold()
+                    Text(model.apiUp ? L("Available") : L("Not available")).bold()
                     Spacer()
                 }
-                copyRow("Base URL", baseURL)
-                copyRow("Model", "apple-on-device")
-                copyRow("API key", "any text")
+                copyRow(L("Base URL"), baseURL)
+                copyRow(L("Model"), "apple-on-device")
+                copyRow(L("API key"), L("any text"))
                 HStack {
-                    Text("Port")
+                    Text(L("Port"))
                     Spacer()
                     TextField("", text: $model.apiPort).frame(width: 80).multilineTextAlignment(.trailing).labelsHidden()
                 }
-                Text("Point any OpenAI-compatible app or agent at the base URL to use Apple's on-device model. Local only: other "
-                     + "machines cannot reach it. The model's context window is 8,192 tokens.")
+                Text(L("Point any OpenAI-compatible app or agent at the base URL to use Apple's on-device model. Local only: other "
+                       + "machines cannot reach it. The model's context window is 8,192 tokens."))
                     .font(.caption).foregroundStyle(.secondary)
             } header: {
-                Text("OpenAI-compatible API")
+                Text(L("OpenAI-compatible API"))
             }
             if model.portsChanged || !model.message.isEmpty {
                 HStack {
-                    Text(model.portsValid ? model.message : "Ports must be different numbers between 1024 and 65535.")
+                    Text(model.portsValid ? model.message : L("Ports must be different numbers between 1024 and 65535."))
                         .font(.caption).foregroundStyle(model.portsValid ? Color.secondary : Color.red)
                     Spacer()
-                    Button("Revert") { model.port = String(EngineConfig.port); model.apiPort = String(EngineConfig.apiPort); model.message = "" }
+                    Button(L("Revert")) { model.port = String(EngineConfig.port); model.apiPort = String(EngineConfig.apiPort); model.message = "" }
                         .disabled(!model.portsChanged)
-                    Button("Apply and Restart") { model.applyPorts() }
+                    Button(L("Apply and Restart")) { model.applyPorts() }
                         .disabled(!model.portsChanged || !model.portsValid)
                 }
             }
-            Section("Permissions") {
+            Section(L("Permissions")) {
                 HStack(spacing: 8) {
                     StatusDot(color: model.ax ? .green : .red)
-                    Text("Accessibility: \(model.ax ? "allowed" : "not allowed")")
+                    Text(model.ax ? L("Accessibility: allowed") : L("Accessibility: not allowed"))
                     Spacer()
-                    Button("Open Accessibility Settings") {
+                    Button(L("Open Accessibility Settings")) {
                         NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!)
                     }
                 }
-                Text("Needed to read the text field you type in, see key presses and insert words.")
+                Text(L("Needed to read the text field you type in, see key presses and insert words."))
                     .font(.caption).foregroundStyle(.secondary)
             }
         }
@@ -526,7 +658,7 @@ struct EngineTab: View {
                 NSPasteboard.general.setString(value, forType: .string)
             } label: { Image(systemName: "doc.on.doc") }
                 .buttonStyle(.borderless)
-                .help("Copy")
+                .help(L("Copy"))
         }
     }
 }

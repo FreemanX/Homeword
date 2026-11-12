@@ -19,6 +19,8 @@ on-device model through the local engine, so your words never leave home (the Ma
 - **Prompts you can tune**: every prompt (one per writing style, proofread, rewrite) is editable, instructions and examples, with
   token counts, a benchmark on built-in test cases (viewable) and your own, compared with the default, and the last 20 saved
   versions.
+- **Languages**: suggestions come in the language you are typing, out of the ones you write in (any of the 16 languages of
+  Apple's on-device model; by default your system's language). The interface is in those languages too.
 - **Statistics** for improving it: latency, acceptance, keystrokes saved, per writing style and app, proofreading outcomes. Counts
   and timings only, never text.
 
@@ -115,10 +117,14 @@ Menu → Settings… (⌘,) opens one window with five tabs.
 
 **General.** Suggest while typing (also in the menu); pop-up position (below or next to the cursor); words to suggest (1-10, 5 by
 default: an engine setting, so `pred` and the agent integrations follow it; it fills `{words}` in the prompts; a line
-below shows the latency effect against 5 words, about 16 ms per output token); start after N characters (3);
-Chrome-based browsers and Electron apps (on); proofread and rewrite selected text (on), with a shortcut recorder for each: click,
-press a combination with ⌘, ⌃ or ⌥ (Esc cancels, Delete removes the shortcut). A warning shows when both are the same or the
-combination is a plain ⌘ shortcut that apps use.
+below shows the latency effect against 5 words, about 16 ms per output token); start after N characters (3); a space after a word
+taken with Tab (on); suggest in apps whose text can't be read, from the keys typed since the last click (on); Chrome-based browsers
+and Electron apps (on). Languages: Homeword's language (the system's, or one of the 17 it is translated into; it applies after a
+restart, which a button next to it does); the languages you write in, chosen in a list of the model's languages (an engine
+setting, `languages`: the engine detects which of them you are typing, among those only, which keeps it from mixing up close
+languages such as Danish and Norwegian; by default the system's language, or English). Proofread and rewrite selected text (on),
+with a shortcut recorder for each: click, press a combination with ⌘, ⌃ or ⌥ (Esc cancels, Delete removes the shortcut). A warning
+shows when both are the same or the combination is a plain ⌘ shortcut that apps use.
 
 **Apps.** Every app with a built-in style that is installed, plus the apps you added (+: a running app, or Choose…). Per app:
 Automatic (the built-in style, shown in brackets), a style, or Off. − removes your setting. In browsers, Automatic means the web
@@ -139,7 +145,8 @@ Rewrite); a dot marks your version. For the selected one:
 - **Your test cases**: the same two-box editor (typed text | what comes next; for proofreading, text | corrected text). Saved per
   prompt as you type, on this Mac, outside the repo.
 - **Benchmark**: the built-in test cases (200 texts from `bench/cases.json` and `bench/styles.json`, at least 25 per category), each
-  tagged with a category: Chat, Email, Work documents, Academic, Code, General, Terminal. View… opens them read-only, per category
+  tagged with a category: Chat, Email, Work documents, Academic, Code, General, Terminal, and 10 texts per language you write in
+  besides English (`bench/languages.json`). View… opens them read-only, per category
   (typed text | what comes next, the same paired view as the editors). A case that shares text with one of the prompt's examples is
   left out (a note says how many, and the viewer marks its line): it would test recall, not prediction. Run Full Benchmark runs the
   draft (or the saved prompt) on all of them plus your cases; Run Your Cases runs only yours; Run Default runs the shipped prompt
@@ -203,6 +210,8 @@ Tab presses.
 | `Sources/Input.swift` | the key tap, synthetic typing (tagged so the tap ignores it), pasteboard save and restore |
 | `Sources/Services.swift` | preferences and migration, the engine client: requests, health, start/stop, ports |
 | `Sources/Metrics.swift` | the metrics file and the summary |
+| `Sources/Localization.swift` | `L()`: every text in the interface language; Homeword's language setting |
+| `Localization/` | the translations (`<language>.lproj`: `Localizable.strings`, plural forms in `Localizable.stringsdict`) and `strings.py`, which checks them |
 
 Design notes for this version: [DESIGN.md](DESIGN.md).
 
@@ -224,8 +233,19 @@ open app/build/Homeword.app --args -show prompts -promptsSelect predict-chat -pr
 open app/build/Homeword.app --args -show prompts -promptsSuite 1      # the built-in test cases viewer
 open app/build/Homeword.app --args -show prompts -infoTip "How often"  # opens the ⓘ whose text starts with this
 open app/build/Homeword.app --args -show prompts -pairedHighlight 2    # line 3 of the paired editors shown as current
+open app/build/Homeword.app --args -show general -languagesSheet 1    # the list of languages you write in
 open app/build/Homeword.app --args -demoProofread file.txt [-demoMode rewrite]   # the panel on a file's text; Replace is off
 ```
+
+## Interface languages
+
+Every text the user reads goes through `L("English text", args...)` (`Sources/Localization.swift`): the English text is the key, a
+format with `%d`/`%@` when it takes values (never `\(…)` inside it), split with `+` over lines if long. A phrase with a count also
+gets plural forms in `Localization/en.lproj/Localizable.stringsdict`. Texts the engine sends (prompt titles, category names) are
+named by their id in the app. `build.sh` copies `Localization/*.lproj` into the app. After adding or changing a text, translate it
+in every language (`python3 -I app/Localization/strings.py --export` lists them all) and run `python3 -I
+app/Localization/strings.py`: it reports missing texts, texts no longer in the code and format specifiers that differ. To see
+the app in a language without changing the setting: `open app/build/Homeword.app --args -AppleLanguages '(de)' -show general`.
 
 ## Known limits
 

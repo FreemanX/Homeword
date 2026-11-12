@@ -18,13 +18,14 @@ proofreading of the selection).
 - **Mechanism** `predictd.swift` → `./predictd` (config `predictd.json`): a model host that assumes nothing about its use. Named
   profiles (instructions, example turns, schema, guardrails, defaults), pinning (which profile the keep-alive keeps warm), stateless
   or conversation sessions, `generate` (plain or structured, `maxTokens`, sampling), newest-wins `stream`s, `tokens`, `spell`,
-  `stats`. Newline-delimited JSON on `/tmp/predictd-<uid>.sock`, the same over HTTP on `127.0.0.1:47320`, plus an
+  `languages`, `stats`. Newline-delimited JSON on `/tmp/predictd-<uid>.sock`, the same over HTTP on `127.0.0.1:47320`, plus an
   OpenAI-compatible chat API there (`/v1/models`, `/v1/chat/completions`: streaming, tool calls returned to the caller, JSON schema;
   docs/OPENAI.md). The context window is 8192 tokens.
 - **Policy** `ghost/` → `./ghostd` (Swift, a second binary): the typing predictor and the proofreader, and their HTTP server for
   every app. `Policy.swift` (a profile per writing style: general from `prompt.json`, the others from `styles.json`; trim,
   generate, assemble, warm), `Proofread.swift` (fix or rewrite a text, per paragraph, word diff; prompts in `proofread.json`),
-  `Prompts.swift` (the user's prompts, history and benchmark results, in `~/.config/homeword/`), `Evaluate.swift` (scoring,
+  `Prompts.swift` (the user's prompts, history and benchmark results, in `~/.config/homeword/`), `Language.swift` (the user's
+  writing languages: detection among them, how a request names one, its spell checker), `Evaluate.swift` (scoring,
   per-style benchmarks), `Predictd.swift` (predictd client, starts it), `PyCompat.swift` (string, JSON and hash helpers),
   `main.swift` (HTTP `127.0.0.1:47321`: `/predict`, `/warm`, `/proofread`, `/prompts`, `/history`, `/tokens`, `/bench`,
   `/suite`, `/cases`, `/settings`, `/config`, `/request`, `/health`, `/shutdown`), `Selftest.swift` (`ghostd --selftest`: the
@@ -38,8 +39,9 @@ proofreading of the selection).
   `machine.py`, `try_pty_test.py` (smoke test), `integration_latency.py` (keystroke → ghost in a real terminal app via tmux),
   `openai_compare.py` (native protocol vs OpenAI API on the typing workload), `styles.json` + `run.py --styles` (the suite:
   cases.json + styles.json, 200 cases in 7 categories, at least 25 each; every style's prompt reported per category, also run by
-  Homeword's Prompts tab with the user's own cases), `styles-dev.json` (tuning cases for the style prompts, never reported),
-  `check_cases.py` (no prompt example in the cases), `app_metrics.py` (summary of Homeword's usage metrics), `baselines/` (shared
+  Homeword's Prompts tab with the user's own cases), `languages.json` (10 everyday texts per language besides English, 15
+  languages: a category per writing language in the suite; `run.py --styles --languages all`), `styles-dev.json` (tuning
+  cases for the style prompts, never reported), `check_cases.py` (no prompt example in the cases), `app_metrics.py` (summary of Homeword's usage metrics), `baselines/` (shared
   results), `RESULTS.md`.
 - `integrations/pi/ghost-editor.ts`: pi extension (a `CustomEditor` subclass drawing the ghost in the fake cursor and padding).
 - `integrations/claude-code/`: Claude Code mod (`prompt.edit` hook + `$.prompt.fill` decorations; Tab/→ through two commands bound in
@@ -50,7 +52,9 @@ proofreading of the selection).
   sees keys (consumes Tab/Esc while a suggestion shows, and the configurable proofread/rewrite shortcuts), a non-activating panel
   shows the suggestion. Settings: General, Apps (style per app), Prompts (editor, benchmark, history), Statistics, Engine. Metrics
   in `~/Library/Application Support/Homeword/metrics.jsonl`: counts and timings only, never text. Keep it that way. User-facing
-  text avoids internal terms (policy, profile, predictd): say engine, writing style, prompt. Design notes: `app/DESIGN.md`. Icons:
+  text avoids internal terms (policy, profile, predictd): say engine, writing style, prompt. Every user-facing text goes through
+  `L("English text", args...)` and is translated into 16 languages (`app/Localization/`; after adding or changing one, translate
+  it everywhere and run `python3 -I app/Localization/strings.py`). Design notes: `app/DESIGN.md`. Icons:
   `app/Icon/*.svg`, rendered by `build.sh` with AppKit.
 
 ## Build and run
@@ -223,6 +227,7 @@ cursor). Test Claude Code with a throwaway `CLAUDE_CONFIG_DIR` holding the keybi
 - Quality on the owner's real typing (keep that data local and out of git); the 80 cases are a small proxy.
 - Known misses: an abbreviation the spell checker accepts ("fri") gets split from the model's next word when the model ignores it;
   one-letter prefixes are guesses ("won't j" → "job").
-- Untested: CJK and other languages (trimming and word logic assume spaces), the Private Cloud Compute model, the trigger of the
-  slow mode.
+- Other languages: quality on `bench/languages.json` is well below English (10 cases per language: one case is 10 points), and the
+  word logic (trimming, glue, sentence ends) was written for languages with spaces; Japanese and Chinese have no spell check.
+  Untested: the Private Cloud Compute model, the trigger of the slow mode.
 - Further latency means trading quality (fewer examples, shorter answers) or a different, smaller local model (not Apple's).

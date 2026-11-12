@@ -15,6 +15,7 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 export CLANG_MODULE_CACHE_PATH="${TMPDIR:-/tmp}/homeword-modcache"
 swiftc -O -parse-as-library Sources/*.swift -o "$APP/Contents/MacOS/Homeword"
 sed -e "s#@REPO@#$REPO#" -e "s#@VERSION@#$VERSION#" -e "s#@BUILD@#$BUILD#" Info.plist.in > "$APP/Contents/Info.plist"
+cp -R Localization/*.lproj "$APP/Contents/Resources/"   # the interface in each language (Localization/strings.py checks them)
 # icons from the SVGs in Icon/: AppIcon.icns, and the menu bar template image at 1x and 2x
 TOOLS="${TMPDIR:-/tmp}/homeword-tools"
 mkdir -p "$TOOLS"

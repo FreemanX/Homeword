@@ -104,25 +104,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
-        let predict = NSMenuItem(title: "Predict While Typing", action: #selector(togglePredictions), keyEquivalent: "")
+        let predict = NSMenuItem(title: L("Predict While Typing"), action: #selector(togglePredictions), keyEquivalent: "")
         predict.state = Pref.d.bool(forKey: Pref.predictions) ? .on : .off
         menu.addItem(predict)
-        for (title, sel, key) in [("Proofread Selection", #selector(proofreadSelection), Pref.proofreadKey),
-                                  ("Rewrite Selection", #selector(rewriteSelection), Pref.rewriteKey)] {
+        for (title, sel, key) in [(L("Proofread Selection"), #selector(proofreadSelection), Pref.proofreadKey),
+                                  (L("Rewrite Selection"), #selector(rewriteSelection), Pref.rewriteKey)] {
             let (ch, mods) = Hotkey.load(key).menuEquivalent
             let item = NSMenuItem(title: title, action: sel, keyEquivalent: ch)
             item.keyEquivalentModifierMask = mods
             menu.addItem(item)
         }
         menu.addItem(.separator())
-        menu.addItem(NSMenuItem(title: axTrusted ? "Accessibility: allowed" : "Accessibility: not allowed (click to open Settings)",
+        menu.addItem(NSMenuItem(title: axTrusted ? L("Accessibility: allowed") : L("Accessibility: not allowed (click to open Settings)"),
                                 action: axTrusted ? nil : #selector(openAccessibility), keyEquivalent: ""))
         if axTrusted && !tapRunning {
-            menu.addItem(NSMenuItem(title: "Keyboard: blocked (click to allow in Input Monitoring)", action: #selector(openInputMonitoring), keyEquivalent: ""))
+            menu.addItem(NSMenuItem(title: L("Keyboard: blocked (click to allow in Input Monitoring)"), action: #selector(openInputMonitoring), keyEquivalent: ""))
         }
         let e = Services.shared
-        let engine = e.state == .stopped ? (e.stoppedByUser ? "Engine: stopped (click to start)" : "Engine: stopped, starts when needed (click to start)")
-            : "Engine: \(e.state.rawValue.lowercased())"
+        let engine = e.state == .stopped ? (e.stoppedByUser ? L("Engine: stopped (click to start)") : L("Engine: stopped, starts when needed (click to start)"))
+            : L("Engine: %@", e.state.title)
         menu.addItem(NSMenuItem(title: engine, action: e.state == .stopped ? #selector(startServices) : nil, keyEquivalent: ""))
         if let problem = e.availabilityProblem, e.state == .running {
             let item = NSMenuItem(title: problem, action: #selector(openSystemSettings), keyEquivalent: "")
@@ -130,10 +130,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             menu.addItem(item)
         }
         menu.addItem(.separator())
-        menu.addItem(NSMenuItem(title: "Statistics…", action: #selector(showStats), keyEquivalent: ""))
-        menu.addItem(NSMenuItem(title: "Settings…", action: #selector(showSettingsGeneral), keyEquivalent: ","))
+        menu.addItem(NSMenuItem(title: L("Statistics…"), action: #selector(showStats), keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: L("Settings…"), action: #selector(showSettingsGeneral), keyEquivalent: ","))
         menu.addItem(.separator())
-        menu.addItem(NSMenuItem(title: "Quit Homeword", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
+        menu.addItem(NSMenuItem(title: L("Quit Homeword"), action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
         for item in menu.items where item.action != nil && item.action != #selector(NSApplication.terminate(_:)) { item.target = self }
     }
 

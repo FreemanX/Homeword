@@ -108,8 +108,11 @@ curl -s 127.0.0.1:47321/predict -d '{"app":"chat","text":"See you tomor","stream
 pi and Claude Code send `app: "coding agent prompt"` and no style (general), which is not an example label: the model treats it as
 chat-like prose. Homeword sends a writing style (`context`) picked per app and per web app (`app/Sources/Styles.swift`), warms it
 on app switch (`POST /warm`), uses the proofreading policy (`POST /proofread`) on the selection, edits and benchmarks prompts
-(`/prompts`, `/tokens`, `/bench`, `/history`, `/suite`, `/cases`), sets the words to suggest (`/settings`), and logs usage
-metrics (counts and timings, no text) that `bench/app_metrics.py` summarises.
+(`/prompts`, `/tokens`, `/bench`, `/history`, `/suite`, `/cases`), sets the words to suggest and the writing languages
+(`/settings`), and logs usage metrics (counts and timings, no text) that `bench/app_metrics.py` summarises. Its interface texts go
+through `L()` and are translated into 17 languages ("Interface languages" in [app/README.md](../app/README.md)). An application
+that knows the text's language can send `language` with `/predict`; otherwise the engine detects it among the user's
+`languages`.
 
 ### Ideas for the next applications
 

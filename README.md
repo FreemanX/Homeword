@@ -10,7 +10,9 @@ Mac. Your words never leave home.
 
 - **The Homeword Mac app**: a menu bar app. While you type in any app, a pop-up shows the next words (about a quarter of a second,
   in a writing style that follows the app: chat, email, work documents, ...); Tab inserts a word. Select text and press ⌃⌥P to
-  proofread it or ⌃⌥R to rewrite it. Every prompt is editable, with a built-in benchmark. [More](#the-homeword-mac-app)
+  proofread it or ⌃⌥R to rewrite it. Suggestions follow the language you type in (the 16 languages of Apple's model: list the
+  ones you write in), and the app itself speaks them too. Every prompt is editable, with a built-in benchmark.
+  [More](#the-homeword-mac-app)
   <!-- demo GIF: suggestions in Mail, then proofreading a paragraph -->
 - **The engine**: runs the model on your Mac and turns its answers into suggestions (the rest of the unfinished word plus up to five
   words, one sentence) and proofreading. The `pred` command line tool starts it and lets you try it in a terminal (`pred try`); apps

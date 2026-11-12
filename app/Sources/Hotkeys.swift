@@ -31,7 +31,7 @@ struct Hotkey: Equatable {
 
     /// "⌃⌥P"
     var display: String {
-        guard isSet else { return "None" }
+        guard isSet else { return L("None") }
         var s = ""
         if flags.contains(.maskControl) { s += "⌃" }
         if flags.contains(.maskAlternate) { s += "⌥" }
@@ -55,13 +55,13 @@ struct Hotkey: Equatable {
     /// Why this combination is a poor choice, if it is.
     func warning(other: Hotkey) -> String? {
         guard isSet else { return nil }
-        if self == other { return "Same as the other shortcut." }
+        if self == other { return L("Same as the other shortcut.") }
         let m = flags.intersection(Hotkey.relevant)
-        if m == .maskCommand || m == [.maskCommand, .maskShift] { return "Apps use ⌘ shortcuts like this one; it may clash." }
+        if m == .maskCommand || m == [.maskCommand, .maskShift] { return L("Apps use ⌘ shortcuts like this one; it may clash.") }
         return nil
     }
 
-    static let special: [Int: String] = [kVK_Return: "↩", kVK_Tab: "⇥", kVK_Space: "Space", kVK_Delete: "⌫", kVK_Escape: "⎋",
+    static let special: [Int: String] = [kVK_Return: "↩", kVK_Tab: "⇥", kVK_Space: L("Space"), kVK_Delete: "⌫", kVK_Escape: "⎋",
         kVK_ForwardDelete: "⌦", kVK_LeftArrow: "←", kVK_RightArrow: "→", kVK_UpArrow: "↑", kVK_DownArrow: "↓", kVK_Home: "↖",
         kVK_End: "↘", kVK_PageUp: "⇞", kVK_PageDown: "⇟", kVK_F1: "F1", kVK_F2: "F2", kVK_F3: "F3", kVK_F4: "F4", kVK_F5: "F5",
         kVK_F6: "F6", kVK_F7: "F7", kVK_F8: "F8", kVK_F9: "F9", kVK_F10: "F10", kVK_F11: "F11", kVK_F12: "F12"]
@@ -139,11 +139,11 @@ struct HotkeyRecorder: View {
 
     var body: some View {
         Button(action: model.toggle) {
-            Text(model.listening ? "Type a shortcut…" : model.hotkey.display)
+            Text(model.listening ? L("Type a shortcut…") : model.hotkey.display)
                 .frame(minWidth: 120)
                 .foregroundStyle(model.listening ? Color.accentColor : (model.hotkey.isSet ? Color.primary : Color.secondary))
         }
-        .help("Click, then press a key combination with ⌘, ⌃ or ⌥. Esc cancels, Delete removes the shortcut.")
+        .help(L("Click, then press a key combination with ⌘, ⌃ or ⌥. Esc cancels, Delete removes the shortcut."))
         .onDisappear { model.stop() }
     }
 }

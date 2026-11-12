@@ -4,8 +4,8 @@ import AppKit
 
 enum Style {
     static let all = ["general", "chat", "email", "work", "academic", "code"]
-    static let titles = ["general": "General", "chat": "Chat", "email": "Email", "work": "Work documents", "academic": "Academic",
-                         "code": "Code", "off": "Off"]
+    static let titles = ["general": L("General"), "chat": L("Chat"), "email": L("Email"), "work": L("Work documents"),
+                         "academic": L("Academic"), "code": L("Code"), "off": L("Off")]
     static func title(_ s: String) -> String { titles[s] ?? s }
 
     /// Built-in styles by bundle ID (an app not listed is General).
