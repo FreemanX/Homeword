@@ -3,14 +3,16 @@
 // While you type, asks Homeword's engine (ghostd, http://127.0.0.1:47321, on top of the predictd model host) how the
 // prompt continues and paints the answer as dim virtual text after the cursor: drawn, never part of the draft.
 //
-//   Tab         accept one word of the ghost     (keybinding "tab": "command:ghost-word" in the Chat context)
+//   Tab         accept one word of the ghost     (keybinding "tab": "command:ghost-word" in the Chat context; the Autocomplete
+//               context binds it back to "autocomplete:accept", so the slash-command and @file menus keep their Tab)
 //   →           accept the whole ghost; with no ghost it moves the cursor right as usual   ("right": "command:ghost-all")
 //   typing      a character that matches the ghost keeps the rest of it; anything else asks again
 //
 // Keys that do nothing at the end of the draft never reach a prompt.edit hook, so accepting goes through two slash commands
-// bound in ~/.claude/keybindings.json (see integrations/claude-code/README.md); the autocomplete menu keeps its own Tab.
+// bound in ~/.claude/keybindings.json (see integrations/claude-code/README.md).
 //
-// Shown only with the cursor at the end of the draft, and not for /commands or !shell lines. Start the engine with `bin/pred start`.
+// Shown only with the cursor at the end of the draft, and not for /commands, !shell lines or an @mention being typed.
+// Start the engine with `bin/pred start`.
 import type { Register } from 'claude-code'
 
 const URL = 'http://127.0.0.1:47321/predict'
@@ -21,9 +23,11 @@ let ghostFor = '' // the draft it continues; a ghost for any other draft is neve
 let pendingAccept = '' // the draft our last accept-all wrote, so prompt.change can ask for the next words
 let seq = 0 // bumped on every change, so a late answer for an older draft is dropped
 
+// prompt text only: not a /command or !shell line, and not while the word at the cursor is an @mention (Claude Code's own
+// typeahead owns Tab then)
 const wanted = (text: string) => {
   const t = text.trimStart()
-  return t.trim().length >= 2 && !t.startsWith('/') && !t.startsWith('!')
+  return t.trim().length >= 2 && !t.startsWith('/') && !t.startsWith('!') && !/(^|\s)@\S*$/.test(text)
 }
 
 // the ghost's first word with its leading space: "ing" of "includ|ing", " the" after a finished word

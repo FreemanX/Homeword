@@ -35,14 +35,19 @@ the keys are bound to them in `keybindings.json`:
 ```json
 {
   "bindings": [
-    { "context": "Chat", "bindings": { "tab": "command:ghost-word", "right": "command:ghost-all" } }
+    { "context": "Chat", "bindings": { "tab": "command:ghost-word", "right": "command:ghost-all" } },
+    { "context": "Autocomplete", "bindings": { "tab": "autocomplete:accept" } }
   ]
 }
 ```
 
+The second line gives Tab back to Claude Code's own menus (slash commands, `@` files) while one is open: without it the Chat
+binding wins there too, and Tab no longer completes `/he` to `/help`. The mod also shows no ghost for `/commands`, `!shell` lines
+and while the word at the cursor is an `@` mention, so a ghost and a menu never compete.
+
 | Key | Command | Effect |
 |---|---|---|
-| Tab | `/ghost-word` | accept one word of the ghost (the autocomplete menu keeps its own Tab) |
+| Tab | `/ghost-word` | accept one word of the ghost; in an open slash-command or `@` file menu, Tab completes as usual |
 | → | `/ghost-all` | accept the whole ghost; with no ghost it moves the cursor right as usual |
 
 **These bindings are global** (`~/.claude/keybindings.json` applies to every session). Add them only together with loading the mod in
@@ -52,7 +57,8 @@ every session (below); in a session without the mod, Tab and → would point at 
 
 ```sh
 mkdir -p /tmp/cc-ghost && cat > /tmp/cc-ghost/keybindings.json <<'EOF'
-{ "bindings": [ { "context": "Chat", "bindings": { "tab": "command:ghost-word", "right": "command:ghost-all" } } ] }
+{ "bindings": [ { "context": "Chat", "bindings": { "tab": "command:ghost-word", "right": "command:ghost-all" } },
+                { "context": "Autocomplete", "bindings": { "tab": "autocomplete:accept" } } ] }
 EOF
 CLAUDE_CONFIG_DIR=/tmp/cc-ghost claude --plugin-dir <repo>/integrations/claude-code
 ```
