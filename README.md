@@ -191,12 +191,15 @@ prompts small. Setup for the `openai` SDK, pi and others: [docs/OPENAI.md](docs/
 
 A research prototype. Benchmark results (the best run per machine):
 
-| Machine | Steady p50 | Typing key → ghost p50 |
-|---|---|---|
-| Apple M4 Pro, 16-core GPU, 48 GB, macOS 27.2 | 329 ms | 259 ms |
-| Apple M4 Max, 32-core GPU, 36 GB, macOS 27.0.1 | 295 ms | 258 ms |
-| Apple M1 Pro, 14-core GPU, 16 GB, macOS 27.2 | 517 ms | 354 ms |
-| Apple M2, 8-core GPU, 16 GB, macOS 27.2.1 | 286 ms | 256 ms |
+| Machine | Model | Steady p50 | Typing key → ghost p50 |
+|---|---|---|---|
+| Apple M4 Pro, 16-core GPU, 48 GB, macOS 27.2 | AFM 3 Core Advanced | 329 ms | 259 ms |
+| Apple M4 Max, 32-core GPU, 36 GB, macOS 27.0.1 | AFM 3 Core Advanced | 295 ms | 258 ms |
+| Apple M1 Pro, 14-core GPU, 16 GB, macOS 27.2 | AFM 3 Core | 517 ms | 354 ms |
+| Apple M2, 8-core GPU, 16 GB, macOS 27.2.1 | AFM 3 Core | 286 ms | 256 ms |
+
+macOS runs a different version of the on-device model on M4 Macs ("Core Advanced") than on M1 and M2 Macs ("Core"): their
+suggestions differ, and the lighter Core model is why the M2 is as fast as the M4s.
 
 Details and raw data: [bench/RESULTS.md](bench/RESULTS.md).
 

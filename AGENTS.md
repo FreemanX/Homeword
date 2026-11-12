@@ -99,6 +99,9 @@ Policy (ghostd, typing):
 
 ## Facts about the model that drive the design (measured on Apple M4 Pro, macOS 27.2)
 
+- **Two models.** macOS 27 runs "AFM 3 Core Advanced" on M4 Macs and "AFM 3 Core" on M1/M2 Macs (`SystemLanguageModel.default
+  .variant`, `predictd --model`): the same request gets different answers (7 of 80 steady answers agree) and different speed.
+  Prompts are tuned on Core Advanced; check a change on both when a Core machine is at hand.
 - **One cached session at a time.** Apple's docs ("Optimizing key-value caching in language model sessions") leave cache management to
   the provider. On-device, only the session that prewarmed or generated last keeps its KV cache; any other session, in any process,
   evicts it. It expires after ~5-6 s idle. Never run two daemons; another app using the model (Apple Intelligence) can evict ours.
@@ -147,9 +150,11 @@ Policy (ghostd, typing):
 
 ## Recording results for a machine
 
-A machine is a hardware spec plus a macOS version: chip, CPU cores, GPU cores, memory, macOS version and build.
+A machine is a hardware spec plus a macOS version and the on-device model it runs: chip, CPU cores, GPU cores, memory, macOS
+version and build, model variant (`./predictd --model`: "AFM 3 Core Advanced" on M4 Macs, "AFM 3 Core" on M1/M2).
 `python3 -I bench/machine.py` prints it, and every result file records it (`machine`). A different macOS version or build is a
-different machine (outputs can differ, see "macOS versions" in bench/RESULTS.md). RESULTS.md keeps one result per machine and
+different machine (outputs can differ, see "macOS versions" in bench/RESULTS.md); a different model variant gives different
+answers to the same requests ("Model variants" there), so quality compares only within one variant. RESULTS.md keeps one result per machine and
 benchmark: the best run. To measure this Mac and record it:
 
 1. **Prepare.** AC power. Quit Homeword, `pred try` and pi/Claude Code sessions with the integrations; `bin/pred stop`;
@@ -168,8 +173,9 @@ benchmark: the best run. To measure this Mac and record it:
 3. **Pick the best valid run per benchmark**: steady and typing, the lowest p50 (key → ghost for typing) with 0 cache misses;
    styles, the lowest overall p50 (both modes are valid but give different quality: say which mode in the text).
    `python3 -I bench/compare.py a.json b.json` compares two runs and warns when the modes differ.
-4. **Compare with bench/RESULTS.md.** Find the machine in the Machines table (all five fields equal).
-   - Not there: add a Machines row (CPU as "12 cores (8P + 4E)", GPU, memory, macOS with build) and a row in each benchmark table.
+4. **Compare with bench/RESULTS.md.** Find the machine in the Machines table (all six fields equal).
+   - Not there: add a Machines row (CPU as "12 cores (8P + 4E)", GPU, memory, macOS with build, model variant) and a row in each
+     benchmark table.
    - There: replace a benchmark's row and baseline file only if the new run is better (lower p50 at equal quality; for styles, the
      same mode as the recorded one, or a lower p50). Otherwise keep the recorded one.
 5. **Record.** Copy the chosen file to `bench/baselines/<YYYY-MM-DD>-<scenario>-<chip>.json` (scenario: `steady`,

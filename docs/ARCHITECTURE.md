@@ -170,7 +170,8 @@ flowchart LR
 ### Protocol
 
 Newline-delimited JSON on the unix socket `/tmp/predictd-UID.sock` (mode 0600), or the same objects as the body of an HTTP `POST` to
-`127.0.0.1:47320` (`op` defaults to `generate`; `GET /health` answers `{"ok", "service": "predictd", "version", "pid"}`). Every
+`127.0.0.1:47320` (`op` defaults to `generate`; `GET /health` answers `{"ok", "service": "predictd", "version", "pid", "model"}`,
+`model` being the system model's `variant`, e.g. "AFM 3 Core Advanced", its `contextSize` and `availability`). Every
 request may carry an `id`, echoed in its answer.
 
 | Op | Request | Answer |
@@ -185,7 +186,7 @@ request may carry an `id`, echoed in its answer.
 | `tokens` | `text` | `count` |
 | `spell` | `words`, `language` | `valid: [bool]` (`NSSpellChecker`) |
 | `languages` | | `model`: the model's languages (`SystemLanguageModel.supportedLanguages`, e.g. `en-Latn-US`), `spell`: the spell checker's |
-| `stats` | | counters, `profiles`, `pinned`, `warm`, `config` |
+| `stats` | | counters, `profiles`, `pinned`, `warm`, `config`, `model` (`variant`, `contextSize`, `availability`) |
 | `reload` | `config: {...}` | re-reads predictd.json and the user's overrides, applies `config` on top |
 | `ping`, `shutdown` | | |
 

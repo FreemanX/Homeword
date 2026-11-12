@@ -577,6 +577,8 @@ def cmd_status(a):
     else:
         print(f"predictd: running, up {s['uptime_s']:.0f}s · {s['requests']} generations ({s['cold']} new sessions, {s['cancelled']} cancelled, "
               f"{s['errors']} errors, {s['guardrail']} guardrail) · {s['keepalives']} keep-alive prewarms · warm: {s['warm']}")
+        if m := s.get("model"):
+            print(f"  model {m.get('variant')} · context {m.get('contextSize')} tokens · {m.get('availability')}")
         for p in s["profiles"]:
             print(f"  profile {p['name']}{' (pinned)' if p['pinned'] else ''}: {p['examples']} examples, prefix {p['prefix_tokens']} tokens, "
                   f"sessions {p['sessions'] or '-'}, guardrails {p['guardrails']}")

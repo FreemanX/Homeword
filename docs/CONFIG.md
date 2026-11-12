@@ -54,7 +54,8 @@ flowchart LR
 | `socketPath` | /tmp/predictd-UID.sock | the unix socket (built-in default, not in predictd.json). Restart to change |
 
 `reload` re-reads it without a restart (except the two listeners). Flags: `./predictd [--config path] [--socket path]
-[--http-port n] [--version]`; the default config is predictd.json next to the binary. A private daemon for experiments:
+[--http-port n] [--version] [--model]` (`--model`: the system model's variant and context size, as JSON); the default config is
+predictd.json next to the binary. A private daemon for experiments:
 `./predictd --socket /tmp/my.sock --http-port 0`.
 
 ## Profile and generate fields (mechanism, chosen by each client)

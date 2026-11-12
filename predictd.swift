@@ -66,6 +66,12 @@ func modelAvailability() -> String {
         }
     }
 }
+/// Which system model this Mac runs and its window: macOS 27 has two variants of Apple's on-device model ("AFM 3 Core Advanced"
+/// on M4 Macs, "AFM 3 Core"), with different outputs and speed for the same request, so results compare only within one.
+func modelInfo() -> [String: Any] {
+    let m = SystemLanguageModel.default
+    return ["variant": m.variant.displayName, "contextSize": m.contextSize, "availability": modelAvailability()]
+}
 func jsonText(_ o: Any) -> String {
     guard JSONSerialization.isValidJSONObject(o), let d = try? JSONSerialization.data(withJSONObject: o, options: [.sortedKeys]) else { return "\(o)" }
     return String(decoding: d, as: UTF8.self)
@@ -300,7 +306,7 @@ actor Engine {
     init(cfg: Config, configPath: String, userConfigPath: String) { self.cfg = cfg; self.configPath = configPath; self.userConfigPath = userConfigPath }
 
     func startup() {
-        log("availability: \(SystemLanguageModel.default.availability)")
+        log("availability: \(SystemLanguageModel.default.availability), model: \(jsonText(modelInfo()))")
         Task { await self.keepAliveLoop() }
     }
 
@@ -506,7 +512,7 @@ actor Engine {
             }
             conn.send(["id": id, "ok": true, "uptime_s": ms(clock.now - started) / 1000, "requests": stats.requests, "chat": stats.chat, "cold": stats.cold,
                        "cancelled": stats.cancelled, "errors": stats.errors, "guardrail": stats.guardrail, "keepalives": stats.keepAlives,
-                       "profiles": list, "pinned": pinned ?? NSNull(), "warm": cacheOwner ?? NSNull(), "config": cfg.dict()])
+                       "profiles": list, "pinned": pinned ?? NSNull(), "warm": cacheOwner ?? NSNull(), "config": cfg.dict(), "model": modelInfo()])
 
         case "reload":
             var c = loadConfig(configPath, user: userConfigPath); c.apply(req["config"] as? [String: Any] ?? [:])
@@ -857,7 +863,7 @@ func serve(path: String, engine: Engine) {
 }
 
 // MARK: HTTP (127.0.0.1 only): POST with the same JSON object as the socket protocol (op defaults to generate), GET /health
-// ({"ok", "service": "predictd", "version", "pid"}).
+// ({"ok", "service": "predictd", "version", "pid", "model": {"variant", "contextSize", "availability"}}).
 
 let PREDICTD_VERSION = "0.2"
 
@@ -899,7 +905,9 @@ func handleHTTP(_ cfd: Int32, _ engine: Engine) {
     let parts = requestLine.split(separator: " ")
     let method = parts.first.map(String.init) ?? "", path = parts.count > 1 ? String(parts[1].split(separator: "?").first ?? "") : ""
     if path.hasPrefix("/v1/") { Task { await engine.openai(method, path, body, conn) }; return }
-    if requestLine.hasPrefix("GET /health") { conn.send(["ok": true, "service": "predictd", "version": PREDICTD_VERSION, "pid": Int(getpid())]); return }
+    if requestLine.hasPrefix("GET /health") {
+        conn.send(["ok": true, "service": "predictd", "version": PREDICTD_VERSION, "pid": Int(getpid()), "model": modelInfo()]); return
+    }
     guard requestLine.hasPrefix("POST /"), var req = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any] else {
         conn.send(["ok": false, "error": "POST a JSON object (see docs/ARCHITECTURE.md)"]); return
     }
@@ -921,6 +929,7 @@ func handleHTTP(_ cfd: Int32, _ engine: Engine) {
             case "--socket": socket = args.removeFirst()
             case "--http-port": httpPortArg = Int(args.removeFirst())
             case "--version": print("predictd \(PREDICTD_VERSION)"); return
+            case "--model": print(jsonText(modelInfo())); return              // the system model's variant and window, no daemon
             default: log("unknown argument \(a)"); exit(1)
             }
         }
