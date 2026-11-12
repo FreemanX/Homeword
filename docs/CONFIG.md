@@ -18,6 +18,7 @@ General tab the words to suggest (`words`, `maxTokens`); any other knob works th
 (`ghostd --no-user`, `predictd --user-config ""`).
 
 ```mermaid
+%%{init: {"flowchart": {"wrappingWidth": 480}}}%%
 flowchart LR
     subgraph user["~/.config/homeword (the user's)"]
         uc["config.json<br/>prompts.json"]

@@ -16,6 +16,7 @@ Together, ghostd and predictd are "the engine". Both are plain binaries next to 
 or inside `Homeword.app` in a release.
 
 ```mermaid
+%%{init: {"flowchart": {"wrappingWidth": 480}}}%%
 flowchart TB
     subgraph apps["Applications"]
         direction LR
@@ -27,12 +28,7 @@ flowchart TB
     end
     subgraph policy["Policies"]
         direction LR
-        subgraph gd["ghostd: HTTP 127.0.0.1:47321"]
-            direction LR
-            typing["typing prediction<br/>prompts per writing style,<br/>trim, assemble"]
-            proof["proofreading<br/>fix, rewrite, word diff"]
-            prompts["user prompts,<br/>benchmarks"]
-        end
+        gd["<b>ghostd</b>, HTTP 127.0.0.1:47321<br/>typing prediction: prompts per writing style, trim, assemble<br/>proofreading: fix, rewrite, word diff<br/>user prompts, benchmarks"]
         other["other policies<br/>future"]:::future
     end
     subgraph mech["Mechanism"]
@@ -69,13 +65,14 @@ Nothing is installed as a service. Each layer starts the one below it when it fi
 minutes, so the engine runs only while something uses it.
 
 ```mermaid
+%%{init: {"flowchart": {"wrappingWidth": 480}}}%%
 flowchart TD
-    client["Homeword, pi or pred"] --> ask{"GET /health on 47321<br/>answers service ghostd?"}
+    client["Homeword, pi or pred"] --> ask{{"GET /health on 47321<br/>answers service ghostd?"}}
     ask -- yes --> reuse["use it"]
     ask -- no --> spawn["start ghostd in the background"]
-    spawn --> port{"port 47321 free?"}
+    spawn --> port{{"port 47321 free?"}}
     port -- "no: a ghostd answers there" --> quit["exit at once, status 0<br/>already running"]
-    port -- yes --> sock{"predictd answers<br/>on its socket?"}
+    port -- yes --> sock{{"predictd answers<br/>on its socket?"}}
     sock -- yes --> pin["register and pin<br/>the general prompt"]
     sock -- no --> startd["start predictd, detached<br/>wait for its socket"]
     startd --> pin
@@ -107,6 +104,7 @@ flowchart TD
 ### Inside the process
 
 ```mermaid
+%%{init: {"flowchart": {"wrappingWidth": 480}}}%%
 flowchart LR
     subgraph threads["Threads"]
         s1["socket accept loop<br/>one reader per connection"]
@@ -147,6 +145,7 @@ So a **profile** (instructions + example turns) becomes a session whose transcri
 default session puts the transcript back afterwards:
 
 ```mermaid
+%%{init: {"flowchart": {"wrappingWidth": 480}}}%%
 flowchart LR
     subgraph cached["Profile = cached prefix"]
         ins["instructions"] --> ex["example turns<br/>prompt, response"]
@@ -231,6 +230,7 @@ on `127.0.0.1:47321`. It is a client of predictd like any other: it registers pr
 unix socket.
 
 ```mermaid
+%%{init: {"flowchart": {"wrappingWidth": 480}}}%%
 flowchart LR
     subgraph threads["Threads"]
         acc["HTTP accept loop<br/>127.0.0.1:47321"]
@@ -296,20 +296,21 @@ The model is asked for the **rest** of the unfinished word, then the next words 
 `ing despite correct preparation`.
 
 ```mermaid
+%%{init: {"flowchart": {"wrappingWidth": 480}}}%%
 flowchart TD
     raw["model answer"] --> cut["drop a cut-off last word<br/>when finish = length"]
     cut --> sent["stop at the first sentence end<br/>oneSentence, not in lenientApps"]
     sent --> cap["keep the unfinished word + up to words more"]
-    cap --> mid{"text ends mid-word?"}
-    mid -- no --> nw{"first new word lowercase<br/>and not a word?"}
-    nw -- yes --> none
+    cap --> mid{{"text ends mid-word?"}}
+    mid -- no --> nw{{"first new word lowercase<br/>and not a word?"}}
+    nw -- yes --> none1["no ghost<br/>suppressed: invalid_word"]
     nw -- no --> rep
-    mid -- yes --> word{"typed part + first piece<br/>is a word?"}
+    mid -- yes --> word{{"typed part + first piece<br/>is a word?"}}
     word -- yes --> rep
-    word -- no --> sep{"is the piece a new word?<br/>flag, path, quote, capital,<br/>or a word after a finished word"}
+    word -- no --> sep{{"is the piece a new word?<br/>flag, path, quote, capital,<br/>or a word after a finished word"}}
     sep -- yes --> space["insert the missing space"] --> rep
-    sep -- no --> drop{"invalidPolicy drop and<br/>app not lenient?"}
-    drop -- yes --> none["no ghost<br/>suppressed: invalid_word"]
+    sep -- no --> drop{{"invalidPolicy drop and<br/>app not lenient?"}}
+    drop -- yes --> none2["no ghost<br/>suppressed: invalid_word"]
     drop -- no --> rep
     rep["cut before a word that repeats<br/>a 3-word run of the recent text"] --> show["suggestion"]
 ```

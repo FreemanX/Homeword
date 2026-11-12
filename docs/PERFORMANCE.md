@@ -19,6 +19,7 @@ shown again without a new request (follow-the-ghost); a fresh model call never t
 Where the time of one keystroke goes (Apple M4 Pro, short typing prompt):
 
 ```mermaid
+%%{init: {"flowchart": {"wrappingWidth": 480}}}%%
 flowchart LR
     key["keystroke"] --> send["client to ghostd to predictd<br/>HTTP + socket, 1-3 ms"]
     send --> model["model call, short prompt<br/>~100 ms fixed<br/>+ 0.55 ms per cached token<br/>+ 2 ms per new token<br/>+ 16 ms per output token"]

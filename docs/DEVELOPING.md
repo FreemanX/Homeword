@@ -166,6 +166,7 @@ Things to decide in a policy, not in predictd:
 ### Development loop
 
 ```mermaid
+%%{init: {"flowchart": {"wrappingWidth": 480}}}%%
 flowchart LR
     edit["edit predictd.swift,<br/>ghost/*.swift or ghost/*.json"] --> build["./build.sh<br/>predictd + ghostd"]
     build --> restart["pred stop<br/>the next client starts it"]

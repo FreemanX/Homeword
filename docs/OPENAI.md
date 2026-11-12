@@ -58,6 +58,7 @@ URL, any key and the model id above.
 ## How a request is translated
 
 ```mermaid
+%%{init: {"flowchart": {"wrappingWidth": 480}}}%%
 flowchart LR
     subgraph req["OpenAI request"]
         sys["system, developer messages"]

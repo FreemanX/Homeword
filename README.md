@@ -45,6 +45,7 @@ Three layers, keeping **mechanism and policy apart**:
   start it when no ghostd answers. Other policies (summarise, commit messages, triage) can share the same predictd.
 
 ```mermaid
+%%{init: {"flowchart": {"wrappingWidth": 480}}}%%
 flowchart TB
     subgraph apps["Applications"]
         direction LR

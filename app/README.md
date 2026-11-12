@@ -28,6 +28,7 @@ The app is UI only, with no prediction or proofreading logic. It calls the engin
 answers: the one inside the app in a release build, the repo's in a development build.
 
 ```mermaid
+%%{init: {"flowchart": {"wrappingWidth": 480}}}%%
 flowchart LR
     subgraph app["Homeword.app"]
         tap["key tap<br/>sees keys, consumes Tab, Esc, shortcuts"]
