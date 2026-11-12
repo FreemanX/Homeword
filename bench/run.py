@@ -82,6 +82,19 @@ def qual(sub):
             "mid_shown": mean(s["shown"] for s in mid) if mid else float("nan")}
 
 
+def model_cost(rows):
+    """Model time split into a fixed part and a part per output token (least squares over the requests), with the mean output
+    length. Machines whose models answer at different lengths compare on the split, not on p50 alone."""
+    pts = [(r["resp"]["tokens"]["out"], r["resp"]["timing"]["model_ms"]) for r in rows
+           if r["resp"].get("ok") and "tokens" in r["resp"] and "timing" in r["resp"]]
+    if len(pts) < 2:
+        return {}
+    mx, my = mean(x for x, _ in pts), mean(y for _, y in pts)
+    var = sum((x - mx) ** 2 for x, _ in pts)
+    b = sum((x - mx) * (y - my) for x, y in pts) / var if var else 0.0
+    return {"out_mean": mx, "fixed_ms": my - b * mx, "ms_per_token": b}
+
+
 def summarize(rows):
     ok = [r for r in rows if r["resp"].get("ok")]
     S = {"n": len(rows), "errors": len(rows) - len(ok)}
@@ -106,6 +119,7 @@ def summarize(rows):
     S["misspelled_per_req"] = mean(r["resp"].get("misspelled", 0) for r in ok)
     S["suppressed_invalid"] = sum(1 for r in ok if r["resp"].get("suppressed"))
     S["respaced"] = sum(1 for r in ok if r["resp"].get("respaced"))
+    S["model_cost"] = model_cost(ok)
     return S
 
 
@@ -120,6 +134,9 @@ def report(S, title):
     print("  by context size:")
     for b, l in S["latency_by_bucket"].items():
         print(f"    {b:>3} n={l['n']:<3} e2e p50 {f(l['e2e_p50'])}  p90 {f(l['e2e_p90'])}  max {f(l['e2e_max'])}   model p50 {f(l['model_p50'])}")
+    M = S.get("model_cost") or {}
+    if M:
+        print(f"model time: {M['fixed_ms']:.0f} ms fixed + {M['ms_per_token']:.1f} ms per output token; {M['out_mean']:.1f} output tokens per answer on average")
     C = S["cache"]
     print(f"cache: {C['cached_ratio']*100:.0f}% of input tokens cached on average, {C['misses']} requests missed the prefix cache; input tokens p50 {C['in_p50']:.0f}, output tokens p50 {C['out_p50']:.0f} (max {C['out_max']}); {C['trimmed']} contexts trimmed")
     Q = S["quality"]

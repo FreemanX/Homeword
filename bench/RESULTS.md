@@ -23,8 +23,8 @@ instructions, `textBudget` 100, `maxTokens` 6, greedy, plain output).
 ## Steady benchmark
 
 `bench/run.py --spawn`: 80 cases (52 short hand-written, 28 cut from a document at four context sizes), one request every 1.2 s.
-Latency is client-side end to end. The two Apple M4 runs are in the same model mode (fingerprint `d4c6a5e1`); the Apple M1 Pro
-and Apple M2 runs have fingerprint `609ddd4f`.
+Latency is client-side end to end. The two Apple M4 runs (AFM 3 Core Advanced) are in the same model mode (fingerprint
+`d4c6a5e1`); the Apple M1 Pro and Apple M2 runs (AFM 3 Core) have fingerprint `609ddd4f`.
 
 | Machine | macOS | Date (commit) | p50 | p90 | max | Short cases p50 | Data |
 |---|---|---|---|---|---|---|---|
@@ -40,11 +40,26 @@ and Apple M2 runs have fingerprint `609ddd4f`.
 | Apple M1 Pro | 27.2 | 99% | 45% | 55% | 0.57 | 42.8% | 7/8 | 0 |
 | Apple M2 | 27.2.1 | 99% | 45% | 55% | 0.57 | 42.8% | 7/8 | 0 |
 
-The model's raw completions are the same in both Apple M4 runs; on macOS 27.0.1 the suggestions differ in 27 of 80 cases (see
-[macOS versions](#macos-versions)). The Apple M1 Pro run's raw completions (before the policy) differ from the Apple M4 runs'
-in 73 of 80 cases, with the same prompt (profile `ghost-295db2ba`, as in the Apple M4 Max run) and the same input tokens; the
-cause (chip or model mode) is unknown. Its suggestions are shorter: 2.5 words on average vs 3.4 (Apple M4 Pro) and 3.75
-(Apple M4 Max). The Apple M2 run matches the Apple M1 Pro run in all 80 raw completions and suggestions.
+Model time split into a fixed part and a part per output token (`model_cost` in a result's summary, a least-squares fit over the
+80 requests), with the answers' mean length:
+
+| Machine | Model | Output tokens per answer | Model time |
+|---|---|---|---|
+| Apple M4 Pro | AFM 3 Core Advanced | 10.0 | 194 ms + 14.6 ms per token |
+| Apple M4 Max | AFM 3 Core Advanced | 10.0 | 175 ms + 13.7 ms per token |
+| Apple M1 Pro | AFM 3 Core | 8.7 | 368 ms + 16.7 ms per token |
+| Apple M2 | AFM 3 Core | 8.7 | 178 ms + 12.1 ms per token |
+
+The raw completions are the same within each model: both Apple M4 runs give the same 80, and so do the Apple M1 Pro and Apple
+M2 runs. Across the two models only 7 of 80 agree, with the same prompt (profile `ghost-295db2ba`) and the same input tokens
+("Model variants" below). On macOS 27.0.1 the Apple M4 Max's suggestions differ in 27 of 80 cases from the same completions (see
+[macOS versions](#macos-versions)). Core's suggestions are shorter: 2.5 words on average vs 3.4 (Apple M4 Pro) and 3.75 (Apple
+M4 Max).
+
+What the latency columns compare: within a model, the hardware (Apple M4 Max vs Apple M4 Pro, Apple M2 vs Apple M1 Pro: the
+Apple M2 is about 1.8 times as fast with fewer GPU cores, which suggests the model runs mainly on the Neural Engine). Across models, a Mac
+with its own model: Core is lighter, not only shorter. On the 36 cases where all four machines' answers have the same number of
+tokens, model p50 is 363 ms (Apple M4 Pro), 339 ms (Apple M4 Max), 548 ms (Apple M1 Pro) and 306 ms (Apple M2).
 
 ## Typing simulation
 
