@@ -12,12 +12,18 @@
 // `exact` (output equals the expected text), `word_match` (word-level similarity); rewriting has no single right answer: latency and
 // `length_ratio` (output / input length).
 //
+// Writing languages: for each of the user's languages besides English, the 10 general cases of bench/languages.json form a category
+// of their own ("lang-fr", "lang-zh-Hant", ...), predicted with language detection as in use; `language_right` is the share of cases
+// detected as their language. Chinese and Japanese have no spaces between words: there the metrics count characters (next_word: the
+// first two characters right; words_right: matching characters / 2).
+//
 // A case that shares text with one of the prompt's examples is skipped (counted as `skipped`): it would measure recall of the
 // example, not prediction. bench/check_cases.py lists such overlaps for the shipped prompts.
 import Foundation
 
 let CASES = ROOT + "/bench/cases.json"
 let STYLE_CASES = ROOT + "/bench/styles.json"
+let LANGUAGE_CASES = ROOT + "/bench/languages.json"
 let PUNCT = " .,;:!?\"'()[]{}"
 let CATEGORIES: [(String, String)] = [("chat", "Chat"), ("email", "Email"), ("work", "Work documents"), ("academic", "Academic"),
                                       ("code", "Code"), ("general", "General"), ("terminal", "Terminal")]
@@ -29,11 +35,35 @@ let STYLE_LABEL = ["general": "notes", "chat": "chat", "email": "mail", "work": 
 
 func norm(_ w: String) -> String { pyStrip(w, PUNCT).lowercased() }
 
+/// Writes without spaces between words (Chinese, Japanese).
+func unspaced(_ s: String) -> Bool { s.unicodeScalars.contains { (0x3040...0x30FF).contains($0.value) || (0x3400...0x9FFF).contains($0.value) } }
+
+/// The language-cases key of a writing language: "fr-CA" -> "fr", "zh-Hant-TW" -> "zh-Hant".
+func languageKey(_ id: String) -> String {
+    let c = Languages.code(id)
+    return c == "zh" ? (Languages.nl(id) == .traditionalChinese ? "zh-Hant" : "zh-Hans") : c
+}
+
+/// A category's display title: the fixed ones, or a language's English name.
+func categoryTitle(_ name: String) -> String {
+    if let t = TITLES[name] { return t }
+    if name.hasPrefix("lang-") {
+        let key = String(name.dropFirst(5))
+        return key == "zh-Hans" ? "Chinese (Simplified)" : key == "zh-Hant" ? "Chinese (Traditional)"
+            : Locale(identifier: "en").localizedString(forLanguageCode: key) ?? key
+    }
+    return name
+}
+
 /// Quality of one response against what the user actually typed next.
 func score(_ c: [String: Any], _ r: [String: Any]) -> [String: Any] {
     let partial = r["partial"] as? String ?? ""
     let sug = r["suggestion"] as? String ?? ""
     let text = c["text"] as? String ?? "", rest = c["rest"] as? String ?? ""
+    var langOK: [String: Any] = [:]
+    if let want = c["language"] as? String { langOK["language_ok"] = languageKey(r["language"] as? String ?? "") == languageKey(want) }
+    let lang = Languages.code(c["language"] as? String ?? "")
+    if lang == "ja" || lang == "zh" || unspaced(rest) { return scoreChars(sug, rest).merging(langOK) { a, _ in a } }
     let pred = pySplit(partial + sug), truth = pySplit(partial + rest)
     var lead = 0
     for (a, b) in zip(pred, truth) {
@@ -57,7 +87,20 @@ func score(_ c: [String: Any], _ r: [String: Any]) -> [String: Any] {
             "cross": cross, "mid": !partial.isEmpty, "lead": lead, "acc1": lead >= 1,
             "word_ok": !pred.isEmpty && !truth.isEmpty && pyEq(norm(pred[0]), norm(truth[0])),
             "bag": bag, "n_words": pySplit(sug).count, "echo": echo,
-            "truth": truth.prefix(8).joined(separator: " "), "pred": pred.joined(separator: " ")]
+            "truth": truth.prefix(8).joined(separator: " "), "pred": pred.joined(separator: " ")].merging(langOK) { a, _ in a }
+}
+
+/// Scoring by characters, for writing without spaces: punctuation and spaces ignored, the first two characters stand for a word.
+private func scoreChars(_ sug: String, _ rest: String) -> [String: Any] {
+    let skip = Set("。，、！？：；「」『』（）《》…—·.,!?;:\"'()[] ".unicodeScalars)
+    let p = sug.unicodeScalars.filter { !skip.contains($0) && !$0.pySpace }, t = rest.unicodeScalars.filter { !skip.contains($0) && !$0.pySpace }
+    var lead = 0
+    for (a, b) in zip(p, t) { if a != b { break }; lead += 1 }
+    let tset = Set(t)
+    return ["complete": false, "space_ok": false, "shown": !pyStrip(sug).isEmpty, "cross": false, "mid": false, "lead": lead / 2,
+            "acc1": !p.isEmpty && !t.isEmpty && lead >= min(2, t.count), "word_ok": false,
+            "bag": p.isEmpty ? 0.0 : Double(p.filter { tset.contains($0) }.count) / Double(p.count),
+            "n_words": (p.count + 1) / 2, "echo": false, "truth": rest, "pred": sug]
 }
 
 /// bench/styles.json: {style: [cases]} and "proofread".
@@ -65,8 +108,9 @@ func loadCases(_ path: String = STYLE_CASES) -> [String: [[String: Any]]] {
     (readJSON(path) as? [String: Any] ?? [:]).filter { !$0.key.hasPrefix("_") }.compactMapValues { $0 as? [[String: Any]] }
 }
 
-/// Every prediction case with its category and app label, in category order (stable, like Python's sorted).
-func suite() -> [[String: Any]] {
+/// Every prediction case with its category and app label, in category order (stable, like Python's sorted), then the cases of
+/// each writing language besides English (in the given order).
+func suite(languages: [String] = []) -> [[String: Any]] {
     var out: [[String: Any]] = (readJSON(CASES) as? [[String: Any]] ?? []).map {
         let app = $0["app"] as? String ?? ""
         return ["text": $0["text"] ?? "", "rest": $0["rest"] ?? "", "app": app, "category": APP_CATEGORY[app] ?? "general"]
@@ -78,15 +122,31 @@ func suite() -> [[String: Any]] {
         out += cs.map { ["text": $0["text"] ?? "", "rest": $0["rest"] ?? "", "app": label, "category": cat] }
     }
     let order = CATEGORIES.map(\.0)
-    return out.enumerated().sorted {
+    let english = out.enumerated().sorted {
         let a = order.firstIndex(of: $0.element["category"] as! String)!, b = order.firstIndex(of: $1.element["category"] as! String)!
         return a != b ? a < b : $0.offset < $1.offset
     }.map(\.element)
+    var extra: [[String: Any]] = [], seen = Set<String>()
+    let byLanguage = loadCases(LANGUAGE_CASES)
+    for id in languages where !Languages.isEnglish(id) {
+        let key = languageKey(id)
+        guard !seen.contains(key), let cs = byLanguage[key] else { continue }
+        seen.insert(key)
+        extra += cs.map { ["text": $0["text"] ?? "", "rest": $0["rest"] ?? "", "app": "notes", "category": "lang-" + key, "language": id] }
+    }
+    return english + extra
+}
+
+/// The categories of a list of cases, in order: name and title.
+func categories(_ cases: [[String: Any]]) -> [(String, String)] {
+    var names = CATEGORIES.map(\.0).filter { k in cases.contains { $0["category"] as? String == k } }
+    for c in cases { if let k = c["category"] as? String, k.hasPrefix("lang-"), !names.contains(k) { names.append(k) } }
+    return names.map { ($0, categoryTitle($0)) }
 }
 
 /// A fingerprint of the cases a benchmark runs on: results from another version of the suite are not comparable.
-func suiteID(_ kind: String = "predict") -> String {
-    let cases = kind == "predict" ? suite() : (loadCases()["proofread"] ?? [])
+func suiteID(_ kind: String = "predict", languages: [String] = []) -> String {
+    let cases = kind == "predict" ? suite(languages: languages) : (loadCases()["proofread"] ?? [])
     return String(sha1Hex(pyDumps(cases.map { [$0["text"] ?? "", $0["rest"] ?? $0["expected"] ?? NSNull()] })).prefix(10))
 }
 
@@ -122,17 +182,21 @@ private func summary(_ name: String, _ rows: [([String: Any], Double)], _ errors
     let lat = rows.map(\.1), scores = rows.map(\.0)
     let mid = scores.filter { truthy($0["mid"]) }
     let b: (Any?) -> Double = { truthy($0) ? 1 : 0 }
-    return ["name": name, "title": TITLES[name] ?? name, "cases": rows.count + errors, "errors": errors, "skipped": skipped,
+    var out: [String: Any] = ["name": name, "title": categoryTitle(name), "cases": rows.count + errors, "errors": errors, "skipped": skipped,
             "latency_p50": pyRound(pct(lat, 50) ?? 0), "latency_p90": pyRound(pct(lat, 90) ?? 0),
             "next_word": mean(scores.map { b($0["acc1"]) }), "words_right": mean(scores.map { Double(intValue($0["lead"]) ?? 0) }),
             "completions": mean(mid.map { b($0["word_ok"]) }), "shown": mean(scores.map { b($0["shown"]) })]
+    let detected = scores.filter { $0["language_ok"] != nil }
+    if !detected.isEmpty { out["language_right"] = mean(detected.map { b($0["language_ok"]) }) }
+    return out
 }
 
 /// Run a prediction prompt (default: the one in use for `style`) on the suite (scope "all") and/or the user's cases ({"text",
 /// "rest"}, scope "all" or "user"); results per category, overall, and the user's section.
 func benchPrompt(_ ghost: Ghost, _ link: Link, _ style: String, _ prompt: [String: Any]? = nil, userCases: [[String: Any]] = [],
                  scope: String = "all", progress: ((Int, Int) -> Void)? = nil, stream: String = "bench") throws -> [String: Any] {
-    var cases = scope == "all" ? suite() : []
+    let langs = ghost.languages()
+    var cases = scope == "all" ? suite(languages: langs) : []
     var users: [[String: Any]] = userCases.map { ["text": $0["text"] ?? "", "rest": $0["rest"] ?? "", "app": ghost.styleLabel(style), "category": "user"] }
     let examples = ((prompt.map { $0.isEmpty ? nil : $0 } ?? nil) ?? ghost.promptFor(style))["examples"] as? [[String: Any]] ?? []
     var skipped: [String: Int] = [:]
@@ -141,19 +205,25 @@ func benchPrompt(_ ghost: Ghost, _ link: Link, _ style: String, _ prompt: [Strin
     users = users.filter { !overlaps($0["text"] as? String ?? "", examples) }
     let todo = cases + users
     if todo.isEmpty { return ["kind": "predict", "style": style, "scope": scope, "error": "no cases"] }
-    _ = try ghost.predict(link, todo[0]["app"] as! String, todo[0]["text"] as! String, stream: stream, style: style, prompt: prompt, keepApp: true)   // warm the prefix
+    // the English suite is English whatever the user writes in; language cases and the user's own are detected, as in use
+    let english: ([String: Any]) -> String? = { $0["language"] == nil && $0["category"] as? String != "user" ? "en-US" : nil }
+    _ = try ghost.predict(link, todo[0]["app"] as! String, todo[0]["text"] as! String, stream: stream, style: style, prompt: prompt, keepApp: true,
+                          language: english(todo[0]))       // warm the prefix
+    ghost.forgetLanguage(stream)
     var rows: [String: [([String: Any], Double)]] = [:], errors: [String: Int] = [:]
     for (i, c) in todo.enumerated() {
         let t0 = now()
-        let r = try ghost.predict(link, c["app"] as! String, c["text"] as! String, stream: stream, style: style, prompt: prompt, keepApp: true)
+        let r = try ghost.predict(link, c["app"] as! String, c["text"] as! String, stream: stream, style: style, prompt: prompt, keepApp: true,
+                                  language: english(c))
+        ghost.forgetLanguage(stream)                                // each case detected on its own
         let cat = c["category"] as! String
         if truthy(r["ok"]) { rows[cat, default: []].append((score(c, r), perfMs(since: t0))) } else { errors[cat, default: 0] += 1 }
         progress?(i + 1, todo.count)
     }
-    let cats = CATEGORIES.map(\.0).filter { rows[$0] != nil || errors[$0] != nil }.map { summary($0, rows[$0] ?? [], errors[$0] ?? 0, skipped[$0] ?? 0) }
+    let cats = categories(cases).map(\.0).filter { rows[$0] != nil || errors[$0] != nil }.map { summary($0, rows[$0] ?? [], errors[$0] ?? 0, skipped[$0] ?? 0) }
     let ours = rows.filter { $0.key != "user" }.values.flatMap { $0 }
     let total: ([String: Int]) -> Int = { $0.filter { $0.key != "user" }.values.reduce(0, +) }
-    return ["kind": "predict", "style": style, "scope": scope, "at": localStamp(), "suite": suiteID(), "categories": cats,
+    return ["kind": "predict", "style": style, "scope": scope, "at": localStamp(), "suite": suiteID(languages: langs), "categories": cats,
             "overall": cases.isEmpty ? NSNull() : summary("all", ours, total(errors), total(skipped)),
             "user": !users.isEmpty || skipped["user"] != nil ? summary("user", rows["user"] ?? [], errors["user"] ?? 0, skipped["user"] ?? 0) : NSNull()]
 }

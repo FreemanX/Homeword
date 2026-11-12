@@ -4,6 +4,7 @@
   python3 -I run.py --spawn --label t200 --config '{"textBudget":200}'      # policy overrides (ghost/config.json keys)
   python3 -I run.py --spawn --daemon-config '{"keepAliveSec":0}' ...        # daemon overrides (predictd.json keys)
   python3 -I run.py --scenario burst|idle|typing ...        # other scenarios
+  python3 -I run.py --spawn --styles --languages fr-FR,ja-JP # the suite plus those writing languages (all: every one)
 Results: bench/results/<timestamp>-<label>.json (rows + summary). Compare: python3 -I compare.py a.json b.json
 The policy runs in a private ghostd (HTTP) without the user's config overrides and prompts; latency is measured from here, so it
 includes the local HTTP round trip (~1 ms).
@@ -14,6 +15,9 @@ from machine import machine_info, describe, model_users
 from engine import Ghostd, predictd_call
 
 HERE = pathlib.Path(__file__).parent
+# a writing language per set of bench/languages.json (--languages all)
+LANGUAGES = {"da-DK": "da", "de-DE": "de", "es-ES": "es", "fr-FR": "fr", "it-IT": "it", "ja-JP": "ja", "ko-KR": "ko", "nb-NO": "nb",
+             "nl-NL": "nl", "pt-BR": "pt", "sv-SE": "sv", "tr-TR": "tr", "vi-VN": "vi", "zh-Hans-CN": "zh-Hans", "zh-Hant-TW": "zh-Hant"}
 PUNCT = " .,;:!?\"'()[]{}"
 
 
@@ -231,12 +235,14 @@ def run_styles(a, g, proc):
         r = results["predict-" + st] = bench_job(g, "predict-" + st)
         cats = [x["name"] for x in r["categories"]]
         if not head:
-            print(f"{'prompt':18}" + "".join(f"{k:>10}" for k in cats) + f"{'all':>8}{'p50':>8}")
+            print(f"{'prompt':18}" + "".join(f"{k.removeprefix('lang-')[:9]:>10}" for k in cats) + f"{'all':>8}{'p50':>8}")
             head = True
         by = {x["name"]: x for x in r["categories"]}
         print(f"{'predict-' + st:18}" + "".join(f"{by[k]['next_word']:>9.0%} " if k in by else f"{'-':>10}" for k in cats)
               + f"{r['overall']['next_word']:>7.0%} {r['overall']['latency_p50']:>5} ms")
     print("cases:" + " " * 12 + "".join(f"{x['cases']:>10}" for x in r["categories"]))
+    if any("language_right" in x for x in r["categories"]):
+        print("detected:" + " " * 9 + "".join(f"{x['language_right']:>9.0%} " if "language_right" in x else f"{'':>10}" for x in r["categories"]))
     for mode in ("fix", "rewrite"):
         r = results["proofread-" + mode] = bench_job(g, "proofread-" + mode)
         o = r["overall"]
@@ -266,6 +272,8 @@ def main():
     ap.add_argument("--key-ms", type=float, default=150)
     ap.add_argument("--cases", default=str(HERE / "cases.json"))
     ap.add_argument("--limit", type=int, default=0)
+    ap.add_argument("--languages", default="", help="with --styles: writing languages besides English whose cases join the suite "
+                    "(bench/languages.json), e.g. fr-FR,ja-JP, or all")
     ap.add_argument("--styles", action="store_true", help="every writing style's shipped prompt on the whole suite (cases.json + "
                     "styles.json), per category, and proofreading (what Homeword's Prompts tab runs)")
     a = ap.parse_args()
@@ -289,7 +297,11 @@ def main():
             time.sleep(0.1)
         else:
             sys.exit("daemon did not start: " + open(logp).read())
-    g = Ghostd(sock, config=json.loads(a.config), no_user=True,  # the shipped prompts and knobs, not the user's
+    config = json.loads(a.config)
+    if a.languages:
+        langs = list(LANGUAGES) if a.languages == "all" else [x.strip() for x in a.languages.split(",") if x.strip()]
+        config["languages"] = ["en-US"] + [x for x in langs if not x.startswith("en")]
+    g = Ghostd(sock, config=config, no_user=True,                 # the shipped prompts and knobs, not the user's
                log=os.path.join(tmp, "ghostd.log") if a.spawn else None)
     try:
         run(a, g, sock, proc)

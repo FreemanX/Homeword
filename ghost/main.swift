@@ -21,8 +21,9 @@
 //                      benchmark cases the prompt runs on, read-only; `skipped`: left out because it shares text with an example of
 //                      the prompt in use
 //     GET  /cases?name=  -> {"cases": [{"text", "rest"}]}: the user's own benchmark cases for a prompt     POST /cases saves them
-//     GET  /settings   -> {"words", "maxTokens"}      POST /settings {"words": 1-10}: how many words to suggest, saved to the user's
-//                      config overrides (maxTokens follows: words + 1 per 5 words)
+//     GET  /settings   -> {"words", "maxTokens", "languages", "languagesSet", "supported": [{"id", "name", "native"}]}
+//     POST /settings   {"words": 1-10, "languages": ["fr-FR", ...]} (either or both), saved to the user's config overrides: how many
+//                      words to suggest (maxTokens follows: words + 1 per 5 words), the languages the user writes in (Language.swift)
 //     GET  /config     -> {"config"}: the policy's knobs in effect (pred status, the benchmarks' records)
 //     POST /request    {"app", "text", "context"?, "opts"?, "keep_app"?}  ->  {"profile", "generate"}: the profile and the generate
 //                      request a prediction would use, without running it (bench/openai_compare.py)
@@ -146,6 +147,7 @@ func withLink(_ fn: (Link) throws -> [String: Any]) -> [String: Any] {
     for _ in 0..<2 {
         let ln: Link
         do { ln = try takeLink() } catch { return ["ok": false, "error": "predictd unavailable: \(error)"] }   // cannot start predictd
+        Languages.loadIfNeeded(ln)
         do {
             r = try fn(ln)
             giveBack(ln)
@@ -154,6 +156,7 @@ func withLink(_ fn: (Link) throws -> [String: Any]) -> [String: Any] {
             poolLock.lock(); pool.removeAll(); poolLock.unlock()   // the other pooled connections are dead too
             ghost.lock.lock(); ghost.registered.removeAll(); ghost.pinned = nil; ghost.lock.unlock()
             proof.lock.lock(); proof.registered.removeAll(); proof.lock.unlock()
+            Languages.forget()                                     // a restarted predictd may be another version
         } catch {                                                  // a refused profile: answer, and drop the connection
             return ["ok": false, "error": "\(error)"]
         }
@@ -163,6 +166,7 @@ func withLink(_ fn: (Link) throws -> [String: Any]) -> [String: Any] {
 
 do {
     let first = try startPredictd(socketPath, noUser: noUser)
+    Languages.load(first)                                            // the model's languages, the spell checker's dictionaries
     try ghost.ensureProfile(first, pin: true)
     giveBack(first)
 } catch {
@@ -190,16 +194,29 @@ func defaultOf(_ name: String) throws -> [String: Any] {
     return kind == "predict" ? ghost.defaultPrompt(key) : Proofreader.defaultPrompt(key)
 }
 
-let theSuite = suite()
-let sizes = ["predict": (theSuite.count, Set(theSuite.map { $0["category"] as! String }).count),
-             "proofread": ((loadCases()["proofread"] ?? []).count, 1)]
-let suiteIDs = ["predict": suiteID(), "fix": suiteID("fix"), "rewrite": suiteID("rewrite")]
+/// The prediction suite for the writing languages in effect (they can change in Settings), and its fingerprint; cached per set.
+let suiteLock = NSLock()
+var suiteCache: (key: [String], cases: [[String: Any]], id: String)?
+func currentSuite() -> (cases: [[String: Any]], id: String) {
+    let langs = ghost.languages()
+    suiteLock.lock(); defer { suiteLock.unlock() }
+    if let c = suiteCache, c.key == langs { return (c.cases, c.id) }
+    let cases = suite(languages: langs), id = suiteID(languages: langs)
+    suiteCache = (langs, cases, id)
+    return (cases, id)
+}
+let proofSuiteIDs = ["fix": suiteID("fix"), "rewrite": suiteID("rewrite")]
+func suiteIDFor(_ kind: String, _ key: String) -> String? { kind == "predict" ? currentSuite().id : proofSuiteIDs[key] }
+func sizes(_ kind: String) -> (Int, Int) {
+    if kind == "predict" { let c = currentSuite().cases; return (c.count, categories(c).count) }
+    return ((loadCases()["proofread"] ?? []).count, 1)
+}
 
 /// A stored benchmark result, unless it ran on another version of the suite (a user-cases run has no suite part).
 func storedResult(_ name: String, _ prompt: [String: Any], scope: String = "all") throws -> Any {
     let (kind, key) = try parse(name)
     guard let r = ghost.user.result(name, prompt, scope: scope) else { return NSNull() }
-    if scope == "all" && r["suite"] as? String != suiteIDs[kind == "predict" ? "predict" : key] { return NSNull() }
+    if scope == "all" && r["suite"] as? String != suiteIDFor(kind, key) { return NSNull() }
     return r
 }
 
@@ -212,7 +229,10 @@ func suiteView(_ name: String) throws -> [[String: Any]] {
     if kind == "proofread" {
         return [["name": "proofread", "title": TITLES["proofread"]!, "cases": (loadCases()["proofread"] ?? []).map { mark($0["text"], $0["expected"]) }]]
     }
-    return CATEGORIES.map { k, t in ["name": k, "title": t, "cases": theSuite.filter { $0["category"] as? String == k }.map { mark($0["text"], $0["rest"]) }] }
+    let cases = currentSuite().cases
+    return categories(cases).map { k, t in
+        ["name": k, "title": t, "cases": cases.filter { $0["category"] as? String == k }.map { mark($0["text"], $0["rest"]) }]
+    }
 }
 
 func entry(_ name: String) throws -> [String: Any] {
@@ -225,7 +245,7 @@ func entry(_ name: String) throws -> [String: Any] {
             "default_hash": promptHash(d), "result": try storedResult(name, p), "default_result": try storedResult(name, d),
             "user_result": ghost.user.result(name, p, scope: "user") ?? NSNull(), "user_cases": ghost.user.cases(name).count,
             "labels": kind == "predict" ? ["Typed text", "Continuation"] : ["Input", "Output"],
-            "suite_cases": sizes[kind]!.0, "suite_categories": sizes[kind]!.1,
+            "suite_cases": sizes(kind).0, "suite_categories": sizes(kind).1,
             "inherits": kind == "predict" && ghost.inherits(key) && !custom,
             "note": kind == "predict" ? "{words} becomes the number of words to suggest (\(pyStr(ghost.cfg["words"])))."
                                       : "The model gets one paragraph at a time."]
@@ -334,6 +354,17 @@ func modelState() -> (Bool, Any) {
 
 // MARK: routes
 
+/// The settings the app shows: words to suggest, the writing languages in effect and every language the model supports.
+let settingsLock = NSLock()
+
+func settings() -> [String: Any] {
+    let c = ghost.cfg
+    let english = Locale(identifier: "en")
+    return ["ok": true, "words": c["words"] ?? 5, "maxTokens": c["maxTokens"] ?? 6, "languages": ghost.languages(),
+            "languagesSet": (c["languages"] as? [String]).map { !$0.isEmpty } ?? false,
+            "supported": Languages.supported.map { ["id": $0, "name": english.localizedString(forIdentifier: $0) ?? $0, "native": Languages.nativeName($0)] }]
+}
+
 func handleGET(_ path: String, _ q: [String: String]) -> (Int, [String: Any]) {
     do {
         switch path {
@@ -353,14 +384,13 @@ func handleGET(_ path: String, _ q: [String: String]) -> (Int, [String: Any]) {
             let name = q["name"] ?? ""
             return (200, ["ok": true, "name": name, "categories": try suiteView(name)])
         case "/settings":
-            let c = ghost.cfg
-            return (200, ["ok": true, "words": c["words"] ?? 5, "maxTokens": c["maxTokens"] ?? 6])
+            return (200, settings())
         case "/config":
             return (200, ["ok": true, "config": ghost.cfg])
         case "/history":
             let name = q["name"] ?? ""
             let (kind, key) = try parse(name)
-            let sid = suiteIDs[kind == "predict" ? "predict" : key]
+            let sid = suiteIDFor(kind, key)
             let versions = ghost.user.history(name).map { v -> [String: Any] in
                 var x = v
                 if (v["result"] as? [String: Any])?["suite"] as? String != sid { x["result"] = NSNull() }
@@ -384,7 +414,8 @@ func handlePOST(_ path: String, _ body: Data) -> (Int, [String: Any]) {
             return (200, withLink { ln in
                 try ghost.predict(ln, req["app"] as? String ?? "", req["text"] as? String ?? "", req["opts"] as? [String: Any],
                                   stream: req["stream"] as? String ?? "ghost-http",
-                                  style: (req["context"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? "general")
+                                  style: (req["context"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? "general",
+                                  language: (req["language"] as? String).flatMap { $0.isEmpty ? nil : $0 })
             })
         case "/proofread":
             return (200, withLink { ln in try proof.run(ln, req["text"] as? String ?? "", mode: req["mode"] as? String ?? "fix") })
@@ -397,13 +428,32 @@ func handlePOST(_ path: String, _ body: Data) -> (Int, [String: Any]) {
         case "/bench":
             return (200, try bench(req))
         case "/settings":
-            guard let w = intValue(req["words"]), (1...10).contains(w) else { throw ClientError("words must be a whole number from 1 to 10") }
+            var save: [String: Any] = [:]
+            if req["words"] != nil {
+                guard let w = intValue(req["words"]), (1...10).contains(w) else { throw ClientError("words must be a whole number from 1 to 10") }
+                save["words"] = w
+                save["maxTokens"] = tokensForWords(w)         // {words} is in the prompts: new profiles
+            }
+            if let v = req["languages"] {                      // [] = back to the default
+                guard let list = v as? [String] else { throw ClientError("languages must be a list of languages") }
+                let ids = Languages.supported
+                var out: [String] = []
+                for l in list {
+                    let c = Languages.canonical(l)
+                    guard let m = ids.contains(c) ? c : Languages.match(l, in: ids) else {
+                        throw ClientError("the model does not support \(l); it supports \(ids.joined(separator: ", "))")
+                    }
+                    if !out.contains(m) { out.append(m) }
+                }
+                save["languages"] = out
+            }
+            if save.isEmpty { throw ClientError("nothing to set: words (1-10) or languages") }
+            settingsLock.lock(); defer { settingsLock.unlock() }    // one change at a time: each reads and writes the whole config
             var c = ghost.cfg
-            c["words"] = w
-            c["maxTokens"] = tokensForWords(w)                // {words} is in the prompts: new profiles
+            for (k, v) in save { c[k] = v }
             ghost.cfg = c
-            try saveUserConfig(["words": w, "maxTokens": tokensForWords(w)])
-            return (200, ["ok": true, "words": w, "maxTokens": tokensForWords(w)])
+            try saveUserConfig(save)
+            return (200, settings())
         case "/cases":
             let name = req["name"] as? String ?? ""
             _ = try parse(name)

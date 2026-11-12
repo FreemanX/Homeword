@@ -4,9 +4,14 @@
   "textBudget": 100,
   "oneSentence": true,
   "invalidPolicy": "drop",
-  "lenientApps": ["terminal", "code"],
+  "lenientApps": [
+    "terminal",
+    "code"
+  ],
   "spellCheck": true,
   "spellLanguage": "en",
+  "languages": [],
+  "languageLine": "Language: {language}. Continue in {language}, not English.",
   "sampling": "greedy",
   "topK": 40,
   "topP": 0.9,

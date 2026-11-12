@@ -14,7 +14,7 @@ Knobs follow the mechanism/policy split ([ARCHITECTURE.md](ARCHITECTURE.md)):
 **User overrides.** Both layers read the shipped file, then the user's file of the same name in `~/.config/homeword/`
 (`$XDG_CONFIG_HOME/homeword/` if set) for the keys it contains. (The directory from before the project's rename is moved there on
 first use.) Homeword's Engine tab writes the ports there (`serverPort` in `config.json`, `httpPort` in `predictd.json`) and its
-General tab the words to suggest (`words`, `maxTokens`); any other knob works the same way. Benchmarks ignore the user's files
+General tab the words to suggest (`words`, `maxTokens`) and the writing languages (`languages`); any other knob works the same way. Benchmarks ignore the user's files
 (`ghostd --no-user`, `predictd --user-config ""`).
 
 ```mermaid
@@ -85,7 +85,9 @@ greedy, `top_p`/`seed` → `topP`/`seed`, `response_format` → `schema`, `tool_
 | `oneSentence` | true | stop the ghost at the end of the first sentence | |
 | `invalidPolicy` | drop | `drop`: no ghost when the completed word is not a word; anything else shows it | |
 | `lenientApps` | terminal, code | apps where words need not be dictionary words and the sentence rule is off | add labels for code-like input |
-| `spellCheck`, `spellLanguage` | true, en | check completed words with predictd's `spell` op, in this language | the prompt is English: change both together |
+| `spellCheck`, `spellLanguage` | true, en | check completed words with predictd's `spell` op; `spellLanguage` for English text (other languages are checked in their own, or not at all without a macOS dictionary) | |
+| `languages` | `[]` | the languages the user writes in (model locales: `de-DE`, `pt-BR`, `zh-Hant-TW`, ...); each request is detected among them. Empty: the system's language if the model supports it, else `en-US`; with `--no-user`, `en-US`. Homeword's General tab sets it through `POST /settings` | more languages = more chances to mistake one for a close one; one language skips detection |
+| `languageLine` | `Language: {language}. Continue in {language}, not English.` | the line before `Text:` in requests whose text is not English (`{language}`: its English name) | a shorter line left more answers in English |
 | `sampling`, `topK`, `topP`, `temperature`, `seed` | greedy, ... | passed to `generate` | greedy is the most accurate |
 | `shots` | 6 | examples from prompt.json in the profile | each costs ~0.55 ms per token per request; fewer cost accuracy |
 | `instructions` | short | `short` (`instructions_short`) or `long` (`instructions`) | short was faster and more accurate |
@@ -165,6 +167,6 @@ All three send at most the last 2000 characters; the policy trims further to `te
 | Lowest latency | `words: 3, maxTokens: 4`, `shots: 4` (costs accuracy) |
 | Multi-sentence | `oneSentence: false` |
 | Variety instead of the single best guess | `sampling: "topP", topP: 0.9, temperature: 0.7` |
-| Another language | translate `instructions_short` and the examples, set `spellLanguage`, or `spellCheck: false` |
+| Other languages | `languages: ["en-US", "fr-FR", "ja-JP"]` (or Homeword's General tab); one request in a known language: `language: "fr-FR"` in the `/predict` body |
 | A code-like client | send `context: "code"` (the code writing style; its label `code` is in `lenientApps`: no dictionary or sentence rules) |
 | Keep the cache warm longer | predictd.json `keepAliveMaxIdleSec` |

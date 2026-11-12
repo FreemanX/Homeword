@@ -184,6 +184,7 @@ request may carry an `id`, echoed in its answer.
 | `prewarm` | `profile` | `prewarmed`: warm the profile's default session now and keep it warm as the most recently used one (skipped while a generation runs) |
 | `tokens` | `text` | `count` |
 | `spell` | `words`, `language` | `valid: [bool]` (`NSSpellChecker`) |
+| `languages` | | `model`: the model's languages (`SystemLanguageModel.supportedLanguages`, e.g. `en-Latn-US`), `spell`: the spell checker's |
 | `stats` | | counters, `profiles`, `pinned`, `warm`, `config` |
 | `reload` | `config: {...}` | re-reads predictd.json and the user's overrides, applies `config` on top |
 | `ping`, `shutdown` | | |
@@ -289,8 +290,9 @@ a request in another style registers and pins that style's profile. Then, per ke
 | Step | What happens | Knobs (ghost/config.json) |
 |---|---|---|
 | 1 trim | Keep the tail of the text that fits `textBudget` tokens, cut on a word boundary (char estimate: 4.8 chars/token prose, 2.9 code/shell, 1.6 CJK). | `textBudget` |
-| 2 ask | `generate` on its profile with prompt `App: <app>\nText: <tail>`, `maxTokens`, sampling; plain text, or a one-field schema with `output: structured`. | `maxTokens`, `sampling`, `output` |
-| 3 assemble | Turn the answer into the ghost (below); words are checked with predictd's `spell` op, batched once per answer. | `words`, `oneSentence`, `invalidPolicy`, `lenientApps`, `spellCheck`, `spellLanguage`, `format`, `repeatNgram`, `repeatWindow` |
+| 2 language | Which of the user's writing languages the tail is in (below). | `languages` |
+| 3 ask | `generate` on its profile with prompt `App: <app>\nText: <tail>`, `maxTokens`, sampling; plain text, or a one-field schema with `output: structured`. Text in another language than English gets a line naming it before `Text:`. | `maxTokens`, `sampling`, `output`, `languageLine` |
+| 4 assemble | Turn the answer into the ghost (below); words are checked with predictd's `spell` op, batched once per answer. | `words`, `oneSentence`, `invalidPolicy`, `lenientApps`, `spellCheck`, `spellLanguage`, `format`, `repeatNgram`, `repeatWindow` |
 
 The model is asked for the **rest** of the unfinished word, then the next words ("suffix" format): for `...is fail` it answers
 `ing despite correct preparation`.
@@ -321,6 +323,27 @@ back, in a loop. Replaying the 240 recorded answers of the steady baselines chan
 
 Days and months also count as words in their capitalised form. Sentence ends ignore abbreviations ("e.g.", "Dr."), initials and
 numbers, and the rule is off for `lenientApps` (terminal, code), where `.` and `!` are syntax.
+
+### Writing languages
+
+`ghost/Language.swift`. The model supports 24 locales in 16 languages (predictd's `languages` op). The
+user lists the ones they write in (`languages`, Homeword's General tab; default: the system's language when the model has it, else
+English; benchmarks: English only). Per request:
+
+- **Detect.** One language: that one. Several: Apple's `NLLanguageRecognizer` on the last 400 characters, constrained to the user's
+  languages; when the text is too short (under 8 letters, a CJK character counting 3) or the recognizer is unsure (p < 0.5), the
+  language last detected on the same `stream`, else the first listed. A request can name it instead (`language` in the `/predict`
+  body). Constrained to all 16 languages it got 149 of the 150 language cases right and 199 of the 200 English suite cases (the
+  miss: `kubectl get pods -n kube-sys`, read as Turkish); between close languages (Danish, Norwegian, Swedish; Spanish, Portuguese)
+  10 of 10 each.
+- **Name it.** English requests are unchanged. Others get `languageLine` before the `Text:` line: `Language: French. Continue in
+  French, not English.` The prompt's instructions and examples stay English for every language. Without a line most answers to
+  non-English text came back in English; on the 150 language cases (one run), `Language: French` alone still left 39 answers with
+  English words in them, the shipped line 8, and it got the first word right 31 times against 22. Examples in the language itself (a
+  profile per language) were no better (first word right 15 of 40 against 13 in German, French, Japanese and Korean, within noise)
+  and would cost a profile switch whenever the language changes.
+- **Spell-check in it**: predictd's `spell` op in that language (`pt_BR`, `de`, ...); no check where macOS has no dictionary
+  (Japanese, Chinese), so a word is not dropped as invalid there. `spellLanguage` stays the check for English.
 
 ### One keystroke through all layers
 
@@ -354,7 +377,7 @@ sequenceDiagram
 ### The ghost answer
 
 `POST 127.0.0.1:47321/predict` with `{"app": "chat", "text": "See you tomor", "stream": "pi", "opts": {...}}` (`opts` overrides
-ghost/config.json for one request):
+ghost/config.json for one request; `language`: the text's language, instead of detecting it):
 
 | Field | Meaning |
 |---|---|
@@ -363,6 +386,7 @@ ghost/config.json for one request):
 | `valid`, `suppressed` | spell check of the completed word; why nothing is shown (`invalid_word`, `guardrail`) |
 | `raw_suggestion`, `model_completion` | before suppression; the model's raw text |
 | `truncated`, `dropped_partial`, `sentence_end`, `glued`, `respaced`, `words`, `misspelled` | what assembly did |
+| `language` | the writing language the text was taken to be in (`de-DE`) |
 | `timing` | `trim_ms`, `wait_ms`, `model_ms`, `assemble_ms`, `daemon_ms`, `total_ms`, `session` (the cache state) |
 | `tokens` | `in`, `cached`, `out` from predictd, plus the trim details |
 | `ok:false` | `error: "cancelled"` when a newer request on the stream replaced this one: ignore it |
@@ -405,7 +429,7 @@ Every prompt (instructions and examples) can be replaced per user (`ghost/Prompt
 | `GET /bench?job=` | `state` (`running`, `done`, `error`), `done`/`total` cases, then `result`: per category, overall, the user's section, and `suite` (a fingerprint of the cases); stored by the prompt's content hash. `/prompts` and `/history` leave out results from another version of the suite |
 | `GET /suite?name=` | the built-in benchmark cases the prompt runs on, per category (`{"name", "title", "cases": [{"text", "rest", "skipped"}]}`), for viewing; `skipped`: left out because it shares text with an example of the prompt in use |
 | `GET`/`POST /cases` | the user's own benchmark cases for a prompt: `[{"text", "rest"}]` (`rest` = what comes next, or the expected output for proofreading) |
-| `GET`/`POST /settings` | `{"words"}` (1-10): how many words to suggest; sets `words` and `maxTokens` (words + 1 per 5 words) and saves both to the user's config overrides; `{words}` in the prompts changes with it, so the profiles change too |
+| `GET`/`POST /settings` | `{"words"}` (1-10): how many words to suggest; sets `words` and `maxTokens` (words + 1 per 5 words) and saves both to the user's config overrides; `{words}` in the prompts changes with it, so the profiles change too. `{"languages": [ids]}`: the writing languages (the model's, or a language it matches: `fr` → `fr-FR`; `[]` = the default), saved the same way. `GET` also answers `languages` in effect, `languagesSet` (false = the default) and `supported` (`[{id, name, native}]`) |
 
 A changed prompt is a new profile (named by its content hash), so it applies to the next request; the typing policy re-pins whenever
 its profile changes.
@@ -413,7 +437,11 @@ its profile changes.
 **The benchmark suite** (`ghost/Evaluate.swift`, also run by `bench/run.py --styles` through `POST /bench`): every case of
 `bench/cases.json` (the fixed 80-case benchmark) and `bench/styles.json` (per style, and terminal), 200 in all, each tagged with a
 category (chat 26, email 25, work 25, academic 25, code 25, general 49, terminal 25) and keeping its own app label. A prompt runs
-on all of them, so one run shows how it does on every kind of text; results are reported per category. A case that shares text
+on all of them, so one run shows how it does on every kind of text; results are reported per category. Each writing language
+besides English adds its category: 10 everyday texts from `bench/languages.json` (15 languages; Chinese in Simplified and
+Traditional), labelled `notes`, detected as in use and scored with `language_right` (how often detection got it); Japanese and
+Chinese are scored by characters, the first two standing for a word. The English cases are sent as English whatever the user's
+languages, so their results stay comparable. A case that shares text
 with one of the prompt's examples is skipped and counted (`skipped`): it would test recall of the example. No shipped example is
 in the suite or in the tuning cases (`bench/styles-dev.json`, 30 per style, used only to choose the style prompts): `python3 -I
 bench/check_cases.py`. The user's cases run with the prompt's own label and are reported as a separate section. Metrics: latency

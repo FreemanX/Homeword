@@ -492,6 +492,14 @@ actor Engine {
             }
             conn.send(["id": id, "ok": true, "valid": valid])
 
+        case "languages":
+            // what callers may ask for: the model's languages (BCP-47, e.g. "fr-CA") and the spell checker's ("en", "pt_BR")
+            let model = SystemLanguageModel.default.supportedLanguages.map { l -> String in
+                [l.languageCode?.identifier, l.script?.identifier, l.region?.identifier].compactMap { $0 }.joined(separator: "-")
+            }.sorted()
+            let spell = await MainActor.run { NSSpellChecker.shared.availableLanguages }
+            conn.send(["id": id, "ok": true, "model": model, "spell": spell])
+
         case "stats":
             let list = profiles.values.sorted { $0.name < $1.name }.map { p in
                 p.summary(pinned: pinned == p.name, sessions: slots.values.filter { $0.profile == p.name }.map(\.name).sorted())

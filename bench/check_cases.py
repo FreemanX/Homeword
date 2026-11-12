@@ -1,6 +1,7 @@
 """Overlaps between the shipped prompts' examples and the benchmark and tuning cases: there should be none (a case that shares
 text with an example measures recall of the example, not prediction; the benchmark skips such cases). Run after editing a
-prompt (ghost/prompt.json, styles.json, proofread.json) or the cases (bench/cases.json, styles.json, styles-dev.json):
+prompt (ghost/prompt.json, styles.json, proofread.json) or the cases (bench/cases.json, styles.json, styles-dev.json,
+languages.json):
 
     python3 -I bench/check_cases.py          (exit status 1 when it finds overlaps)
 
@@ -11,6 +12,8 @@ import json, os, subprocess, sys
 HERE = os.path.dirname(os.path.realpath(__file__))
 GHOSTD = os.path.join(os.path.dirname(HERE), "ghostd")
 CATEGORIES = ["chat", "email", "work", "academic", "code", "general", "terminal"]
+LANGUAGES = ["da-DK", "de-DE", "es-ES", "fr-FR", "it-IT", "ja-JP", "ko-KR", "nb-NO", "nl-NL", "pt-BR", "sv-SE", "tr-TR", "vi-VN",
+             "zh-Hans-CN", "zh-Hant-TW"]                 # every language with cases in languages.json
 
 
 def main():
@@ -23,7 +26,7 @@ def main():
         proc.stdin.flush()
         return json.loads(proc.stdout.readline())["out"]
 
-    suite = ask("suite")["cases"]
+    suite = ask("suite", languages=LANGUAGES)["cases"]
     styles = json.load(open(os.path.join(HERE, "styles.json")))
     dev = json.load(open(os.path.join(HERE, "styles-dev.json")))
     pools = [("suite", suite), ("proofread", [{"text": c["text"]} for c in styles["proofread"]]),
@@ -43,6 +46,7 @@ def main():
     for c in suite:
         counts[c["category"]] = counts.get(c["category"], 0) + 1
     print("suite cases per category:", ", ".join(f"{k} {counts.get(k, 0)}" for k in CATEGORIES))
+    print("language cases:", ", ".join(f"{k.removeprefix('lang-')} {n}" for k, n in counts.items() if k.startswith("lang-")))
     print(f"{found} overlaps")
     return found
 

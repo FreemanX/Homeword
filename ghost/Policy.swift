@@ -395,8 +395,11 @@ final class Ghost {
     var registered = Set<String>()
     var pinned: String?                                      // the profile predictd keeps warm for us
     let lock = NSLock()
+    let userMode: Bool                                       // the user's overrides and prompts apply (not a benchmark)
+    private var streamLanguage: [String: String] = [:]       // the language last detected per stream
 
     init(overrides: [String: Any] = [:], user: Bool) {
+        userMode = user
         let here = ROOT + "/ghost"
         var c = loadConfig(here + "/config.json", user: user)
         for (k, v) in overrides { c[k] = v }
@@ -415,9 +418,43 @@ final class Ghost {
         return c
     }
 
-    func template(_ app: String, _ text: String) -> String {
-        let t = prompt["template"] as? String ?? "App: {app}\nText: {text}"
+    /// The request's prompt. `language`: name it on its own line before the text (`languageLine`; non-English text, English requests
+    /// are unchanged). The line names the language twice: "Language: X" alone left a quarter of the answers in English.
+    func template(_ app: String, _ text: String, language: String? = nil, cfg: [String: Any] = [:]) -> String {
+        var t = prompt["template"] as? String ?? "App: {app}\nText: {text}"
+        if let language {
+            let form = cfg["languageLine"] as? String ?? "Language: {language}. Continue in {language}, not English."
+            let line = form.replacingOccurrences(of: "{language}", with: language) + "\n"
+            if let r = t.range(of: "{text}") {
+                let lineStart = t[..<r.lowerBound].lastIndex(of: "\n").map { t.index(after: $0) } ?? t.startIndex
+                t.insert(contentsOf: line, at: lineStart)
+            }
+        }
         return t.replacingOccurrences(of: "{app}", with: app).replacingOccurrences(of: "{text}", with: text)
+    }
+
+    /// The writing languages in effect (Language.swift).
+    func languages() -> [String] { Languages.resolve(cfg["languages"], user: userMode) }
+
+    /// Forget the language last detected on a stream (benchmarks: every case on its own).
+    func forgetLanguage(_ stream: String) { lock.lock(); streamLanguage[stream] = nil; lock.unlock() }
+
+    /// The language of a text: `forced` when given (and one of the model's), else detected among the writing languages.
+    func language(of text: String, forced: String?, stream: String?) -> String {
+        let ids = languages()
+        if let forced {
+            let c = Languages.canonical(forced)
+            if let m = Languages.supported.contains(c) ? c : Languages.match(forced, in: Languages.supported) { return m }
+        }
+        lock.lock(); let previous = stream.flatMap { streamLanguage[$0] }; lock.unlock()
+        let id = Languages.detect(text, among: ids, previous: previous)
+        if let stream {
+            lock.lock()
+            if streamLanguage.count >= 256 && streamLanguage[stream] == nil { streamLanguage.removeAll() }   // clients with a stream per request
+            streamLanguage[stream] = id
+            lock.unlock()
+        }
+        return id
     }
 
     // -- writing styles: general is prompt.json (with its research knobs), the others are styles.json
@@ -513,23 +550,29 @@ final class Ghost {
     struct Context {
         let cfg: [String: Any], app: String, text: String, tail: String, est: Double, trimmed: Bool, style: String
         let prompt: [String: Any]?, profile: String, trimMs: Double
+        var language = "en-US"              // the writing language of the text
+        var spell: String? = "en"           // the spell checker's language for it, nil = no dictionary (no spell check)
     }
 
     /// The generate request for this text, and the context `finish` needs; (nil, ctx) when there is nothing to ask.
     /// `style`: a writing style (general = `app` is sent as is; others send their own label). `prompt`: try this prompt instead
-    /// of the one in use (benchmarks).
+    /// of the one in use (benchmarks). `language`: the text's language when the caller knows it (else detected).
     func request(_ app: String, _ text: String, _ opts: [String: Any]? = nil, style: String = "general", prompt: [String: Any]? = nil,
-                 keepApp: Bool = false) -> ([String: Any]?, Context) {
+                 keepApp: Bool = false, stream: String? = nil, language forced: String? = nil) -> ([String: Any]?, Context) {
         let t0 = now()
         let cfg = config(opts)
         let style = styles[style] != nil ? style : "general"
         let app = style != "general" && !keepApp ? styleLabel(style) : app   // benchmarks keep each case's own app label
         let (tail, est, trimmed) = trimTail(text, max(16, intValue(cfg["textBudget"]) ?? 100))
         let profileName = profile(cfg, style, prompt)["name"] as! String
-        let ctx = Context(cfg: cfg, app: app, text: text, tail: tail, est: est, trimmed: trimmed, style: style, prompt: prompt,
+        var ctx = Context(cfg: cfg, app: app, text: text, tail: tail, est: est, trimmed: trimmed, style: style, prompt: prompt,
                           profile: profileName, trimMs: perfMs(since: t0))
         if pyStrip(tail).isEmpty { return (nil, ctx) }
-        var req: [String: Any] = ["op": "generate", "profile": profileName, "prompt": template(app, tail), "maxTokens": cfg["maxTokens"] ?? 6,
+        let lang = language(of: tail, forced: forced ?? opts?["language"] as? String, stream: stream)
+        ctx.language = lang
+        ctx.spell = Languages.isEnglish(lang) ? (cfg["spellLanguage"] as? String ?? "en") : Languages.spellCode(lang)
+        let named = Languages.isEnglish(lang) ? nil : Languages.promptName(lang)
+        var req: [String: Any] = ["op": "generate", "profile": profileName, "prompt": template(app, tail, language: named, cfg: cfg), "maxTokens": cfg["maxTokens"] ?? 6,
                                   "sampling": cfg["sampling"] ?? "greedy"]
         if cfg["sampling"] as? String != "greedy" {
             for k in ["topK", "topP", "temperature", "seed"] { req[k] = cfg[k] ?? NSNull() }
@@ -551,8 +594,10 @@ final class Ghost {
         let t1 = now()
         let completion = (resp["text"] as? String) ?? ((resp["content"] as? [String: Any])?["completion"] as? String ?? "")
         let truncated = resp["finish"] as? String == "length"
-        let lang = cfg["spellLanguage"] as? String ?? "en"
-        let a = try assemble(text, completion, ctx.app, cfg, truncated, Speller({ try spell($0, lang) }, cfg))
+        var spellCfg = cfg
+        if ctx.spell == nil { spellCfg["spellCheck"] = false }      // no dictionary for this language
+        let lang = ctx.spell ?? "en"
+        let a = try assemble(text, completion, ctx.app, cfg, truncated, Speller({ try spell($0, lang) }, spellCfg))
         let asmMs = perfMs(since: t1)
         let t = resp["timing"] as? [String: Any] ?? [:], tok = resp["tokens"] as? [String: Any] ?? [:]
         var tokens = tok
@@ -565,7 +610,7 @@ final class Ghost {
         return ["id": resp["id"] ?? NSNull(), "ok": true, "suggestion": a.shown, "raw_suggestion": a.raw, "model_completion": completion,
                 "partial": a.partial, "first_word": a.firstWord, "sentence_end": a.sentenceEnd, "truncated": truncated,
                 "dropped_partial": a.droppedPartial, "glued": a.glued, "respaced": a.respaced, "repeat_cut": a.repeatCut, "valid": a.valid,
-                "suppressed": a.suppressed ?? NSNull(), "words": a.words, "misspelled": a.misspelled,
+                "suppressed": a.suppressed ?? NSNull(), "words": a.words, "misspelled": a.misspelled, "language": ctx.language,
                 "timing": ["trim_ms": ctx.trimMs, "wait_ms": t["wait_ms"] ?? 0, "model_ms": t["model_ms"] ?? 0, "assemble_ms": asmMs,
                            "daemon_ms": t["total_ms"] ?? 0, "total_ms": ctx.trimMs + daemonMs + asmMs, "session": resp["state"] ?? NSNull()],
                 "tokens": tokens]
@@ -573,8 +618,8 @@ final class Ghost {
 
     /// Blocking: one suggestion for `text`. Registers the profile when predictd does not know it (first use, or the daemon restarted).
     func predict(_ link: Link, _ app: String, _ text: String, _ opts: [String: Any]? = nil, stream: String? = nil, style: String = "general",
-                 prompt: [String: Any]? = nil, keepApp: Bool = false) throws -> [String: Any] {
-        let (r, ctx) = request(app, text, opts, style: style, prompt: prompt, keepApp: keepApp)
+                 prompt: [String: Any]? = nil, keepApp: Bool = false, language: String? = nil) throws -> [String: Any] {
+        let (r, ctx) = request(app, text, opts, style: style, prompt: prompt, keepApp: keepApp, stream: stream, language: language)
         guard var req = r else { return ["ok": true, "suggestion": "", "partial": "", "timing": ["total_ms": ctx.trimMs]] }
         if let stream, !stream.isEmpty { req["stream"] = stream }
         let pin = (opts ?? [:]).isEmpty && prompt == nil        // the prompt in use is pinned, per-request variants are not

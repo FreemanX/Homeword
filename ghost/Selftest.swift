@@ -65,7 +65,13 @@ func runSelftest() {
                 let (r, _) = g.request(s("app"), s("text"), a["opts"] as? [String: Any], style: s("style").isEmpty ? "general" : s("style"),
                                        keepApp: truthy(a["keep_app"]))
                 out = r ?? NSNull()
-            case "suite": out = ["ids": [suiteID(), suiteID("fix"), suiteID("rewrite")], "cases": suite()]
+            case "suite": out = ["ids": [suiteID(), suiteID("fix"), suiteID("rewrite")], "cases": suite(languages: a["languages"] as? [String] ?? [])]
+            case "detect":                           // Language.swift: which of `languages` a text is in
+                out = Languages.detect(s("text"), among: a["languages"] as? [String] ?? [], previous: a["previous"] as? String)
+            case "language":                         // how a language is named, matched and spell-checked
+                let id = s("id")
+                out = ["canonical": Languages.canonical(id), "match": Languages.match(id, in: Languages.supported) as Any? ?? NSNull(),
+                       "prompt": Languages.promptName(id), "native": Languages.nativeName(id), "key": languageKey(id)]
             case "default_prompts":                  // every shipped prompt by name (bench/check_cases.py)
                 let g = Ghost(user: false)
                 var d: [String: Any] = [:]
