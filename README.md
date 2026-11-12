@@ -28,10 +28,6 @@ Mac. Your words never leave home.
   [More](#claude-code-ghost-text-in-the-prompt-box)
   <br/><img src="docs/gifs/claude-code.gif" width="600" alt="Dim ghost text after the cursor in Claude Code's prompt box">
 
-```
-› Could you explain why the test is fail|ing despite correct preparation      ← dim ghost, Tab takes one word, → all
-```
-
 ## How it is built
 
 Three layers, keeping **mechanism and policy apart**:
