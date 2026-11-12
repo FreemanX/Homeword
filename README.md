@@ -13,7 +13,7 @@ Mac. Your words never leave home.
   proofread it or ⌃⌥R to rewrite it. Suggestions follow the language you type in (the 16 languages of Apple's model: list the
   ones you write in), and the app itself speaks them too. Every prompt is editable, with a built-in benchmark.
   [More](#the-homeword-mac-app)
-  <!-- demo GIF: suggestions in Mail, then proofreading a paragraph -->
+  <br/><img src="docs/gifs/mail.gif" width="600" alt="Next-word suggestions while typing an email in Mail: a pop-up under the cursor, Tab inserts the word">
 - **The engine**: runs the model on your Mac and turns its answers into suggestions (the rest of the unfinished word plus up to five
   words, one sentence) and proofreading. The `pred` command line tool starts it and lets you try it in a terminal (`pred try`); apps
   reach it over local HTTP. [Quick start](#quick-start)
@@ -23,10 +23,10 @@ Mac. Your words never leave home.
   <!-- demo GIF: an agent harness running on the on-device model -->
 - **Ghost text in pi**: suggestions while you type a prompt in the pi coding agent; Tab takes a word, → all.
   [More](#pi-ghost-text-in-pis-prompt-editor)
-  <!-- demo GIF: ghost text in pi -->
+  <br/><img src="docs/gifs/pi.gif" width="600" alt="Dim ghost text after the cursor in pi's prompt editor">
 - **Ghost text in Claude Code**: the same in Claude Code's prompt box, as a Claude Code mod.
   [More](#claude-code-ghost-text-in-the-prompt-box)
-  <!-- demo GIF: ghost text in Claude Code -->
+  <br/><img src="docs/gifs/claude-code.gif" width="600" alt="Dim ghost text after the cursor in Claude Code's prompt box">
 
 ```
 › Could you explain why the test is fail|ing despite correct preparation      ← dim ghost, Tab takes one word, → all
@@ -131,6 +131,18 @@ statistics (no text). Needs the Accessibility permission.
 ```sh
 ./build.sh && app/build.sh && open app/build/Homeword.app
 ```
+
+Suggestions in Notes:
+
+<img src="docs/gifs/notes.gif" width="600" alt="Next-word suggestions while typing in Notes">
+
+Proofread (⌃⌥P): the changes marked, then the clean result, then Replace:
+
+<img src="docs/gifs/proofread.gif" width="600" alt="Proofreading a short email in Notes: removed words struck through in red, fixes in green, then Replace">
+
+Rewrite (⌃⌥R): a rambling paragraph made clearer, with the same meaning:
+
+<img src="docs/gifs/rewrite.gif" width="600" alt="Rewriting a long-winded paragraph in Notes into two clear sentences">
 
 Details, permissions and metrics: [app](app/README.md).
 
