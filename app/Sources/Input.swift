@@ -21,7 +21,7 @@ final class KeyTap {
     static let marker: Int64 = 0x1F00_7E57
     /// Called on the main thread for every key press; return .consume to swallow it.
     var onKey: ((KeyPress) -> TapDecision)?
-    var onMouseDown: (() -> Void)?
+    var onMouseDown: ((CGPoint) -> Void)?           // where, in global coordinates with the origin at the top left (as AX)
     private var tap: CFMachPort?
 
     func start() -> Bool {
@@ -42,7 +42,7 @@ final class KeyTap {
         }
         if event.getIntegerValueField(.eventSourceUserData) == KeyTap.marker { return Unmanaged.passUnretained(event) }
         if type == .leftMouseDown || type == .rightMouseDown {
-            onMouseDown?()
+            onMouseDown?(event.location)
             return Unmanaged.passUnretained(event)
         }
         guard type == .keyDown else { return Unmanaged.passUnretained(event) }

@@ -1,6 +1,7 @@
 // Input prediction: on every key press, read the focused field (text before the caret, caret position), ask the typing policy for
 // a continuation and show it next to the caret. Same interaction as `pred try` and the agent integrations: Tab inserts the next
 // word, typing the suggestion's next character keeps the rest, anything else asks again, Esc dismisses.
+// Where an app's text cannot be read (it draws it itself), the keys typed since the last click stand in for it (Pref.typedFallback).
 import AppKit
 import Carbon.HIToolbox
 
@@ -16,6 +17,9 @@ final class Predictor {
     private var lastKeyAt = CACurrentMediaTime()
     private var pendingKeys = 0             // key presses since the last field read, credited to that field's app
     private var warmed = ""                 // the style the engine was last asked to warm
+    private var typed = ""                  // keys typed since the last click, focus or app change (memory only)
+    private var typedValid = false          // something was typed since that reset
+    private var lastClick: CGPoint?         // the caret is usually where the user last clicked (AX coordinates)
     /// No requests while a prompt benchmark runs (the model has one cache) or after the user stopped the engine.
     static var paused = false
     private var task: URLSessionDataTask?
@@ -29,6 +33,7 @@ final class Predictor {
             if k.code == Int64(kVK_Tab) && k.plain && !k.shift { accept(); return .consume }
             if k.code == Int64(kVK_Escape) && k.plain { dismiss("dismissed"); return .consume }
         }
+        track(k)
         guard enabled else { return .pass }
         lastKeyAt = CACurrentMediaTime()
         seq += 1
@@ -46,9 +51,15 @@ final class Predictor {
         return .pass
     }
 
-    func mouseDown() { if panel.visible { dismiss("dismissed") } }
+    func mouseDown(at p: CGPoint) {
+        resetTyped()
+        lastClick = p
+        if panel.visible { dismiss("dismissed") }
+    }
 
     func appChanged(pid: pid_t, bundle: String) {
+        resetTyped()
+        lastClick = nil
         if panel.visible { dismiss("dismissed") }
         let chromium = chromiumApps.contains(bundle) && Pref.d.bool(forKey: Pref.chromium)
         axQueue.async { AX.enableAccessibility(pid: pid, chromium: chromium) }
@@ -62,17 +73,69 @@ final class Predictor {
         Services.shared.post("/warm", ["context": style], timeout: 5) { _, _ in }
     }
 
+    // MARK: the keys typed (the stand-in for apps whose text cannot be read)
+
+    /// Follow the text typed since the last reset. Anything that may move the caret or change text we cannot see (arrows, Return,
+    /// Tab, clicks, shortcuts such as paste and undo) starts over.
+    private func track(_ k: KeyPress) {
+        let code = Int(k.code)
+        if k.command || k.control { resetTyped(); return }
+        switch code {
+        case kVK_Delete:
+            if k.option {                                               // a word back
+                while typed.last?.isWhitespace == true { typed.removeLast() }
+                while let c = typed.last, !c.isWhitespace { typed.removeLast() }
+            } else if !typed.isEmpty {
+                typed.removeLast()
+            } else {
+                typedValid = false                                      // deleting text we never saw
+            }
+        case kVK_ForwardDelete:
+            break                                                       // after the caret: the text before it is unchanged
+        case kVK_Return, kVK_ANSI_KeypadEnter, kVK_Tab, kVK_LeftArrow, kVK_RightArrow, kVK_UpArrow, kVK_DownArrow, kVK_Home, kVK_End,
+             kVK_PageUp, kVK_PageDown:
+            resetTyped()
+        default:
+            guard let v = k.chars.unicodeScalars.first?.value, v >= 0x20, v != 0x7F, !(0xF700...0xF8FF).contains(v) else { return }
+            typed += k.chars
+            typedValid = true
+            if typed.count > FieldSnapshot.window * 2 { typed = String(typed.suffix(FieldSnapshot.window)) }
+        }
+    }
+
+    private func resetTyped() {
+        typed = ""
+        typedValid = false
+    }
+
+    /// A keyboard layout is active, not an input method: with an input method the keys are not the text (composition).
+    private func layoutInput() -> Bool {
+        guard let src = TISCopyCurrentKeyboardInputSource()?.takeRetainedValue(),
+              let t = TISGetInputSourceProperty(src, kTISPropertyInputSourceType) else { return true }
+        return (Unmanaged<CFString>.fromOpaque(t).takeUnretainedValue() as String) == (kTISTypeKeyboardLayout as String)
+    }
+
     // MARK: reading the field
+
+    /// The focused field, or (Pref.typedFallback) the keys typed when the app's text cannot be read. `done` runs on the main thread.
+    private func readField(after delay: Double = 0, _ done: @escaping (FieldSnapshot?) -> Void) {
+        let fallback = typedValid && Pref.d.bool(forKey: Pref.typedFallback) && layoutInput() ? typed : nil
+        let click = lastClick
+        axQueue.asyncAfter(deadline: .now() + delay) {
+            var (s, reason) = FieldSnapshot.read()
+            if s == nil, let t = fallback, FieldSnapshot.unreadable.contains(reason) {
+                s = FieldSnapshot.fromTyped(t, click: click, reason: reason)
+            }
+            DispatchQueue.main.async { done(s) }
+        }
+    }
 
     private func scheduleRead(after delay: Double, retries: Int = 0) {
         readSeq += 1
         let my = readSeq
-        axQueue.asyncAfter(deadline: .now() + delay) {
-            let (s, _) = FieldSnapshot.read()
-            DispatchQueue.main.async {
-                guard my == self.readSeq else { return }               // a newer read is coming
-                self.handle(s, retries: retries)
-            }
+        readField(after: delay) { s in
+            guard my == self.readSeq else { return }                   // a newer read is coming
+            self.handle(s, retries: retries)
         }
     }
 
@@ -95,6 +158,8 @@ final class Predictor {
             dismiss("ignored")
         }
         guard s.atLineEnd, s.before.trimmingCharacters(in: .whitespacesAndNewlines).count >= max(1, Pref.d.integer(forKey: Pref.minChars)) else { return }
+        // from typed keys only after a finished word: single letters are shortcuts in apps that draw their own text (Figma, games)
+        if s.typed && !s.before.contains(where: \.isWhitespace) { return }
         request(s, style: style)
     }
 
@@ -119,15 +184,12 @@ final class Predictor {
                 Metrics.shared.log("request", ["app": s.bundle, "style": style, "outcome": why, "latency_ms": Int(latency)])
                 return
             }
-            self.axQueue.async {                                        // is the field still showing this text?
-                let (now, _) = FieldSnapshot.read()
-                DispatchQueue.main.async {
-                    guard my == self.seq, let now, now.atLineEnd else { return }
-                    if now.before == s.before {
-                        self.show(sug, now, style: style, latency: (CACurrentMediaTime() - t0) * 1000, model: model)
-                    } else if depth < 2 {
-                        self.request(now, style: style, depth: depth + 1)   // the read raced the key: ask for the real text
-                    }
+            self.readField { now in                                     // is the field still showing this text?
+                guard my == self.seq, let now, now.atLineEnd else { return }
+                if now.before == s.before {
+                    self.show(sug, now, style: style, latency: (CACurrentMediaTime() - t0) * 1000, model: model)
+                } else if depth < 2 {
+                    self.request(now, style: style, depth: depth + 1)       // the read raced the key: ask for the real text
                 }
             }
         }
@@ -138,7 +200,8 @@ final class Predictor {
         ghost = suggestion
         ghostFor = s.before
         snap = s
-        record = SuggestionRecord(app: s.bundle, style: style, latency: latency, model: model, suggestion: suggestion)
+        record = SuggestionRecord(app: s.bundle, style: style, latency: latency, model: model, suggestion: suggestion,
+                                  source: s.typed ? "typed" : "field")
         redraw()
     }
 
@@ -159,9 +222,13 @@ final class Predictor {
         guard !piece.isEmpty else { return }
         seq += 1
         lastKeyAt = CACurrentMediaTime()
-        Keyboard.type(piece)
-        ghost.removeFirst(piece.count)
-        ghostFor += piece
+        // and a space to type on, unless the suggestion goes on with something else (", then": the comma comes next)
+        let rest = ghost.dropFirst(piece.count)
+        let insert = Pref.d.bool(forKey: Pref.spaceAfterWord) && (rest.isEmpty || rest.first == " ") ? piece + " " : piece
+        Keyboard.type(insert)
+        ghost.removeFirst(min(insert.count, ghost.count))               // the suggestion's own space is the one just typed
+        ghostFor += insert
+        if typedValid { typed += insert }                               // our own key events do not reach track()
         record?.acceptedWords += 1
         record?.acceptedChars += piece.count
         if ghost.trimmingCharacters(in: .whitespaces).isEmpty { dismiss("used") } else { redraw() }

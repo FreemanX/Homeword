@@ -124,14 +124,18 @@ struct FieldSnapshot {
     let caret: CGRect?          // AX coordinates
     let field: CGRect?
     let host: String?           // the web page's host, in browsers
+    var typed = false           // `before` is what was typed since the last click (the app's text could not be read)
+    var earlier = 0             // characters of `before` from earlier blocks (EarlierText)
 
     static let window = 600
+    /// Why a read can fail where the keys typed may stand in for the text: the app draws its text itself.
+    static let unreadable: Set<String> = ["no focus", "not a text field", "no caret", "unreadable", "caret out of range"]
 
     /// nil, with the reason, when there is nothing to predict for.
     static func read() -> (FieldSnapshot?, String) {
         let e = AX.focused()
         let (snap, reason) = read(e)
-        FieldDiag.note(e, snap?.bundle, reason)
+        FieldDiag.note(e, snap?.bundle, reason, earlier: snap?.earlier ?? 0)
         return (snap, reason)
     }
 
@@ -141,6 +145,10 @@ struct FieldSnapshot {
         guard AX.isTextInput(e) else { return (nil, "not a text field") }
         guard let sel = AX.selectedRange(e) else { return readMarkers(e) }
         if sel.length != 0 { return (nil, "selection") }
+        if let m = AX.attr(e, "AXTextInputMarkedRange"), CFGetTypeID(m) == AXValueGetTypeID() {   // an input method is composing
+            var r = CFRange()
+            if AXValueGetValue(m as! AXValue, .cfRange, &r), r.length > 0 { return (nil, "composing") }
+        }
         let caret = sel.location
         let start = max(0, caret - window)
         var before = AX.string(e, range: CFRange(location: start, length: caret - start))
@@ -151,7 +159,9 @@ struct FieldSnapshot {
             before = ns.substring(with: NSRange(location: start, length: caret - start))
             after = caret < ns.length ? ns.substring(with: NSRange(location: caret, length: 1)) : ""
         }
-        guard let b = before else { return (nil, "unreadable") }
+        guard var b = before else { return (nil, "unreadable") }
+        var earlier = ""
+        if b.count < window, let (caretMarker, _) = TextMarkers.selection(e) { earlier = EarlierText.prefix(e, caretMarker, b); b = earlier + b }
         let a = after ?? ""
         var caretRect: CGRect? = nil
         if caret > 0, b.last != "\n", let r = AX.bounds(e, range: CFRange(location: caret - 1, length: 1)) {
@@ -162,19 +172,27 @@ struct FieldSnapshot {
         let pid = AX.pid(e)
         let bundle = NSRunningApplication(processIdentifier: pid)?.bundleIdentifier ?? ""
         let host = Style.browsers.contains(bundle) ? AX.pageHost(e) : nil
-        return (FieldSnapshot(element: e, pid: pid, bundle: bundle, before: b, atLineEnd: a.isEmpty || a == "\n" || a == "\r",
-                              caret: caretRect, field: AX.frame(e), host: host), "ok")
+        var snap = FieldSnapshot(element: e, pid: pid, bundle: bundle, before: b, atLineEnd: a.isEmpty || a == "\n" || a == "\r",
+                                 caret: caretRect, field: AX.frame(e), host: host)
+        snap.earlier = earlier.count
+        return (snap, "ok")
     }
 
     /// The same through WebKit's text markers, for editors without character ranges (Mail's message body).
     private static func readMarkers(_ e: AXUIElement) -> (FieldSnapshot?, String) {
         guard let (start, end) = TextMarkers.selection(e) else { return (nil, "no caret") }
         guard TextMarkers.length(e, start, end) == 0 else { return (nil, "selection") }
+        if let v = AX.attr(e, "AXTextInputMarkedTextMarkerRange"), CFGetTypeID(v) == AXTextMarkerRangeGetTypeID() {
+            let r = v as! AXTextMarkerRange
+            if (TextMarkers.length(e, AXTextMarkerRangeCopyStartMarker(r), AXTextMarkerRangeCopyEndMarker(r)) ?? 0) > 0 { return (nil, "composing") }
+        }
         let caret = start
         let from = TextMarkers.index(e, caret).flatMap { TextMarkers.marker(e, index: max(0, $0 - window)) }
             ?? TextMarkers.documentStart(e) ?? caret
         guard var b = TextMarkers.string(e, from, caret) else { return (nil, "unreadable") }
         b = String(b.suffix(window)).replacingOccurrences(of: "\u{00A0}", with: " ")   // editors type a trailing space as a no-break space
+        var earlier = ""
+        if b.count < window { earlier = EarlierText.prefix(e, caret, b); b = earlier + b }
         let next = TextMarkers.next(e, caret)
         let a = next.flatMap { TextMarkers.string(e, caret, $0) } ?? ""
         var caretRect: CGRect? = nil
@@ -186,8 +204,73 @@ struct FieldSnapshot {
         let pid = AX.pid(e)
         let bundle = NSRunningApplication(processIdentifier: pid)?.bundleIdentifier ?? ""
         let host = Style.browsers.contains(bundle) ? AX.pageHost(e) : nil
-        return (FieldSnapshot(element: e, pid: pid, bundle: bundle, before: b, atLineEnd: a.isEmpty || a == "\n" || a == "\r",
-                              caret: caretRect, field: AX.frame(e), host: host), "ok")
+        var snap = FieldSnapshot(element: e, pid: pid, bundle: bundle, before: b, atLineEnd: a.isEmpty || a == "\n" || a == "\r",
+                                 caret: caretRect, field: AX.frame(e), host: host)
+        snap.earlier = earlier.count
+        return (snap, "ok")
+    }
+}
+
+extension FieldSnapshot {
+    /// Stand-in for an app whose text cannot be read: what was typed since the last click, focus or app change. The caret is
+    /// assumed at the last click when it falls inside the field (or window), else the pop-up goes to the field's corner.
+    /// Focused elements where typed keys are not text.
+    static let notText: Set<String> = ["AXOutline", "AXList", "AXTable", "AXBrowser", "AXRow", "AXCell", "AXButton", "AXPopUpButton",
+                                       "AXMenuButton", "AXCheckBox", "AXRadioButton", "AXSlider", "AXMenu", "AXMenuBar", "AXMenuItem",
+                                       "AXTabGroup", "AXToolbar", "AXImage", "AXLink"]
+
+    static func fromTyped(_ text: String, click: CGPoint?, reason: String) -> FieldSnapshot? {
+        guard let app = NSWorkspace.shared.frontmostApplication else { return nil }
+        let pid = app.processIdentifier
+        let appElement = AXUIElementCreateApplication(pid)
+        AXUIElementSetMessagingTimeout(appElement, 0.25)
+        let e = AX.focused().flatMap { AX.pid($0) == pid ? $0 : nil } ?? appElement
+        if notText.contains(AX.string(e, kAXRoleAttribute) ?? "") { return nil }   // keys there select or navigate (Finder's lists)
+        let windowFrame = AX.attr(appElement, kAXFocusedWindowAttribute).flatMap { CFGetTypeID($0) == AXUIElementGetTypeID() ? AX.frame($0 as! AXUIElement) : nil }
+        let field = AX.frame(e).flatMap { $0.width > 1 && $0.height > 1 ? $0 : nil } ?? windowFrame
+        var caret: CGRect? = nil
+        if let p = click, field?.contains(p) ?? true { caret = CGRect(x: p.x, y: p.y - 9, width: 1, height: 18) }
+        let bundle = app.bundleIdentifier ?? ""
+        FieldDiag.markTyped(bundle)
+        var s = FieldSnapshot(element: e, pid: pid, bundle: bundle, before: String(text.suffix(window)), atLineEnd: true,
+                              caret: caret, field: field, host: nil)
+        s.typed = true
+        return s
+    }
+}
+
+/// Editors that make every paragraph its own field (Notion and other block editors) show only the current block's text: add the
+/// paragraphs before it, through text markers, as long as they are editable too (the page around the editor is left out). Read
+/// once per focused element: earlier blocks do not change while one is typed in.
+enum EarlierText {
+    private static let lock = NSLock()
+    private static var cache: (AXUIElement, String)?
+
+    static func prefix(_ e: AXUIElement, _ caret: AXTextMarker, _ own: String) -> String {
+        lock.lock(); defer { lock.unlock() }
+        if let (el, text) = cache, CFEqual(el, e) { return text }
+        let text = compute(e, caret, own)
+        cache = (e, text)
+        return text
+    }
+
+    private static func compute(_ e: AXUIElement, _ caret: AXTextMarker, _ own: String) -> String {
+        var from = caret
+        var found: String? = nil
+        for _ in 0..<12 {
+            guard let p = TextMarkers.previousParagraphStart(e, from), !CFEqual(p, from),
+                  let el = TextMarkers.element(e, p), editable(el) else { break }
+            from = p
+            guard let t = TextMarkers.string(e, from, caret) else { break }
+            found = t
+            if t.count >= FieldSnapshot.window { break }
+        }
+        guard let t = found?.replacingOccurrences(of: "\u{00A0}", with: " "), t.count > own.count, t.hasSuffix(own) else { return "" }
+        return String(t.dropLast(own.count).suffix(FieldSnapshot.window - own.count))
+    }
+
+    private static func editable(_ el: AXUIElement) -> Bool {
+        AX.attr(el, "AXEditableAncestor") != nil || AX.isTextInput(el)
     }
 }
 
@@ -214,6 +297,14 @@ enum TextMarkers {
     static func marker(_ e: AXUIElement, index: Int) -> AXTextMarker? { asMarker(param(e, "AXTextMarkerForIndex", index as CFNumber)) }
     static func next(_ e: AXUIElement, _ m: AXTextMarker) -> AXTextMarker? { asMarker(param(e, "AXNextTextMarkerForTextMarker", m)) }
     static func previous(_ e: AXUIElement, _ m: AXTextMarker) -> AXTextMarker? { asMarker(param(e, "AXPreviousTextMarkerForTextMarker", m)) }
+    static func previousParagraphStart(_ e: AXUIElement, _ m: AXTextMarker) -> AXTextMarker? {
+        asMarker(param(e, "AXPreviousParagraphStartTextMarkerForTextMarker", m))
+    }
+    /// The element holding the text at a marker.
+    static func element(_ e: AXUIElement, _ m: AXTextMarker) -> AXUIElement? {
+        guard let v = param(e, "AXUIElementForTextMarker", m), CFGetTypeID(v) == AXUIElementGetTypeID() else { return nil }
+        return (v as! AXUIElement)
+    }
     static func length(_ e: AXUIElement, _ a: AXTextMarker, _ b: AXTextMarker) -> Int? { param(e, "AXLengthForTextMarkerRange", range(a, b)) as? Int }
     static func string(_ e: AXUIElement, _ a: AXTextMarker, _ b: AXTextMarker) -> String? {
         param(e, "AXStringForTextMarkerRange", range(a, b)) as? String
@@ -259,15 +350,16 @@ enum FieldDiag {
     private static var entries: [String: [String: Any]] = [:]       // bundle -> entry
     private static var lastKey: [String: String] = [:]              // bundle -> role + outcome, to write only on a change
 
-    static func note(_ e: AXUIElement?, _ bundle: String?, _ outcome: String) {
+    static func note(_ e: AXUIElement?, _ bundle: String?, _ outcome: String, earlier: Int = 0) {
         let pid = e.map(AX.pid) ?? 0
         let app = bundle ?? NSRunningApplication(processIdentifier: pid)?.bundleIdentifier ?? "?"
         let role = e.flatMap { AX.string($0, kAXRoleAttribute) } ?? ""
         lock.lock(); defer { lock.unlock() }
-        let key = role + "|" + outcome
+        let key = role + "|" + outcome + (earlier > 0 ? "|earlier" : "")
         guard lastKey[app] != key else { return }
         lastKey[app] = key
         var entry: [String: Any] = ["outcome": outcome, "role": role, "t": ISO8601DateFormatter().string(from: Date())]
+        if earlier > 0 { entry["earlierBlocksChars"] = earlier }        // a count, not the text
         if let e {
             entry["subrole"] = AX.string(e, kAXSubroleAttribute) ?? ""
             var names: CFArray?
@@ -280,6 +372,18 @@ enum FieldDiag {
             }
         }
         entries[app] = entry
+        save()
+    }
+
+    /// The app's text could not be read and the keys typed stood in for it.
+    static func markTyped(_ app: String) {
+        lock.lock(); defer { lock.unlock() }
+        guard entries[app] != nil, entries[app]?["fallback"] == nil else { return }
+        entries[app]?["fallback"] = "typed keys"
+        save()
+    }
+
+    private static func save() {
         let url = Metrics.shared.url.deletingLastPathComponent().appendingPathComponent("fields.json")
         try? JSONSerialization.data(withJSONObject: entries, options: [.prettyPrinted, .sortedKeys]).write(to: url)
     }

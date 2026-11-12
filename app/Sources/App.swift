@@ -39,7 +39,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         status.menu = menu
 
         tap.onKey = { [weak self] k in self?.key(k) ?? .pass }
-        tap.onMouseDown = { [weak self] in self?.predictor.mouseDown() }
+        tap.onMouseDown = { [weak self] p in self?.predictor.mouseDown(at: p) }
         NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main) { [weak self] n in
             guard let app = n.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication else { return }
             self?.predictor.appChanged(pid: app.processIdentifier, bundle: app.bundleIdentifier ?? "")

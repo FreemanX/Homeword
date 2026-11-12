@@ -72,6 +72,8 @@ struct GeneralTab: View {
     @AppStorage(Pref.minChars) var minChars = 3
     @AppStorage(Pref.position) var position = "below"
     @AppStorage(Pref.chromium) var chromium = true
+    @AppStorage(Pref.spaceAfterWord) var spaceAfterWord = true
+    @AppStorage(Pref.typedFallback) var typedFallback = true
     @StateObject private var keys = ShortcutsModel()
     @StateObject private var words = WordsModel()
 
@@ -102,6 +104,16 @@ struct GeneralTab: View {
                     Spacer()
                     Text("\(minChars) character\(minChars == 1 ? "" : "s")").monospacedDigit().foregroundStyle(.secondary)
                     Stepper("", value: $minChars, in: 1...20).labelsHidden()
+                }
+                Toggle("Add a space after a word taken with Tab", isOn: $spaceAfterWord)
+                Toggle(isOn: $typedFallback) {
+                    HStack {
+                        Text("Suggest in apps whose text can't be read")
+                        InfoTip("Some apps draw their text themselves and don't share it (Google Docs, Figma, Sublime Text, games). "
+                                + "There Homeword uses what you typed since your last click instead, kept in memory only. It starts "
+                                + "after the first word, resets on clicks, arrows, Return and shortcuts, and is off while an input "
+                                + "method is active. The pop-up shows where you last clicked.")
+                    }
                 }
                 Toggle("Support Chrome-based browsers and Electron apps", isOn: $chromium)
                 Text("Tab inserts the highlighted word, Esc dismisses. Typing the suggestion's next letters keeps it. The writing style "

@@ -7,10 +7,11 @@ enum Pref {
     static let predictions = "predictionsEnabled", proofreading = "proofreadingEnabled", minChars = "minChars"
     static let position = "popupPosition", chromium = "chromiumSupport", appStyles = "appStyles"
     static let proofreadKey = "proofreadShortcut", rewriteKey = "rewriteShortcut", stoppedByUser = "engineStoppedByUser"
+    static let spaceAfterWord = "spaceAfterAcceptedWord", typedFallback = "typedKeysFallback"
 
     static func register() {
         UserDefaults.standard.register(defaults: [
-            predictions: true, proofreading: true, minChars: 3, position: "below", chromium: true,
+            predictions: true, proofreading: true, minChars: 3, position: "below", chromium: true, spaceAfterWord: true, typedFallback: true,
             proofreadKey: Hotkey.defaultProofread.dict, rewriteKey: Hotkey.defaultRewrite.dict,
         ])
     }

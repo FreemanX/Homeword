@@ -57,17 +57,17 @@ final class Metrics {
 
 /// One shown suggestion, from the moment it appears until it is used up, replaced or dismissed.
 final class SuggestionRecord {
-    let app: String, style: String
+    let app: String, style: String, source: String              // source: "field" (read from the app) or "typed" (keys typed)
     let latency: Double, model: Double
     let words: Int, chars: Int
     var acceptedWords = 0, acceptedChars = 0, typedAlong = 0
-    init(app: String, style: String, latency: Double, model: Double, suggestion: String) {
-        self.app = app; self.style = style; self.latency = latency; self.model = model
+    init(app: String, style: String, latency: Double, model: Double, suggestion: String, source: String = "field") {
+        self.app = app; self.style = style; self.latency = latency; self.model = model; self.source = source
         words = suggestion.split(whereSeparator: \.isWhitespace).count; chars = suggestion.count
     }
     func finish(_ how: String) {
         let outcome = acceptedWords > 0 ? (acceptedChars >= chars ? "accepted_all" : "accepted_part") : typedAlong >= 2 ? "typed_along" : how
-        Metrics.shared.log("suggestion", ["app": app, "style": style, "latency_ms": Int(latency), "model_ms": Int(model), "words": words,
+        Metrics.shared.log("suggestion", ["app": app, "style": style, "source": source, "latency_ms": Int(latency), "model_ms": Int(model), "words": words,
                                           "chars": chars, "accepted_words": acceptedWords, "accepted_chars": acceptedChars,
                                           "typed_along": typedAlong, "outcome": outcome])
     }
