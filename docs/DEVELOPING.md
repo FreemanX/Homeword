@@ -25,7 +25,8 @@ ghost/                          policies (Swift) -> ./ghostd: typing prediction,
   Evaluate.swift                  scoring and per-style benchmarks (POST /bench, run.py --styles)
   Predictd.swift                  predictd client (unix socket), starts predictd
   PyCompat.swift                  text, JSON and hash helpers (the policy was first written in Python and keeps its semantics)
-  main.swift                      the HTTP server and its routes
+  main.swift                      startup: flags, the port, predictd, the accept loop; the route list
+  Routes.swift                    the routes, the predictd connection pool, the HTTP server
   Selftest.swift                  ghostd --selftest: the pure functions on JSON lines (no model), for checks
   config.json  prompt.json        policy knobs and the general prompt
   styles.json  proofread.json     the other writing styles (chat, email, work, academic, code), the proofreading prompts
@@ -131,7 +132,7 @@ that knows the text's language can send `language` with `/predict`; otherwise th
 A policy registers its own profile and calls `generate`; it shares the daemon (and the warm cache) with the ghost policy. Any
 language works: the socket protocol is one JSON object per line, and predictd's HTTP port takes the same objects as POST bodies.
 `ghost/Proofread.swift` is a complete second policy: one unpinned profile per mode, one `generate` sized to the input, clean-up of
-the answer, a word diff, and an HTTP route in `ghost/main.swift`. A new policy can live in ghostd the same way, or be its own
+the answer, a word diff, and an HTTP route in `ghost/Routes.swift`. A new policy can live in ghostd the same way, or be its own
 program in any language:
 
 ```python
@@ -200,7 +201,8 @@ within one model mode) are in AGENTS.md; scenarios and metrics are in [PERFORMAN
 
 | File | What is there |
 |---|---|
-| `main.swift` | the flags; claiming the port (one ghostd per port) and `/health`'s identity; the predictd connection pool (`withLink`: reconnect and re-register when predictd went away); prompt names (`predict-<style>`, `proofread-<mode>`); benchmark jobs; the routes (`handleGET`, `handlePOST`, listed in the header comment); the HTTP server |
+| `main.swift` | the flags; claiming the port (one ghostd per port) and `/health`'s identity; starting predictd; the idle watchdog and the accept loop; the route list (header comment) |
+| `Routes.swift` | the predictd connection pool (`withLink`: reconnect and re-register when predictd went away); prompt names (`predict-<style>`, `proofread-<mode>`); benchmark jobs; the routes (`handleGET`, `handlePOST`); the HTTP server (`serve`). Kept out of main.swift: Swift treats main.swift's functions as part of its top-level code, so calling them from the per-connection queue needs `@Sendable` all the way down |
 | `Policy.swift` | typing: text rules (unfinished word, sentence ends, repetition cut), `Speller`, `assemble`; config loading with the user's overrides; `Ghost`: styles, profiles, `request`/`finish`/`predict`, `warm` |
 | `Proofread.swift` | `Proofreader`: prompts from proofread.json, a profile per mode, one request per paragraph; the word diff (`SequenceMatcher`) |
 | `Prompts.swift` | the user's prompts, history, benchmark results and cases (files in `~/.config/homeword/`) |
@@ -226,7 +228,7 @@ Add a `case` to `Engine.handle` and answer with `conn.send([...])` including the
 
 ### Adding a ghostd route
 
-A `case` in `handleGET` or `handlePOST` (`ghost/main.swift`) answering a JSON object with `ok`; a client error is a thrown
+A `case` in `handleGET` or `handlePOST` (`ghost/Routes.swift`) answering a JSON object with `ok`; a client error is a thrown
 `ClientError` (HTTP 400 with its message). List it in the header comment of main.swift and in ARCHITECTURE.md. Clients: Homeword
 (`Services.post`/`get`), the integrations (`fetch`), the Python tools (`bench/engine.py` `http`).
 

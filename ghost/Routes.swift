@@ -1,0 +1,405 @@
+// ghostd's request handling: the pool of predictd connections, the prompt and benchmark routes, the HTTP server loop. The
+// route list is at the top of main.swift, which starts the server (options, the port, predictd) and accepts connections.
+import Foundation
+
+// MARK: predictd connections
+
+let poolLock = NSLock()
+var pool: [Link] = []
+
+func takeLink() throws -> Link {
+    poolLock.lock()
+    if let l = pool.popLast() { poolLock.unlock(); return l }
+    poolLock.unlock()
+    return try startPredictd(socketPath, noUser: noUser)
+}
+
+func giveBack(_ l: Link) { poolLock.lock(); pool.append(l); poolLock.unlock() }
+
+/// Run fn(link) with a pooled connection; reconnect once when predictd went away (idle exit: it restarts on demand).
+func withLink(_ fn: (Link) throws -> [String: Any]) -> [String: Any] {
+    var r: [String: Any] = ["ok": false, "error": "predictd unavailable"]
+    for _ in 0..<2 {
+        let ln: Link
+        do { ln = try takeLink() } catch { return ["ok": false, "error": "predictd unavailable: \(error)"] }   // cannot start predictd
+        Languages.loadIfNeeded(ln)
+        do {
+            r = try fn(ln)
+            giveBack(ln)
+            return r
+        } catch is PredictdError {
+            poolLock.lock(); pool.removeAll(); poolLock.unlock()   // the other pooled connections are dead too
+            ghost.lock.lock(); ghost.registered.removeAll(); ghost.pinned = nil; ghost.lock.unlock()
+            proof.lock.lock(); proof.registered.removeAll(); proof.lock.unlock()
+            Languages.forget()                                     // a restarted predictd may be another version
+        } catch {                                                  // a refused profile: answer, and drop the connection
+            return ["ok": false, "error": "\(error)"]
+        }
+    }
+    return r
+}
+
+// MARK: prompts: prediction per style ("predict-<style>"), proofreading per mode ("proofread-<mode>")
+
+func parse(_ name: String) throws -> (String, String) {
+    let parts = name.split(separator: "-", maxSplits: 1, omittingEmptySubsequences: false).map(String.init)
+    let kind = parts.first ?? "", key = parts.count > 1 ? parts[1] : ""
+    if kind == "predict" && ghost.styleNames().contains(key) { return (kind, key) }
+    if kind == "proofread" && Proofreader.modes.contains(key) { return (kind, key) }
+    throw ClientError("unknown prompt '\(name)'")
+}
+
+func current(_ name: String) throws -> [String: Any] {
+    let (kind, key) = try parse(name)
+    return kind == "predict" ? ghost.promptFor(key) : proof.promptFor(key)
+}
+
+func defaultOf(_ name: String) throws -> [String: Any] {
+    let (kind, key) = try parse(name)
+    return kind == "predict" ? ghost.defaultPrompt(key) : Proofreader.defaultPrompt(key)
+}
+
+/// The prediction suite for the writing languages in effect (they can change in Settings), and its fingerprint; cached per set.
+let suiteLock = NSLock()
+var suiteCache: (key: [String], cases: [[String: Any]], id: String)?
+func currentSuite() -> (cases: [[String: Any]], id: String) {
+    let langs = ghost.languages()
+    suiteLock.lock(); defer { suiteLock.unlock() }
+    if let c = suiteCache, c.key == langs { return (c.cases, c.id) }
+    let cases = suite(languages: langs), id = suiteID(languages: langs)
+    suiteCache = (langs, cases, id)
+    return (cases, id)
+}
+let proofSuiteIDs = ["fix": suiteID("fix"), "rewrite": suiteID("rewrite")]
+func suiteIDFor(_ kind: String, _ key: String) -> String? { kind == "predict" ? currentSuite().id : proofSuiteIDs[key] }
+func sizes(_ kind: String) -> (Int, Int) {
+    if kind == "predict" { let c = currentSuite().cases; return (c.count, categories(c).count) }
+    return ((loadCases()["proofread"] ?? []).count, 1)
+}
+
+/// A stored benchmark result, unless it ran on another version of the suite (a user-cases run has no suite part).
+func storedResult(_ name: String, _ prompt: [String: Any], scope: String = "all") throws -> Any {
+    let (kind, key) = try parse(name)
+    guard let r = ghost.user.result(name, prompt, scope: scope) else { return NSNull() }
+    if scope == "all" && r["suite"] as? String != suiteIDFor(kind, key) { return NSNull() }
+    return r
+}
+
+func suiteView(_ name: String) throws -> [[String: Any]] {
+    let (kind, _) = try parse(name)
+    let examples = try current(name)["examples"] as? [[String: Any]] ?? []
+    let mark = { (t: Any?, r: Any?) -> [String: Any] in
+        ["text": t ?? "", "rest": r ?? "", "skipped": overlaps(t as? String ?? "", examples)]
+    }
+    if kind == "proofread" {
+        return [["name": "proofread", "title": TITLES["proofread"]!, "cases": (loadCases()["proofread"] ?? []).map { mark($0["text"], $0["expected"]) }]]
+    }
+    let cases = currentSuite().cases
+    return categories(cases).map { k, t in
+        ["name": k, "title": t, "cases": cases.filter { $0["category"] as? String == k }.map { mark($0["text"], $0["rest"]) }]
+    }
+}
+
+func entry(_ name: String) throws -> [String: Any] {
+    let (kind, key) = try parse(name)
+    let p = try current(name), d = try defaultOf(name)
+    let custom = ghost.user.get(name) != nil
+    return ["name": name, "group": kind == "predict" ? "prediction" : "proofreading",
+            "title": kind == "predict" ? ghost.styleTitle(key) : (key == "fix" ? "Proofread" : "Rewrite"),
+            "prompt": p, "default": d, "custom": custom, "hash": promptHash(p),
+            "default_hash": promptHash(d), "result": try storedResult(name, p), "default_result": try storedResult(name, d),
+            "user_result": ghost.user.result(name, p, scope: "user") ?? NSNull(), "user_cases": ghost.user.cases(name).count,
+            "labels": kind == "predict" ? ["Typed text", "Continuation"] : ["Input", "Output"],
+            "suite_cases": sizes(kind).0, "suite_categories": sizes(kind).1,
+            "inherits": kind == "predict" && ghost.inherits(key) && !custom,
+            "note": kind == "predict" ? "{words} becomes the number of words to suggest (\(pyStr(ghost.cfg["words"])))."
+                                      : "The model gets one paragraph at a time."]
+}
+
+func catalog() throws -> [[String: Any]] {
+    try ghost.styleNames().map { try entry("predict-" + $0) } + [try entry("proofread-fix"), try entry("proofread-rewrite")]
+}
+
+func save(_ req: [String: Any]) throws -> [String: Any] {
+    var name = req["name"] as? String ?? "", req = req
+    if name == "typing" {                                     // the first version's API: instructions only, general style
+        name = "predict-general"
+        req["prompt"] = ["instructions": req["text"] as? String ?? "", "examples": try defaultOf(name)["examples"] ?? []]
+    }
+    _ = try parse(name)
+    if truthy(req["reset"]) || (req["text"] as? String == "" && req["prompt"] == nil) {
+        try ghost.user.set(name, nil)
+    } else {
+        let p = try cleanPrompt(req["prompt"])
+        try ghost.user.set(name, pyDumps(p) == pyDumps(try defaultOf(name)) ? nil : p)
+    }
+    return ["ok": true, "prompts": try catalog()]
+}
+
+func profileOf(_ name: String, _ prompt: [String: Any]) throws -> [String: Any] {
+    let (kind, key) = try parse(name)
+    return kind == "predict" ? ghost.profile(ghost.cfg, key, prompt) : proof.profile(key, prompt)
+}
+
+func tokens(_ req: [String: Any]) throws -> [String: Any] {
+    let name = req["name"] as? String ?? ""
+    let prompt = truthy(req["prompt"]) ? try cleanPrompt(req["prompt"]) : try current(name)
+    let prof = try profileOf(name, prompt)
+    return withLink { ln in
+        let ins = try ln.call(["op": "tokens", "text": prof["instructions"] ?? ""])["count"] ?? -1
+        var probe = prof
+        probe["op"] = "profile.set"; probe["name"] = "tokens-probe"; probe["pin"] = false   // the prefix exactly as sent
+        let r = try ln.call(probe)
+        _ = try ln.call(["op": "profile.drop", "name": "tokens-probe"])
+        let n = intValue(r["prefix_tokens"]) ?? -1
+        return ["ok": true, "instructions": ins, "prompt": n, "ms": n > 0 ? pyRound(Double(n) * CACHED_MS_PER_TOKEN) as Any : NSNull()]
+    }
+}
+
+// MARK: benchmark jobs
+
+let jobsLock = NSLock(), benchLock = NSLock()
+var jobs: [String: [String: Any]] = [:], jobOrder: [String] = []
+
+func updateJob(_ id: String, _ fields: [String: Any]) {
+    jobsLock.lock(); defer { jobsLock.unlock() }
+    for (k, v) in fields { jobs[id]?[k] = v }
+}
+
+/// Start a benchmark job; GET /bench?job= reports progress and the result.
+func bench(_ req: [String: Any]) throws -> [String: Any] {
+    let name = req["name"] as? String ?? ""
+    let (kind, key) = try parse(name)
+    let prompt = truthy(req["prompt"]) ? try cleanPrompt(req["prompt"]) : try current(name)
+    let scope = req["scope"] as? String == "user" ? "user" : "all"
+    let userCases = ghost.user.cases(name)
+    if scope == "user" && userCases.isEmpty { return ["ok": false, "error": "no cases of your own yet"] }
+    guard benchLock.try() else { return ["ok": false, "error": "a benchmark is already running"] }
+    let job = String(UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased().prefix(12))
+    jobsLock.lock()
+    jobs[job] = ["state": "running", "done": 0, "total": 0, "name": name, "hash": promptHash(prompt)]
+    jobOrder.append(job)
+    jobsLock.unlock()
+    let progress: (Int, Int) -> Void = { d, t in updateJob(job, ["done": d, "total": t]) }
+    DispatchQueue.global().async {
+        defer {
+            benchLock.unlock()
+            jobsLock.lock()
+            let finished = jobOrder.filter { jobs[$0]?["state"] as? String != "running" }
+            for old in finished.dropLast(20) { jobs[old] = nil; jobOrder.removeAll { $0 == old } }
+            jobsLock.unlock()
+        }
+        let res = withLink { ln in
+            let r = kind == "predict"
+                ? try benchPrompt(ghost, ln, key, prompt, userCases: userCases, scope: scope, progress: progress)
+                : try benchProofread(proof, ln, key, prompt, userCases: userCases, scope: scope, progress: progress)
+            ghost.lock.lock(); let pinned = ghost.pinned; ghost.lock.unlock()
+            if let pinned { _ = try ln.call(["op": "prewarm", "profile": pinned]) }   // give the cache back to the prompt in use
+            return r
+        }
+        if res["ok"] as? Bool == false || res["error"] != nil {
+            updateJob(job, ["state": "error", "error": res["error"] ?? "failed"])
+            return
+        }
+        do {
+            try ghost.user.saveResult(name, prompt, res)
+            updateJob(job, ["state": "done", "result": res])
+        } catch {
+            updateJob(job, ["state": "error", "error": "\(error)"])
+        }
+    }
+    return ["ok": true, "job": job]
+}
+
+/// (predictd answers, the on-device model's availability: "available" or why not; nil when predictd is down).
+func modelState() -> (Bool, Any) {
+    guard let ln = try? Link(socketPath), let r = try? ln.call(["op": "ping"], timeout: 1) else { return (false, NSNull()) }
+    return (truthy(r["ok"]), r["model"] ?? NSNull())
+}
+
+// MARK: routes
+
+/// The settings the app shows: words to suggest, the writing languages in effect and every language the model supports.
+let settingsLock = NSLock()
+
+func settings() -> [String: Any] {
+    let c = ghost.cfg
+    let english = Locale(identifier: "en")
+    return ["ok": true, "words": c["words"] ?? 5, "maxTokens": c["maxTokens"] ?? 6, "languages": ghost.languages(),
+            "languagesSet": (c["languages"] as? [String]).map { !$0.isEmpty } ?? false,
+            "supported": Languages.supported.map { ["id": $0, "name": english.localizedString(forIdentifier: $0) ?? $0, "native": Languages.nativeName($0)] }]
+}
+
+func handleGET(_ path: String, _ q: [String: String]) -> (Int, [String: Any]) {
+    do {
+        switch path {
+        case "/health":
+            let (up, availability) = modelState()
+            return (200, identity.merging(["ok": true, "port": port, "model": up, "availability": availability]) { a, _ in a })
+        case "/prompts":
+            return (200, ["ok": true, "prompts": try catalog(), "styles": ghost.styleNames().map { ["name": $0, "title": ghost.styleTitle($0)] }])
+        case "/bench":
+            jobsLock.lock(); let j = jobs[q["job"] ?? ""]; jobsLock.unlock()
+            return (200, j.map { $0.merging(["ok": true]) { a, _ in a } } ?? ["ok": false, "error": "unknown job"])
+        case "/cases":
+            let name = q["name"] ?? ""
+            _ = try parse(name)
+            return (200, ["ok": true, "name": name, "cases": ghost.user.cases(name)])
+        case "/suite":
+            let name = q["name"] ?? ""
+            return (200, ["ok": true, "name": name, "categories": try suiteView(name)])
+        case "/settings":
+            return (200, settings())
+        case "/config":
+            return (200, ["ok": true, "config": ghost.cfg])
+        case "/history":
+            let name = q["name"] ?? ""
+            let (kind, key) = try parse(name)
+            let sid = suiteIDFor(kind, key)
+            let versions = ghost.user.history(name).map { v -> [String: Any] in
+                var x = v
+                if (v["result"] as? [String: Any])?["suite"] as? String != sid { x["result"] = NSNull() }
+                return x
+            }
+            return (200, ["ok": true, "name": name, "versions": versions])
+        default:
+            return (404, ["ok": false, "error": "GET /health, /prompts, /history?name=, /cases?name= or /bench?job="])
+        }
+    } catch {
+        return (400, ["ok": false, "error": "\(error)"])
+    }
+}
+
+func handlePOST(_ path: String, _ body: Data) -> (Int, [String: Any]) {
+    guard let req = (body.isEmpty ? [:] : jsonObject(body)) as? [String: Any] else { return (400, ["ok": false, "error": "body is not JSON"]) }
+    do {
+        switch path {
+        case "/predict":
+            if let t = req["text"], !(t is String) { throw ClientError("text must be a string") }
+            return (200, withLink { ln in
+                try ghost.predict(ln, req["app"] as? String ?? "", req["text"] as? String ?? "", req["opts"] as? [String: Any],
+                                  stream: req["stream"] as? String ?? "ghost-http",
+                                  style: (req["context"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? "general",
+                                  language: (req["language"] as? String).flatMap { $0.isEmpty ? nil : $0 })
+            })
+        case "/proofread":
+            return (200, withLink { ln in try proof.run(ln, req["text"] as? String ?? "", mode: req["mode"] as? String ?? "fix") })
+        case "/warm":
+            return (200, withLink { ln in try ghost.warm(ln, (req["context"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? "general") })
+        case "/prompts":
+            return (200, try save(req))
+        case "/tokens":
+            return (200, try tokens(req))
+        case "/bench":
+            return (200, try bench(req))
+        case "/settings":
+            var save: [String: Any] = [:]
+            if req["words"] != nil {
+                guard let w = intValue(req["words"]), (1...10).contains(w) else { throw ClientError("words must be a whole number from 1 to 10") }
+                save["words"] = w
+                save["maxTokens"] = tokensForWords(w)         // {words} is in the prompts: new profiles
+            }
+            if let v = req["languages"] {                      // [] = back to the default
+                guard let list = v as? [String] else { throw ClientError("languages must be a list of languages") }
+                let ids = Languages.supported
+                var out: [String] = []
+                for l in list {
+                    let c = Languages.canonical(l)
+                    guard let m = ids.contains(c) ? c : Languages.match(l, in: ids) else {
+                        throw ClientError("the model does not support \(l); it supports \(ids.joined(separator: ", "))")
+                    }
+                    if !out.contains(m) { out.append(m) }
+                }
+                save["languages"] = out
+            }
+            if save.isEmpty { throw ClientError("nothing to set: words (1-10) or languages") }
+            settingsLock.lock(); defer { settingsLock.unlock() }    // one change at a time: each reads and writes the whole config
+            var c = ghost.cfg
+            for (k, v) in save { c[k] = v }
+            ghost.cfg = c
+            try saveUserConfig(save)
+            return (200, settings())
+        case "/cases":
+            let name = req["name"] as? String ?? ""
+            _ = try parse(name)
+            return (200, ["ok": true, "cases": try ghost.user.setCases(name, req["cases"])])
+        case "/request":
+            let style = (req["context"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? "general"
+            let (gen, ctx) = ghost.request(req["app"] as? String ?? "", req["text"] as? String ?? "", req["opts"] as? [String: Any],
+                                           style: style, keepApp: truthy(req["keep_app"]))
+            return (200, ["ok": true, "generate": gen ?? NSNull(), "profile": ghost.profile(ctx.cfg, ctx.style)])
+        default:
+            return (404, ["ok": false, "error": "POST /predict, /warm, /proofread, /prompts, /tokens, /bench, /cases, /settings or /request"])
+        }
+    } catch {
+        return (400, ["ok": false, "error": "\(error)"])
+    }
+}
+
+// MARK: HTTP
+
+func reply(_ fd: Int32, _ code: Int, _ obj: [String: Any]) {
+    let body = jsonData(obj)
+    let reason = [200: "OK", 400: "Bad Request", 404: "Not Found"][code] ?? "Error"
+    var data = Data("HTTP/1.1 \(code) \(reason)\r\nContent-Type: application/json\r\nContent-Length: \(body.count)\r\nConnection: close\r\n\r\n".utf8)
+    data.append(body)
+    data.withUnsafeBytes { p in
+        var off = 0
+        while off < p.count {
+            let n = write(fd, p.baseAddress! + off, p.count - off)
+            if n <= 0 { break }
+            off += n
+        }
+    }
+}
+
+func serve(_ fd: Int32) {
+    defer { close(fd) }
+    var buf = Data(), chunk = [UInt8](repeating: 0, count: 65536)
+    var headerEnd: Range<Data.Index>?
+    while headerEnd == nil {
+        let n = read(fd, &chunk, chunk.count)
+        if n <= 0 { return }
+        buf.append(contentsOf: chunk[0..<n])
+        headerEnd = buf.range(of: Data("\r\n\r\n".utf8))
+        if buf.count > 1 << 20 { return }
+    }
+    let head = String(decoding: buf[..<headerEnd!.lowerBound], as: UTF8.self)
+    let lines = head.components(separatedBy: "\r\n")
+    let first = lines[0].split(separator: " ")
+    guard first.count >= 2 else { return }
+    let method = String(first[0]), target = String(first[1])
+    var length = 0
+    for l in lines.dropFirst() {
+        let kv = l.split(separator: ":", maxSplits: 1)
+        if kv.count == 2 && kv[0].trimmingCharacters(in: .whitespaces).lowercased() == "content-length" {
+            length = Int(kv[1].trimmingCharacters(in: .whitespaces)) ?? 0
+        }
+    }
+    var body = Data(buf[headerEnd!.upperBound...])
+    while body.count < length {
+        let n = read(fd, &chunk, chunk.count)
+        if n <= 0 { break }
+        body.append(contentsOf: chunk[0..<n])
+    }
+    lastRequest = Date()
+    let comps = URLComponents(string: target)
+    let path = comps?.path ?? target
+    var q: [String: String] = [:]
+    for item in comps?.queryItems ?? [] where q[item.name] == nil { q[item.name] = item.value ?? "" }
+    if method == "GET" {
+        let (code, obj) = handleGET(path, q)
+        reply(fd, code, obj)
+    } else if method == "POST" && path == "/shutdown" {
+        reply(fd, 200, ["ok": true])
+        if truthy((jsonObject(body) as? [String: Any])?["predictd"]), let ln = try? Link(socketPath) {
+            _ = try? ln.call(["op": "shutdown"], timeout: 3)
+        }
+        exit(0)
+    } else if method == "POST" {
+        let (code, obj) = handlePOST(path, body)
+        reply(fd, code, obj)
+    } else {
+        reply(fd, 404, ["ok": false, "error": "GET or POST"])
+    }
+}

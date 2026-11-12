@@ -27,8 +27,9 @@ proofreading of the selection).
   `Prompts.swift` (the user's prompts, history and benchmark results, in `~/.config/homeword/`), `Language.swift` (the user's
   writing languages: detection among them, how a request names one, its spell checker), `Evaluate.swift` (scoring,
   per-style benchmarks), `Predictd.swift` (predictd client, starts it), `PyCompat.swift` (string, JSON and hash helpers),
-  `main.swift` (HTTP `127.0.0.1:47321`: `/predict`, `/warm`, `/proofread`, `/prompts`, `/history`, `/tokens`, `/bench`,
-  `/suite`, `/cases`, `/settings`, `/config`, `/request`, `/health`, `/shutdown`), `Selftest.swift` (`ghostd --selftest`: the
+  `main.swift` (startup: flags, the port, predictd; the route list in its header) and `Routes.swift` (HTTP `127.0.0.1:47321`:
+  `/predict`, `/warm`, `/proofread`, `/prompts`, `/history`, `/tokens`, `/bench`, `/suite`, `/cases`, `/settings`, `/config`,
+  `/request`, `/health`, `/shutdown`; the predictd connection pool), `Selftest.swift` (`ghostd --selftest`: the
   pure functions on JSON lines, no model), `config.json` (knobs; user overrides in `~/.config/homeword/config.json`). The policy was
   first written in Python; the Swift port gives identical answers (checked function by function and over HTTP on the whole suite).
 - `bin/pred`: CLI, a client of ghostd (Python, standard library only, like the benchmarks: developer tools, not shipped).

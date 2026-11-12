@@ -137,19 +137,11 @@ func hitTokenCap(_ t: Transcript) -> Bool {
     return walk(last, 0)
 }
 
-/// What went wrong in a generation, from the framework's typed errors (message text as a fallback).
+/// What went wrong in a generation, from the framework's typed errors (macOS 27: LanguageModelError, LanguageModelSession.Error),
+/// else the message text (an empty answer is a GeneratedContent.ParsingError saying "empty response").
 enum Failure { case guardrail, context, refusal, rateLimited, empty, other }
 func classify(_ e: Error) -> Failure {
-    if let g = e as? LanguageModelSession.GenerationError {
-        switch g {
-        case .exceededContextWindowSize: return .context
-        case .guardrailViolation: return .guardrail
-        case .decodingFailure where "\(g)".lowercased().contains("empty response"): return .empty
-        case .refusal: return .refusal
-        case .rateLimited, .concurrentRequests: return .rateLimited
-        default: return .other
-        }
-    }
+    if let s = e as? LanguageModelSession.Error, case .concurrentRequests = s { return .rateLimited }
     if let l = e as? LanguageModelError {
         switch l {
         case .contextSizeExceeded: return .context
