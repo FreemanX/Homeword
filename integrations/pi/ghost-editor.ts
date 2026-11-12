@@ -4,13 +4,13 @@
  * Replaces pi's prompt editor with a subclass that asks Homeword's engine (ghostd, the policies over HTTP, on top of predictd)
  * for a continuation of what you are typing and draws it as dim "ghost" text after the cursor.
  *
- *   Tab         accept one word of the ghost (pi's own Tab completion runs when no ghost is shown)
+ *   Tab         accept one word of the ghost (pi's own Tab completion runs when no ghost is shown or its menu is open)
  *   → / Ctrl+F  accept the whole ghost (at the end of the text, where these keys do nothing in pi)
  *   typing      a character that matches the ghost keeps the rest of it; anything else asks again
  *
  * Install: see integrations/pi/README.md. Talks to http://127.0.0.1:$GHOST_PORT (default 47321) and starts the repo's `ghostd`
- * (it starts predictd) if nothing answers. Ghost text is shown only when the cursor is at the end of the text, and not for /commands or
- * !shell lines.
+ * (it starts predictd) if nothing answers. Ghost text is shown only when the cursor is at the end of the text, and not for /commands,
+ * !shell lines, an @mention or path being typed, or while pi's completion menu is open.
  */
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
@@ -100,9 +100,16 @@ class GhostEditor extends CustomEditor {
 		return line === lines.length - 1 && col === (lines[line] ?? "").length;
 	}
 
+	/** Prompt text only: not a /command or !shell line, and not while the word at the cursor is an @mention or a path
+	 * (./, ../, ~/, /...), where pi's own Tab completes file names. */
 	private wanted(text: string): boolean {
 		const t = text.trimStart();
-		return t.trim().length >= 2 && !t.startsWith("/") && !t.startsWith("!");
+		return t.trim().length >= 2 && !t.startsWith("/") && !t.startsWith("!") && !/(^|\s)(@|\.{1,2}\/|~\/|\/)\S*$/.test(text);
+	}
+
+	/** pi's completion menu (slash commands, files) is open: Tab and the arrows are its, and no ghost is drawn. */
+	private menuOpen(): boolean {
+		return (this as any).isShowingAutocomplete?.() === true;
 	}
 
 	private clearGhost(): void {
@@ -141,7 +148,7 @@ class GhostEditor extends CustomEditor {
 	}
 
 	handleInput(data: string): void {
-		const showing = this.ghost !== "" && this.ghostFor === this.getExpandedText() && this.atEnd();
+		const showing = this.ghost !== "" && this.ghostFor === this.getExpandedText() && this.atEnd() && !this.menuOpen();
 		if (showing && matchesKey(data, "tab")) return this.accept(false);
 		if (showing && (matchesKey(data, "right") || matchesKey(data, "ctrl+f"))) return this.accept(true);
 
@@ -163,7 +170,7 @@ class GhostEditor extends CustomEditor {
 
 	render(width: number): string[] {
 		const lines = super.render(width);
-		if (!this.ghost || this.ghostFor !== this.getExpandedText() || !this.atEnd()) return lines;
+		if (!this.ghost || this.ghostFor !== this.getExpandedText() || !this.atEnd() || this.menuOpen()) return lines;
 		const i = lines.findIndex((l) => l.includes(CURSOR_MARKER));
 		if (i < 0) return lines; // editor not focused
 		const line = lines[i]!;

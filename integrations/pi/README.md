@@ -6,7 +6,7 @@ it dim after the cursor, fish-style. The extension is only UI: what to ask and w
 
 | Key | Effect |
 |---|---|
-| Tab | accept one word of the ghost (pi's own Tab completion runs when no ghost is shown) |
+| Tab | accept one word of the ghost (pi's own Tab completion runs when no ghost is shown or its menu is open) |
 | → / Ctrl+F | accept the whole ghost (only at the end of the text, where these keys do nothing in pi) |
 | typing | a character that matches the ghost keeps the rest of it; anything else asks again |
 
@@ -31,7 +31,9 @@ sequenceDiagram
     E-->>U: render: ghost dimmed in the cursor cell and the padding after it
 ```
 
-The ghost appears only with the cursor at the end of the text, and not for `/commands` or `!shell` lines. It talks to
+The ghost appears only with the cursor at the end of the text, and not for `/commands` or `!shell` lines, while the word at the
+cursor is an `@` mention or a path (`./`, `../`, `~/`, `/…`: pi's own Tab completes file names there), or while pi's completion
+menu is open (`isShowingAutocomplete()`), so Tab always completes a command or file name when pi offers one. It talks to
 `http://127.0.0.1:$GHOST_PORT` (default 47321; if you change `serverPort` in `ghost/config.json`, set `GHOST_PORT` to match) and
 starts the repo's `ghostd` (run `./build.sh` once; it starts predictd) only if nothing answers there: an engine started by
 Homeword, `pred` or another pi session is reused. Optional environment: `GHOST_PORT`, `GHOST_APP` (the app label sent to the
@@ -41,6 +43,12 @@ policy, default `coding agent prompt`), `GHOSTD` (another ghostd binary).
 
 ```sh
 pi -e <repo>/integrations/pi/ghost-editor.ts
+```
+
+Isolated, with a throwaway config folder (touches nothing in `~/.pi`; pi sets up its own sign-in there):
+
+```sh
+PI_CODING_AGENT_DIR=/tmp/pi-ghost pi -e <repo>/integrations/pi/ghost-editor.ts
 ```
 
 ## Install for every pi session
