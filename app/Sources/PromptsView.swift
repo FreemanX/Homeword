@@ -90,8 +90,10 @@ struct SuiteCategory: Identifiable {
         let cases = d["cases"] as? [[String: Any]] ?? []
         id = d["name"] as? String ?? ""
         title = PromptEntry.categoryTitle(id, d["title"] as? String ?? "")
-        left = cases.map { $0["text"] as? String ?? "" }.joined(separator: "\n")
-        right = cases.map { $0["rest"] as? String ?? "" }.joined(separator: "\n")
+        // one line per case, so left and right stay paired: line breaks inside a case (texts cut from notes) show as ⏎
+        let line = { (s: Any?) in (s as? String ?? "").replacingOccurrences(of: "\n", with: "⏎") }
+        left = cases.map { line($0["text"]) }.joined(separator: "\n")
+        right = cases.map { line($0["rest"]) }.joined(separator: "\n")
         count = cases.count
         skipped = cases.enumerated().filter { $0.element["skipped"] as? Bool == true }.map { $0.offset + 1 }
     }
