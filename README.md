@@ -172,8 +172,8 @@ Last keystroke → ghost on screen, human-like typing in tmux (Apple M4 Pro, mac
 
 predictd serves an OpenAI-compatible API: base URL `http://127.0.0.1:47320/v1`, any API key, model `apple-on-device`. Chat
 completions with streaming, tool calls (returned to the harness, OpenAI-style), JSON-schema output and the usual sampling
-parameters. Tested with pi as the harness, including tool calls. The model's context window is 8192 tokens, so keep system
-prompts small. Setup for the `openai` SDK, pi and others: [docs/OPENAI.md](docs/OPENAI.md).
+parameters. Tested with pi as the harness, including tool calls. The model's context window is 8,192 tokens on most Macs and
+4,096 on some (`bin/pred status` and the app's Engine tab show this Mac's), so keep system prompts small. Setup for the `openai` SDK, pi and others: [docs/OPENAI.md](docs/OPENAI.md).
 
 ## Documentation
 

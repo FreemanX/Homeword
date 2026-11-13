@@ -535,6 +535,7 @@ final class EngineModel: ObservableObject {
     @Published var state = Services.State.unknown
     @Published var stoppedByUser = false
     @Published var apiUp = false
+    @Published var contextWindow = 0
     @Published var ax = AX.trusted(prompt: false)
     @Published var port = String(EngineConfig.port)
     @Published var apiPort = String(EngineConfig.apiPort)
@@ -553,7 +554,10 @@ final class EngineModel: ObservableObject {
         state = s.state
         stoppedByUser = s.stoppedByUser
         ax = AX.trusted(prompt: false)
-        s.checkAPI { self.apiUp = $0 }
+        s.checkAPI { up, window in
+            self.apiUp = up
+            if window > 0 { self.contextWindow = window }
+        }
     }
 
     var color: Color {
@@ -643,7 +647,9 @@ struct EngineTab: View {
                     TextField("", text: $model.apiPort).frame(width: 80).multilineTextAlignment(.trailing).labelsHidden()
                 }
                 Text(L("Point any OpenAI-compatible app or agent at the base URL to use Apple's on-device model. Local only: other "
-                       + "machines cannot reach it. The model's context window is 8,192 tokens."))
+                       + "machines cannot reach it.")
+                     + (model.contextWindow > 0 ? "\n" + L("The model's context window on this Mac is %@ tokens.",
+                                                          model.contextWindow.formatted(.number.locale(Interface.locale))) : ""))
                     .font(.caption).foregroundStyle(.secondary)
             } header: {
                 Text(L("OpenAI-compatible API"))

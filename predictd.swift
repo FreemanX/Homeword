@@ -415,7 +415,8 @@ actor Engine {
         let id = req["id"] as? String ?? String(describing: req["id"] ?? "")
         func fail(_ e: String) { conn.send(["id": id, "ok": false, "error": e]) }
         switch req["op"] as? String ?? "generate" {
-        case "ping": conn.send(["id": id, "ok": true, "pong": true, "model": modelAvailability()])
+        case "ping": conn.send(["id": id, "ok": true, "pong": true, "model": modelAvailability(),
+                                "contextSize": SystemLanguageModel.default.contextSize])
 
         case "profile.set":
             do {

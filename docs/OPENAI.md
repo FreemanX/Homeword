@@ -48,10 +48,11 @@ print(r.choices[0].message.content)
 }
 ```
 
-The real window is 8192 tokens, but pi overestimates this model's tokens and then leaves itself no room to answer: pi 1.5.2 took a
+The real window is 8192 tokens (on the Macs that have that window; see Limits), but pi overestimates this model's tokens and then leaves itself no room to answer: pi 1.5.2 took a
 request of 6,424 real tokens (its system prompt, 6 tools and a long message) for about 10,695, and with `contextWindow: 8192` sent
 `max_completion_tokens: 1`, so the answer stopped after one token. Declaring 16384 keeps its full `maxTokens` up to about 9,000 real
-tokens, past the real limit; predictd still answers `context_length_exceeded` when a conversation really does not fit. Also set a small compaction reserve in pi's settings (`{"compaction": {"reserveTokens": 1024}}`).
+tokens, past the real limit; predictd still answers `context_length_exceeded` when a conversation really does not fit. Also set a small compaction reserve in pi's settings (`{"compaction": {"reserveTokens": 1024}}`). On a Mac with a 4,096-token window
+pi's own prompt does not fit (~4,400 tokens with two tools): use a harness with a much smaller system prompt there.
 
 **Other clients** (LangChain, LlamaIndex, Continue, aider, opencode, ...): choose their "OpenAI-compatible" provider and set the base
 URL, any key and the model id above.
@@ -135,7 +136,9 @@ guardrails returns `finish_reason: "content_filter"` with empty content. `GET /v
 
 ## Limits and performance (Apple M4 Pro, macOS 27.2)
 
-- **Context window: 8192 tokens** for everything: system prompt, tools, history and answer. Large harness prompts eat most of it
+- **Context window: 8192 or 4096 tokens, depending on the Mac** (8,192 on an Apple M4 Pro and an Apple M2, 4,096 on an Apple M1
+  Pro, with the same model on the M1 Pro and M2), for everything: system prompt, tools, history and answer. `GET /v1/models` gives
+  this Mac's as `context_window`; `bin/pred status` and `./predictd --model` show it too. Large harness prompts eat most of it
   (pi's system prompt and two tools: ~4,400 tokens). Keep system prompts small, and enable the harness's compaction.
 - **Latency is dominated by prompt length**: ~0.75 ms per prompt token even when cached, plus ~20 ms per output token. A ~4,100-token
   prompt takes ~3.1 s before the first word; with tools defined, a turn of a pi-sized prompt took 5-8 s. Short prompts answer in

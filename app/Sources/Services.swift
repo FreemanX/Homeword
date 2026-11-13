@@ -221,12 +221,13 @@ final class Services {
         }
     }
 
-    /// Is the OpenAI-compatible API answering?
-    func checkAPI(done: @escaping (Bool) -> Void) {
-        guard let url = URL(string: "http://127.0.0.1:\(EngineConfig.apiPort)/v1/models") else { return done(false) }
+    /// Is the OpenAI-compatible API answering? (yes, the model's context window on this Mac: 4096 or 8192 tokens, 0 if not given)
+    func checkAPI(done: @escaping (Bool, Int) -> Void) {
+        guard let url = URL(string: "http://127.0.0.1:\(EngineConfig.apiPort)/v1/models") else { return done(false, 0) }
         session.dataTask(with: URLRequest(url: url, timeoutInterval: 2)) { data, _, _ in
-            let ok = data.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }?["data"] != nil
-            DispatchQueue.main.async { done(ok) }
+            let models = data.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }?["data"] as? [[String: Any]]
+            let window = models?.first?["context_window"] as? Int ?? 0
+            DispatchQueue.main.async { done(models != nil, window) }
         }.resume()
     }
 

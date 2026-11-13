@@ -16,7 +16,7 @@
 // request; the first one after it is uncached.
 import Foundation
 
-let MAX_CHARS = 6000                          // instructions + examples + input must fit the 8192-token window
+let MAX_CHARS = 6000                          // instructions + examples + input must fit the smallest window (4096 tokens)
 let MAX_EXAMPLES = 12
 let HISTORY = 20
 let MAX_CASES = 200

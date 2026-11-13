@@ -20,7 +20,7 @@ proofreading of the selection).
   or conversation sessions, `generate` (plain or structured, `maxTokens`, sampling), newest-wins `stream`s, `tokens`, `spell`,
   `languages`, `stats`. Newline-delimited JSON on `/tmp/predictd-<uid>.sock`, the same over HTTP on `127.0.0.1:47320`, plus an
   OpenAI-compatible chat API there (`/v1/models`, `/v1/chat/completions`: streaming, tool calls returned to the caller, JSON schema;
-  docs/OPENAI.md). The context window is 8192 tokens.
+  docs/OPENAI.md). The context window depends on the Mac (8192 or 4096 tokens: `predictd --model`, `ping`).
 - **Policy** `ghost/` → `./ghostd` (Swift, a second binary): the typing predictor and the proofreader, and their HTTP server for
   every app. `Policy.swift` (a profile per writing style: general from `prompt.json`, the others from `styles.json`; trim,
   generate, assemble, warm), `Proofread.swift` (fix or rewrite a text, per paragraph, word diff; prompts in `proofread.json`),
@@ -109,7 +109,9 @@ Policy (ghostd, typing):
 - **Cost model** (short typing prompts, ~300 tokens): ~100 ms fixed per request, ~0.55 ms per cached input token (instructions and
   examples count), ~2 ms per uncached input token, ~16 ms per output token. Shorter prompt and answer = faster. Short instructions were
   also more accurate. Long prompts (~4k tokens, agents) cost ~0.75 ms per token even when cached and ~20 ms per output token.
-- **Context window**: 8192 tokens.
+- **Context window**: 8192 tokens on the Apple M4 Pro and Apple M2, 4096 on an Apple M1 Pro with the same model as the M2: a property
+  of the Mac, not the variant (`SystemLanguageModel.default.contextSize`). Anything long (proofreading, prompts, agent harnesses)
+  must fit 4096 or read the window at run time.
 - **No early words**: `streamResponse` snapshots and the public `SystemLanguageModel.Executor` channel both deliver a short answer in
   one piece. No stop sequences, no smaller model, guardrails at most `permissiveContentTransformations` (skips the checks). The model
   already uses a draft model (speculative decoding).
@@ -152,7 +154,7 @@ Policy (ghostd, typing):
 ## Recording results for a machine
 
 A machine is a hardware spec plus a macOS version and the on-device model it runs: chip, CPU cores, GPU cores, memory, macOS
-version and build, model variant (`./predictd --model`: "AFM 3 Core Advanced" on M4 Macs, "AFM 3 Core" on M1/M2).
+version and build, model variant (`./predictd --model`: "AFM 3 Core Advanced" on M4 Macs, "AFM 3 Core" on M1/M2) and its context window (same output).
 `python3 -I bench/machine.py` prints it, and every result file records it (`machine`). A different macOS version or build is a
 different machine (outputs can differ, see "macOS versions" in bench/RESULTS.md); a different model variant gives different
 answers to the same requests ("Model variants" there), so quality compares only within one variant. RESULTS.md keeps one result per machine and
@@ -174,8 +176,8 @@ benchmark: the best run. To measure this Mac and record it:
 3. **Pick the best valid run per benchmark**: steady and typing, the lowest p50 (key → ghost for typing) with 0 cache misses;
    styles, the lowest overall p50 (both modes are valid but give different quality: say which mode in the text).
    `python3 -I bench/compare.py a.json b.json` compares two runs and warns when the modes differ.
-4. **Compare with bench/RESULTS.md.** Find the machine in the Machines table (all six fields equal).
-   - Not there: add a Machines row (CPU as "12 cores (8P + 4E)", GPU, memory, macOS with build, model variant) and a row in each
+4. **Compare with bench/RESULTS.md.** Find the machine in the Machines table (all seven fields equal).
+   - Not there: add a Machines row (CPU as "12 cores (8P + 4E)", GPU, memory, macOS with build, model variant, context window) and a row in each
      benchmark table.
    - There: replace a benchmark's row and baseline file only if the new run is better (lower p50 at equal quality; for styles, the
      same mode as the recorded one, or a lower p50). Otherwise keep the recorded one.

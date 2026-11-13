@@ -98,7 +98,7 @@ greedy, `top_p`/`seed` → `topP`/`seed`, `response_format` → `schema`, `tool_
 | `serverPort`, `serverIdleExitSec` | 47321, 1800 | ghostd's HTTP port and idle exit | |
 | `repeatNgram`, `repeatWindow` | 3, 60 | never complete a run of `repeatNgram` words already in the last `repeatWindow` words: the suggestion is cut before it (nothing shown: `suppressed: repetition`); 0 = off | stops the model echoing recent phrases, which loops when accepted again and again; also cuts an intended repeat |
 | `userPrompts` | `~/.config/homeword/prompts.json` | the user's versions of the prompts (instructions and examples, typing per style and proofreading), edited in the Mac app or by `POST /prompts` | outside the repo; a changed prompt is a new profile, so the next request is uncached |
-| `proofreadMaxInputTokens` | 2500 | the longest paragraph `/proofread` accepts (estimated tokens); a text is proofread one paragraph per request | the window is 8192: prefix + input + an answer of about the same length |
+| `proofreadMaxInputTokens` | 2500 | the longest paragraph `/proofread` accepts (estimated tokens); a text is proofread one paragraph per request | also capped to fit this Mac's window (4096 or 8192 tokens, from predictd): prefix + input + an answer of up to 1.6 times the input; with 4096 the cap is about 1,450 |
 | `proofreadGuardrails` | permissive | the proofreading profiles' guardrails | `default` refuses more texts and is ~100 ms slower |
 
 The proofreading prompts (instructions and examples per mode) are in `ghost/proofread.json`. Every prompt (each writing

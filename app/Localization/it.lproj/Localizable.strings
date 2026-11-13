@@ -227,7 +227,8 @@
 "Model" = "Modello";
 "API key" = "Chiave API";
 "any text" = "qualsiasi testo";
-"Point any OpenAI-compatible app or agent at the base URL to use Apple's on-device model. Local only: other machines cannot reach it. The model's context window is 8,192 tokens." = "Indica l’URL di base a qualsiasi app o agente compatibile con OpenAI per usare il modello on-device di Apple. Solo in locale: gli altri computer non possono raggiungerlo. La finestra di contesto del modello è di 8.192 token.";
+"Point any OpenAI-compatible app or agent at the base URL to use Apple's on-device model. Local only: other machines cannot reach it." = "Indica l’URL di base a qualsiasi app o agente compatibile con OpenAI per usare il modello on-device di Apple. Solo in locale: gli altri computer non possono raggiungerlo.";
+"The model's context window on this Mac is %@ tokens." = "Su questo Mac la finestra di contesto del modello è di %@ token.";
 "OpenAI-compatible API" = "API compatibile con OpenAI";
 "Ports must be different numbers between 1024 and 65535." = "Le porte devono essere numeri diversi compresi tra 1024 e 65535.";
 "Apply and Restart" = "Applica e riavvia";

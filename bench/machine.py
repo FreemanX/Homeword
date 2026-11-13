@@ -22,16 +22,18 @@ def machine_info():
         "gpu_cores": int(gpu.group(1)) if gpu else None,
         "ram_gb": round(int(mem) / 2**30) if mem.isdigit() else None,
         "macos": f"{platform.mac_ver()[0]} ({_run('sw_vers', '-buildVersion')})",
-        "model": model_variant(),
+        **model_info(),
     }
 
 
-def model_variant():
-    """The system model's variant ("AFM 3 Core Advanced"), from `predictd --model`; None before ./build.sh."""
+def model_info():
+    """The system model's variant ("AFM 3 Core Advanced") and context window on this Mac (4096 or 8192 tokens, even within one
+    variant), from `predictd --model`; None before ./build.sh."""
     try:
-        return json.loads(_run(PREDICTD, "--model")).get("variant")
+        m = json.loads(_run(PREDICTD, "--model"))
     except ValueError:
-        return None
+        m = {}
+    return {"model": m.get("variant"), "context": m.get("contextSize")}
 
 
 def model_users(mine=()):
@@ -49,7 +51,7 @@ def model_users(mine=()):
 
 def describe(m):
     return (f"{m['chip']}, {m['cpu_cores']} CPU, {m['gpu_cores']}-core GPU, {m['ram_gb']} GB RAM, macOS {m['macos']}, "
-            f"model {m.get('model') or 'unknown'}")
+            f"model {m.get('model') or 'unknown'}, context {m.get('context') or 'unknown'} tokens")
 
 
 if __name__ == "__main__":

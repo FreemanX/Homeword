@@ -227,7 +227,8 @@
 "Model" = "Mô hình";
 "API key" = "Khóa API";
 "any text" = "văn bản bất kỳ";
-"Point any OpenAI-compatible app or agent at the base URL to use Apple's on-device model. Local only: other machines cannot reach it. The model's context window is 8,192 tokens." = "Trỏ bất kỳ ứng dụng hoặc tác nhân nào tương thích OpenAI tới URL cơ sở để dùng mô hình trên thiết bị của Apple. Chỉ cục bộ: các máy khác không thể truy cập. Cửa sổ ngữ cảnh của mô hình là 8.192 token.";
+"Point any OpenAI-compatible app or agent at the base URL to use Apple's on-device model. Local only: other machines cannot reach it." = "Trỏ bất kỳ ứng dụng hoặc tác nhân nào tương thích OpenAI tới URL cơ sở để dùng mô hình trên thiết bị của Apple. Chỉ cục bộ: các máy khác không thể truy cập.";
+"The model's context window on this Mac is %@ tokens." = "Trên máy Mac này, cửa sổ ngữ cảnh của mô hình là %@ token.";
 "OpenAI-compatible API" = "API tương thích OpenAI";
 "Ports must be different numbers between 1024 and 65535." = "Các cổng phải là các số khác nhau trong khoảng 1024 đến 65535.";
 "Apply and Restart" = "Áp dụng và khởi động lại";

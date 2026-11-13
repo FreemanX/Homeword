@@ -8,13 +8,15 @@ measured on; results show the best run per machine.
 | Measurement | Apple M4 Pro, macOS 27.2 | Apple M4 Max, macOS 27.0.1 | Apple M1 Pro, macOS 27.2 | Apple M2, macOS 27.2.1 |
 |---|---|---|---|---|
 | Model (`predictd --model`) | AFM 3 Core Advanced | AFM 3 Core Advanced | AFM 3 Core | AFM 3 Core |
+| Context window (`predictd --model`) | 8,192 tokens | not checked | 4,096 tokens | 8,192 tokens |
 | Steady benchmark, p50 / p90 (`bench/run.py`) | 329 / 426 ms | 295 / 408 ms | 517 / 634 ms | 286 / 357 ms |
 | Typing simulation, key → ghost p50 / p90 (`bench/human_pty.py`) | 259 / 284 ms | 258 / 291 ms | 354 / 416 ms | 256 / 412 ms |
 | pi extension, last keystroke → ghost on screen p50 (`bench/integration_latency.py`) | 117 ms | not measured | not measured | not measured |
 | Claude Code mod, last keystroke → ghost on screen p50 | 157 ms | not measured | not measured | not measured |
 
 The M4 Macs and the M1/M2 Macs run different versions of the model (bench/RESULTS.md, "Model variants"), so latency across those
-columns compares a Mac with its own model, and quality numbers compare only within one model. The rows measure different things. The steady benchmark sends unrelated texts, so only the prompt prefix is cached. While typing,
+columns compares a Mac with its own model, and quality numbers compare only within one model. The context window depends on the Mac,
+not only on the model; the typing prompts (~300 tokens) fit either. The rows measure different things. The steady benchmark sends unrelated texts, so only the prompt prefix is cached. While typing,
 the previous keystroke's text is cached too. In the integration runs, the ghost from an earlier keystroke often still fits and is
 shown again without a new request (follow-the-ghost); a fresh model call never takes under ~250 ms.
 

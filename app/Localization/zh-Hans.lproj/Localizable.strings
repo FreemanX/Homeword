@@ -227,7 +227,8 @@
 "Model" = "模型";
 "API key" = "API 密钥";
 "any text" = "任意文本";
-"Point any OpenAI-compatible app or agent at the base URL to use Apple's on-device model. Local only: other machines cannot reach it. The model's context window is 8,192 tokens." = "将任何兼容 OpenAI 的 App 或代理指向此基础 URL，即可使用 Apple 的设备端模型。仅限本地：其他电脑无法访问。模型的上下文窗口为 8,192 个 token。";
+"Point any OpenAI-compatible app or agent at the base URL to use Apple's on-device model. Local only: other machines cannot reach it." = "将任何兼容 OpenAI 的 App 或代理指向此基础 URL，即可使用 Apple 的设备端模型。仅限本地：其他电脑无法访问。";
+"The model's context window on this Mac is %@ tokens." = "此 Mac 上模型的上下文窗口为 %@ 个 token。";
 "OpenAI-compatible API" = "兼容 OpenAI 的 API";
 "Ports must be different numbers between 1024 and 65535." = "端口必须是 1024 到 65535 之间的不同数字。";
 "Apply and Restart" = "应用并重新启动";

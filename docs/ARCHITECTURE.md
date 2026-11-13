@@ -138,7 +138,8 @@ Measured facts that shape the design (Apple M4 Pro, macOS 27.2):
 - The on-device model keeps **one prefix KV cache for the whole system**: only the session that prewarmed or generated last keeps
   it. Any other session, in any process, evicts it, and it expires after ~5-6 s idle.
 - Cost of a short request (~300 tokens): ~100 ms fixed, ~0.55 ms per cached input token, ~2 ms per uncached input token, ~16 ms per
-  output token. Long prompts (~4k tokens) cost ~0.75 ms per token even when cached. The context window is 8192 tokens.
+  output token. Long prompts (~4k tokens) cost ~0.75 ms per token even when cached. The context window depends on the Mac: 8192 tokens
+  on most, 4096 on some (an Apple M1 Pro, with the same model as an Apple M2 that has 8192).
 - No token streaming for short answers, no stop sequences; cancelling a running generation is free.
 
 So a **profile** (instructions + example turns) becomes a session whose transcript is the cached prefix, and every request on the
@@ -188,7 +189,8 @@ request may carry an `id`, echoed in its answer.
 | `languages` | | `model`: the model's languages (`SystemLanguageModel.supportedLanguages`, e.g. `en-Latn-US`), `spell`: the spell checker's |
 | `stats` | | counters, `profiles`, `pinned`, `warm`, `config`, `model` (`variant`, `contextSize`, `availability`) |
 | `reload` | `config: {...}` | re-reads predictd.json and the user's overrides, applies `config` on top |
-| `ping`, `shutdown` | | |
+| `ping` | | `model` (availability), `contextSize` |
+| `shutdown` | | |
 
 Errors: `{"ok":false,"error":...}` with `cancelled`, `unknown_profile` (register it, then retry: a restarted daemon has none),
 `guardrail`, `context_length_exceeded`, or a message (`keep needs a named session`, `profile X has no schema`, `unknown op X`, ...).
@@ -404,7 +406,7 @@ the total time stays the same.
 
 | Step | What happens |
 |---|---|
-| 1 check | empty text answers unchanged; a paragraph over `proofreadMaxInputTokens` (estimated) is refused |
+| 1 check | empty text answers unchanged; a paragraph over `proofreadMaxInputTokens` (estimated), or longer than fits the model's window with its answer, is refused |
 | 2 ask | per paragraph: `generate` on the mode's profile with the paragraph as the prompt, greedy, `maxTokens` ≈ 1.6 × its tokens + 40 |
 | 3 clean | drop a preamble ("Here is the corrected text:") and quotes the model added; keep the original whitespace around each paragraph |
 | 4 check | warn when a paragraph comes back much shorter (under 80% for fix, 40% for rewrite) or was cut by the token cap |

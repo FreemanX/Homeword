@@ -141,6 +141,8 @@ final class Proofreader {
     let cfg: () -> [String: Any]                             // the typing policy's config (shared with /settings)
     let user: UserPrompts
     var registered = Set<String>()
+    var prefixTokens: [String: Int] = [:]                    // per registered profile, from predictd
+    var contextSize: Int?                                    // the model's window on this Mac (4096 or 8192), from predictd
     let lock = NSLock()
     static let prompts: [String: Any] = readJSON(ROOT + "/ghost/proofread.json") as? [String: Any] ?? [:]
     static let modes = ["fix", "rewrite"]
@@ -182,8 +184,22 @@ final class Proofreader {
             let r = try link.call(prof)
             if !truthy(r["ok"]) { throw PolicyError(kind: "RuntimeError", message: "profile.set failed: \(r["error"] ?? "None")") }
             registered.insert(name)
+            prefixTokens[name] = intValue(r["prefix_tokens"])
         }
         return name
+    }
+
+    /// The longest paragraph (estimated tokens) a request takes: the knob, within the model's window on this Mac, which must hold
+    /// the prefix, the paragraph and an answer of up to 1.6 times its length + 40 tokens.
+    func inputLimit(_ link: Link, _ name: String) -> Int {
+        let knob = intValue(cfg()["proofreadMaxInputTokens"]) ?? 2500
+        lock.lock(); var ctx = contextSize; let prefix = max(prefixTokens[name] ?? 0, 0); lock.unlock()
+        if ctx == nil, let r = try? link.call(["op": "ping"], timeout: 2), let c = intValue(r["contextSize"]) {
+            ctx = c
+            lock.lock(); contextSize = c; lock.unlock()
+        }
+        guard let ctx else { return knob }
+        return min(knob, max(0, Int(Double(ctx - prefix - 40) / 2.6)))
     }
 
     func run(_ link: Link, _ text: String, mode: String = "fix", stream: String = "proofread", prompt: [String: Any]? = nil) throws -> [String: Any] {
@@ -193,10 +209,10 @@ final class Proofreader {
         // one paragraph per request: the model then never sees (and drops) repeated passages, never hits the token cap on a long
         // text, and each request stays small; the profile's prefix is cached across them
         let parts = splitParagraphs(text)
-        let limit = intValue(cfg()["proofreadMaxInputTokens"]) ?? 2500
+        let name = try ensureProfile(link, mode, prompt: prompt)
+        let limit = inputLimit(link, name)
         let longest = stride(from: 0, to: parts.count, by: 2).map { estTokens(pyStrip(parts[$0])) }.max() ?? 0
         if longest > Double(limit) { return ["ok": false, "error": "a paragraph is too long (about \(Int(longest)) tokens, at most \(limit))"] }
-        let name = try ensureProfile(link, mode, prompt: prompt)
         var out: [String] = [], modelMs = 0.0, truncated = false, warnings: [String] = []
         var tokens: [String: Double] = ["in": 0, "cached": 0, "out": 0]
         for (i, part) in parts.enumerated() {

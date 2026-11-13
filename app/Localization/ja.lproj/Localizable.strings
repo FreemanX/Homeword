@@ -227,7 +227,8 @@
 "Model" = "モデル";
 "API key" = "APIキー";
 "any text" = "任意の文字列";
-"Point any OpenAI-compatible app or agent at the base URL to use Apple's on-device model. Local only: other machines cannot reach it. The model's context window is 8,192 tokens." = "OpenAI互換のAppやエージェントにこのベースURLを指定すると、Appleのオンデバイスモデルを使用できます。ローカル専用のため、ほかのコンピュータからはアクセスできません。モデルのコンテキストウインドウは8,192トークンです。";
+"Point any OpenAI-compatible app or agent at the base URL to use Apple's on-device model. Local only: other machines cannot reach it." = "OpenAI互換のAppやエージェントにこのベースURLを指定すると、Appleのオンデバイスモデルを使用できます。ローカル専用のため、ほかのコンピュータからはアクセスできません。";
+"The model's context window on this Mac is %@ tokens." = "このMacでのモデルのコンテキストウインドウは%@トークンです。";
 "OpenAI-compatible API" = "OpenAI互換API";
 "Ports must be different numbers between 1024 and 65535." = "ポートには1024から65535までの異なる番号を指定してください。";
 "Apply and Restart" = "適用して再起動";

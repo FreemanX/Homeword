@@ -7,16 +7,17 @@ between machines with the same model.
 
 ## Machines
 
-| Machine | CPU | GPU | Memory | macOS | Model |
-|---|---|---|---|---|---|
-| Apple M4 Pro | 12 cores (8P + 4E) | 16-core | 48 GB | 27.2 (26B123) | AFM 3 Core Advanced |
-| Apple M4 Max | 14 cores (10P + 4E) | 32-core | 36 GB | 27.0.1 (26A434) | AFM 3 Core Advanced * |
-| Apple M1 Pro | 8 cores (6P + 2E) | 14-core | 16 GB | 27.2 (26B123) | AFM 3 Core * |
-| Apple M2 | 8 cores (4P + 4E) | 8-core | 16 GB | 27.2.1 (26B131) | AFM 3 Core |
+| Machine | CPU | GPU | Memory | macOS | Model | Context |
+|---|---|---|---|---|---|---|
+| Apple M4 Pro | 12 cores (8P + 4E) | 16-core | 48 GB | 27.2 (26B123) | AFM 3 Core Advanced | 8,192 |
+| Apple M4 Max | 14 cores (10P + 4E) | 32-core | 36 GB | 27.0.1 (26A434) | AFM 3 Core Advanced * | not checked |
+| Apple M1 Pro | 8 cores (6P + 2E) | 14-core | 16 GB | 27.2 (26B123) | AFM 3 Core | 4,096 |
+| Apple M2 | 8 cores (4P + 4E) | 8-core | 16 GB | 27.2.1 (26B131) | AFM 3 Core | 8,192 |
 
-\* Inferred from the outputs: the run gives the same 80 steady answers as the machine of its group whose model is named
-(Apple M4 Pro, Apple M2, checked with `./predictd --model`). Both models have a context window of 8,192 tokens. Result files record
-the model (`machine.model`) from 2026-11-13 on.
+Model and Context (the context window in tokens) as `./predictd --model` reports them. \* Inferred from the outputs: the run gives
+the same 80 steady answers as the Apple M4 Pro. The window differs between Macs even with the same model (Apple M1 Pro and Apple
+M2); every benchmark prompt here fits in 4,096 tokens. Result files record the model (`machine.model`) and the window
+(`machine.context`) from 2026-11-13 on.
 
 All runs: on AC power, nothing else using the model, the typing policy as committed (`ghost/config.json`: 6 examples, short
 instructions, `textBudget` 100, `maxTokens` 6, greedy, plain output).
@@ -156,7 +157,8 @@ Run Default next to your run).
   differently: the M4 Pro and M4 Max give the same 80 steady answers, the M1 Pro and M2 the same 80, and across the two pairs only
   7 of 80 agree (Core's answers are shorter, so more suggestions are shown, 99% against 96%, and word overlap is higher). Latency
   differs too: the lighter Core model makes the 8-core-GPU M2 faster than the M4 Pro. Compare quality only within a variant, and
-  latency across variants only as "this Mac with its model".
+  latency across variants only as "this Mac with its model". The context window is a property of the Mac, not of the variant:
+  4,096 tokens on the Apple M1 Pro, 8,192 on the Apple M2 with the same Core model.
 
   | Variant | Machines | Steady fingerprint |
   |---|---|---|
