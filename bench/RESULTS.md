@@ -12,10 +12,11 @@ between machines with the same model.
 | Apple M4 Pro | 12 cores (8P + 4E) | 16-core | 48 GB | 27.2 (26B123) | AFM 3 Core Advanced |
 | Apple M4 Max | 14 cores (10P + 4E) | 32-core | 36 GB | 27.0.1 (26A434) | AFM 3 Core Advanced * |
 | Apple M1 Pro | 8 cores (6P + 2E) | 14-core | 16 GB | 27.2 (26B123) | AFM 3 Core * |
-| Apple M2 | 8 cores (4P + 4E) | 8-core | 16 GB | 27.2.1 (26B131) | AFM 3 Core * |
+| Apple M2 | 8 cores (4P + 4E) | 8-core | 16 GB | 27.2.1 (26B131) | AFM 3 Core |
 
-\* Inferred from the outputs: the run gives the same 80 steady answers as the machines whose model is named. `./predictd --model`
-prints a machine's model, and result files record it (`machine.model`) from 2026-11-13 on.
+\* Inferred from the outputs: the run gives the same 80 steady answers as the machine of its group whose model is named
+(Apple M4 Pro, Apple M2, checked with `./predictd --model`). Both models have a context window of 8,192 tokens. Result files record
+the model (`machine.model`) from 2026-11-13 on.
 
 All runs: on AC power, nothing else using the model, the typing policy as committed (`ghost/config.json`: 6 examples, short
 instructions, `textBudget` 100, `maxTokens` 6, greedy, plain output).
