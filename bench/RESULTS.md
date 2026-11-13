@@ -10,13 +10,13 @@ between machines with the same model.
 | Machine | CPU | GPU | Memory | macOS | Model | Context |
 |---|---|---|---|---|---|---|
 | Apple M4 Pro | 12 cores (8P + 4E) | 16-core | 48 GB | 27.2 (26B123) | AFM 3 Core Advanced | 8,192 |
-| Apple M4 Max | 14 cores (10P + 4E) | 32-core | 36 GB | 27.0.1 (26A434) | AFM 3 Core Advanced * | not checked |
+| Apple M4 Max | 14 cores (10P + 4E) | 32-core | 36 GB | 27.0.1 (26A434) | AFM 3 Core Advanced * | 8,192 * |
 | Apple M1 Pro | 8 cores (6P + 2E) | 14-core | 16 GB | 27.2 (26B123) | AFM 3 Core | 4,096 |
 | Apple M1 Pro | 8 cores (6P + 2E) | 14-core | 16 GB | 27.2.1 (26B131) | AFM 3 Core | 4,096 |
 | Apple M2 | 8 cores (4P + 4E) | 8-core | 16 GB | 27.2.1 (26B131) | AFM 3 Core | 8,192 |
 
-Model and Context (the context window in tokens) as `./predictd --model` reports them. \* Inferred from the outputs: the run gives
-the same 80 steady answers as the Apple M4 Pro. The window depends on the chip: the Apple M1 Pro and Apple M2 on macOS 27.2.1
+Model and Context (the context window in tokens) as `./predictd --model` reports them. \* Checked with `./predictd --model` after the
+benchmark runs, not recorded in their files; the runs give the same 80 steady answers as the Apple M4 Pro. The window depends on the chip: the Apple M1 Pro and Apple M2 on macOS 27.2.1
 (26B131) run the same model and differ; every benchmark prompt here fits in 4,096 tokens. Result files record the model (`machine.model`) and the window
 (`machine.context`) from 2026-11-13 on.
 
