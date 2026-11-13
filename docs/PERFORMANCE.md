@@ -15,8 +15,8 @@ measured on; results show the best run per machine.
 | Claude Code mod, last keystroke → ghost on screen p50 | 157 ms | not measured | not measured | not measured |
 
 The M4 Macs and the M1/M2 Macs run different versions of the model (bench/RESULTS.md, "Model variants"), so latency across those
-columns compares a Mac with its own model, and quality numbers compare only within one model. The context window depends on the Mac,
-not only on the model; the typing prompts (~300 tokens) fit either. The rows measure different things. The steady benchmark sends unrelated texts, so only the prompt prefix is cached. While typing,
+columns compares a Mac with its own model, and quality numbers compare only within one model. The context window depends on the chip,
+not on the model (bench/RESULTS.md, Machines); the typing prompts (~300 tokens) fit either. The rows measure different things. The steady benchmark sends unrelated texts, so only the prompt prefix is cached. While typing,
 the previous keystroke's text is cached too. In the integration runs, the ghost from an earlier keystroke often still fits and is
 shown again without a new request (follow-the-ghost); a fresh model call never takes under ~250 ms.
 

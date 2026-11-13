@@ -205,7 +205,8 @@ Details and raw data: [bench/RESULTS.md](bench/RESULTS.md).
 
 ## Known limits
 
-- **English only** so far: the prompts, examples and spell check.
+- **Other languages are well below English** in quality (the prompts and examples are English; 10 test cases per language), and
+  Japanese and Chinese have no spell check.
 - **One warm prompt cache for the whole system**: switching between prompts (another writing style, proofreading, an agent on the
   OpenAI API) makes the next request ~70 ms slower once, and another app using Apple Intelligence can evict the cache.
 - **Slower Macs show fewer suggestions while typing fast**: on an Apple M1 Pro a model call (~355 ms) is longer than the gap

@@ -210,6 +210,9 @@ completions:
 For the same reason the typing-simulation fingerprints differ between the two macOS versions: a longer ghost changes the text of
 later requests. The first 8 raw outputs of the typing-only runs match.
 
+macOS 27.2 → 27.2.1 (Apple M1 Pro) changed nothing measurable: the same 80 steady completions and suggestions, the same writing
+style and proofreading scores, latency within a few percent, the same context window (4,096 tokens).
+
 ## Latency history
 
 How key → ghost went from 582 ms to ~250 ms: [docs/PERFORMANCE.md](../docs/PERFORMANCE.md#latency-history).

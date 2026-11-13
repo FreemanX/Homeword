@@ -138,8 +138,8 @@ Measured facts that shape the design (Apple M4 Pro, macOS 27.2):
 - The on-device model keeps **one prefix KV cache for the whole system**: only the session that prewarmed or generated last keeps
   it. Any other session, in any process, evicts it, and it expires after ~5-6 s idle.
 - Cost of a short request (~300 tokens): ~100 ms fixed, ~0.55 ms per cached input token, ~2 ms per uncached input token, ~16 ms per
-  output token. Long prompts (~4k tokens) cost ~0.75 ms per token even when cached. The context window depends on the Mac: 8192 tokens
-  on most, 4096 on some (an Apple M1 Pro, with the same model as an Apple M2 that has 8192).
+  output token. Long prompts (~4k tokens) cost ~0.75 ms per token even when cached. The context window depends on the chip: 8192 tokens
+  on most, 4096 on some (an Apple M1 Pro, with the same model and macOS build as an Apple M2 that has 8192).
 - No token streaming for short answers, no stop sequences; cancelling a running generation is free.
 
 So a **profile** (instructions + example turns) becomes a session whose transcript is the cached prefix, and every request on the
@@ -331,7 +331,7 @@ numbers, and the rule is off for `lenientApps` (terminal, code), where `.` and `
 
 `ghost/Language.swift`. The model supports 24 locales in 16 languages (predictd's `languages` op). The
 user lists the ones they write in (`languages`, Homeword's General tab; default: the system's language when the model has it, else
-English; benchmarks: English only). Per request:
+English; benchmarks: English, other languages with `run.py --languages`). Per request:
 
 - **Detect.** One language: that one. Several: Apple's `NLLanguageRecognizer` on the last 400 characters, constrained to the user's
   languages; when the text is too short (under 8 letters, a CJK character counting 3) or the recognizer is unsure (p < 0.5), the
