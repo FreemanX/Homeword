@@ -48,9 +48,10 @@ print(r.choices[0].message.content)
 }
 ```
 
-The real window is 8192 tokens, but pi estimates this model's tokens at about twice the real count and then leaves itself no room to
-answer (it sent `max_completion_tokens: 1`). Declaring 16384 fixes that; predictd still answers `context_length_exceeded` when a
-conversation really does not fit. Also set a small compaction reserve in pi's settings (`{"compaction": {"reserveTokens": 1024}}`).
+The real window is 8192 tokens, but pi overestimates this model's tokens and then leaves itself no room to answer: pi 1.5.2 took a
+request of 6,424 real tokens (its system prompt, 6 tools and a long message) for about 10,695, and with `contextWindow: 8192` sent
+`max_completion_tokens: 1`, so the answer stopped after one token. Declaring 16384 keeps its full `maxTokens` up to about 9,000 real
+tokens, past the real limit; predictd still answers `context_length_exceeded` when a conversation really does not fit. Also set a small compaction reserve in pi's settings (`{"compaction": {"reserveTokens": 1024}}`).
 
 **Other clients** (LangChain, LlamaIndex, Continue, aider, opencode, ...): choose their "OpenAI-compatible" provider and set the base
 URL, any key and the model id above.
