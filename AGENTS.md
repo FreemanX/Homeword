@@ -109,8 +109,8 @@ Policy (ghostd, typing):
 - **Cost model** (short typing prompts, ~300 tokens): ~100 ms fixed per request, ~0.55 ms per cached input token (instructions and
   examples count), ~2 ms per uncached input token, ~16 ms per output token. Shorter prompt and answer = faster. Short instructions were
   also more accurate. Long prompts (~4k tokens, agents) cost ~0.75 ms per token even when cached and ~20 ms per output token.
-- **Context window**: 8192 tokens on the Apple M4 Pro and Apple M2, 4096 on an Apple M1 Pro with the same model as the M2: a property
-  of the Mac, not the variant (`SystemLanguageModel.default.contextSize`). Anything long (proofreading, prompts, agent harnesses)
+- **Context window**: 8192 tokens on the Apple M4 Pro and Apple M2, 4096 on an Apple M1 Pro with the same model and macOS build
+  (27.2.1, 26B131) as the M2: it depends on the chip, not the variant or OS (`SystemLanguageModel.default.contextSize`). Anything long (proofreading, prompts, agent harnesses)
   must fit 4096 or read the window at run time.
 - **No early words**: `streamResponse` snapshots and the public `SystemLanguageModel.Executor` channel both deliver a short answer in
   one piece. No stop sequences, no smaller model, guardrails at most `permissiveContentTransformations` (skips the checks). The model

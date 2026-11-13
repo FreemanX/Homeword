@@ -16,8 +16,8 @@ between machines with the same model.
 | Apple M2 | 8 cores (4P + 4E) | 8-core | 16 GB | 27.2.1 (26B131) | AFM 3 Core | 8,192 |
 
 Model and Context (the context window in tokens) as `./predictd --model` reports them. \* Inferred from the outputs: the run gives
-the same 80 steady answers as the Apple M4 Pro. The window differs between Macs even with the same model (Apple M1 Pro and Apple
-M2); every benchmark prompt here fits in 4,096 tokens. Result files record the model (`machine.model`) and the window
+the same 80 steady answers as the Apple M4 Pro. The window depends on the chip: the Apple M1 Pro and Apple M2 on macOS 27.2.1
+(26B131) run the same model and differ; every benchmark prompt here fits in 4,096 tokens. Result files record the model (`machine.model`) and the window
 (`machine.context`) from 2026-11-13 on.
 
 All runs: on AC power, nothing else using the model, the typing policy as committed (`ghost/config.json`: 6 examples, short
@@ -34,7 +34,7 @@ Latency is client-side end to end. The two Apple M4 runs (AFM 3 Core Advanced) a
 | Apple M4 Pro | 27.2 | 2026-11-07 (`b245066`) | 329 ms | 426 ms | 477 ms | 302 ms | [steady](baselines/2026-11-07-steady.json) |
 | Apple M4 Max | 27.0.1 | 2026-11-09 (`1511ffb`) | 295 ms | 408 ms | 446 ms | 278 ms | [steady](baselines/2026-11-09-steady-m4max.json) |
 | Apple M1 Pro | 27.2 | 2026-11-11 (`5d4d904`) | 517 ms | 634 ms | 684 ms | 468 ms | [steady](baselines/2026-11-11-steady-m1pro.json) |
-| Apple M1 Pro | 27.2.1 | 2026-11-13 (`3d603cf`) | 500 ms | 632 ms | 715 ms | 474 ms | [steady](baselines/2026-11-13-steady-m1pro.json) |
+| Apple M1 Pro | 27.2.1 | 2026-11-13 (`62798c6`) | 500 ms | 632 ms | 715 ms | 474 ms | [steady](baselines/2026-11-13-steady-m1pro.json) |
 | Apple M2 | 27.2.1 | 2026-11-12 (`cd24648`) | 286 ms | 357 ms | 425 ms | 256 ms | [steady](baselines/2026-11-12-steady-m2.json) |
 
 | Machine | macOS | Suggestion shown | First word right | Mid-word completed exactly | Leading words right | Word overlap | Space after a finished word | Cache misses |
@@ -130,7 +130,7 @@ Cases per category: chat 26, email 25, work 25, academic 25, code 25, general 49
 Pro: two runs, identical, in the fast mode. Apple M1 Pro (commit `5d4d904`): two runs, identical in quality; the outputs match
 neither Apple M4 Pro mode, so the mode is not named. Apple M2 (commit `cd24648`): four runs, identical quality, the same category
 scores as the Apple M1 Pro. General-prompt p50 was 261, 234, 217 and 211 ms; the recorded run is the lowest. Apple M1 Pro,
-macOS 27.2.1 (commit `3d603cf`): two runs, identical quality, the same scores as on macOS 27.2; general-prompt p50 328 and 327 ms.
+macOS 27.2.1 (commit `62798c6`): two runs, identical quality, the same scores as on macOS 27.2; general-prompt p50 328 and 327 ms.
 
 | Machine | macOS | Prompt | Cases | p50 | Fully corrected | Word match | Length vs. input | Data |
 |---|---|---|---|---|---|---|---|---|
@@ -173,8 +173,10 @@ Run Default next to your run).
   differently: the M4 Pro and M4 Max give the same 80 steady answers, the M1 Pro and M2 the same 80, and across the two pairs only
   7 of 80 agree (Core's answers are shorter, so more suggestions are shown, 99% against 96%, and word overlap is higher). Latency
   differs too: the lighter Core model makes the 8-core-GPU M2 faster than the M4 Pro. Compare quality only within a variant, and
-  latency across variants only as "this Mac with its model". The context window is a property of the Mac, not of the variant:
-  4,096 tokens on the Apple M1 Pro, 8,192 on the Apple M2 with the same Core model.
+  latency across variants only as "this Mac with its model". The context window depends on the chip, not on the variant or the
+  macOS build: 4,096 tokens on the Apple M1 Pro, 8,192 on the Apple M2, both on macOS 27.2.1 (26B131) with the same Core model.
+  On that same build and model the Apple M2 is also much faster (steady p50 286 against 500 ms, model time 178 against 352 ms
+  fixed), so the speed gap between those two is the hardware too.
 
   | Variant | Machines | Steady fingerprint |
   |---|---|---|
