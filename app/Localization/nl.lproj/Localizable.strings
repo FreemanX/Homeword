@@ -243,3 +243,9 @@
 "Continuation" = "Vervolg";
 "Input" = "Invoer";
 "Output" = "Uitvoer";
+"Turn off macOS inline predictive text?" = "Regelgebonden voorspellende tekst van macOS uitschakelen?";
+"macOS shows its own inline suggestions in many apps. With both on you see two suggestions, and Tab may go to either. In Keyboard settings, open Text Input and turn off \"Show inline predictive text\"." = "macOS toont in veel apps eigen regelgebonden suggesties. Als beide aanstaan, zie je twee suggesties en kan Tab de ene of de andere overnemen. Open in de instellingen voor Toetsenbord het onderdeel Tekstinvoer en schakel ‘Toon regelgebonden voorspellende tekst’ uit.";
+"Open Keyboard Settings" = "Open instellingen voor Toetsenbord";
+"Not Now" = "Niet nu";
+"macOS inline predictions are on (click to open Keyboard settings)" = "Regelgebonden voorspellingen van macOS staan aan (klik om instellingen voor Toetsenbord te openen)";
+"macOS inline predictive text is on" = "Regelgebonden voorspellende tekst van macOS staat aan";

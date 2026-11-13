@@ -243,3 +243,9 @@
 "Continuation" = "Continuación";
 "Input" = "Entrada";
 "Output" = "Salida";
+"Turn off macOS inline predictive text?" = "¿Desactivar el texto predictivo integrado de macOS?";
+"macOS shows its own inline suggestions in many apps. With both on you see two suggestions, and Tab may go to either. In Keyboard settings, open Text Input and turn off \"Show inline predictive text\"." = "macOS muestra sus propias sugerencias integradas en muchas apps. Con ambas activadas, ves dos sugerencias y Tab puede aceptar una u otra. En los ajustes de Teclado, abre Entrada de texto y desactiva «Mostrar texto predictivo integrado».";
+"Open Keyboard Settings" = "Abrir los ajustes de Teclado";
+"Not Now" = "Ahora no";
+"macOS inline predictions are on (click to open Keyboard settings)" = "Las predicciones integradas de macOS están activadas (haz clic para abrir los ajustes de Teclado)";
+"macOS inline predictive text is on" = "El texto predictivo integrado de macOS está activado";

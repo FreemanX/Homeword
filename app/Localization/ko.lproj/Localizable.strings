@@ -243,3 +243,9 @@
 "Continuation" = "이어지는 글";
 "Input" = "입력";
 "Output" = "출력";
+"Turn off macOS inline predictive text?" = "macOS 인라인 자동 완성 텍스트를 끄시겠습니까?";
+"macOS shows its own inline suggestions in many apps. With both on you see two suggestions, and Tab may go to either. In Keyboard settings, open Text Input and turn off \"Show inline predictive text\"." = "macOS는 여러 앱에서 자체 인라인 제안을 표시합니다. 둘 다 켜져 있으면 제안이 두 개 표시되며, Tab 키가 둘 중 어느 쪽에 적용될지 알 수 없습니다. 키보드 설정에서 텍스트 입력을 열고 ‘인라인 자동 완성 텍스트 보기’를 끄십시오.";
+"Open Keyboard Settings" = "키보드 설정 열기";
+"Not Now" = "지금 안 함";
+"macOS inline predictions are on (click to open Keyboard settings)" = "macOS 인라인 자동 완성이 켜져 있음(클릭하여 키보드 설정 열기)";
+"macOS inline predictive text is on" = "macOS 인라인 자동 완성 텍스트가 켜져 있음";

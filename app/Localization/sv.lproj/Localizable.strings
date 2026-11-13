@@ -243,3 +243,9 @@
 "Continuation" = "Fortsättning";
 "Input" = "Indata";
 "Output" = "Utdata";
+"Turn off macOS inline predictive text?" = "Vill du stänga av inbäddade textförslag i macOS?";
+"macOS shows its own inline suggestions in many apps. With both on you see two suggestions, and Tab may go to either. In Keyboard settings, open Text Input and turn off \"Show inline predictive text\"." = "macOS visar egna inbäddade förslag i många appar. När båda är på ser du två förslag, och Tab kan godkänna vilket som helst av dem. Öppna Textinmatning i inställningarna för Tangentbord och stäng av ”Visa inbäddade textförslag”.";
+"Open Keyboard Settings" = "Öppna inställningar för Tangentbord";
+"Not Now" = "Inte nu";
+"macOS inline predictions are on (click to open Keyboard settings)" = "Inbäddade förslag i macOS är på (klicka för att öppna inställningar för Tangentbord)";
+"macOS inline predictive text is on" = "Inbäddade textförslag i macOS är på";

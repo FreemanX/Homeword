@@ -97,6 +97,9 @@ with one that works.
 
 **macOS inline predictions.** macOS shows its own inline predictive text in many apps. With both on you see two suggestions, and Tab
 may go to either. Turn off System Settings → Keyboard → Text Input → "Show inline predictive text", or Homeword's suggestions.
+While it is on (`NSAutomaticInlinePredictionEnabled` in the global preferences, on unless turned off), Homeword says so once at
+launch, and in the menu and Settings → General, each with a button that opens Keyboard settings; it never changes the setting
+itself.
 
 ## Where it works
 
@@ -234,6 +237,7 @@ open app/build/Homeword.app --args -show prompts -promptsSuite 1      # the buil
 open app/build/Homeword.app --args -show prompts -infoTip "How often"  # opens the ⓘ whose text starts with this
 open app/build/Homeword.app --args -show prompts -pairedHighlight 2    # line 3 of the paired editors shown as current
 open app/build/Homeword.app --args -show general -languagesSheet 1    # the list of languages you write in
+open app/build/Homeword.app --args -show general -inlinePrediction 1  # as if macOS inline predictive text were on
 open app/build/Homeword.app --args -demoProofread file.txt [-demoMode rewrite]   # the panel on a file's text; Replace is off
 ```
 

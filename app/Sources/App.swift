@@ -47,6 +47,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         Services.shared.onChange = { [weak self] in self?.updateIcon() }
         Services.shared.check()
         startTap(prompt: true)
+        remindInlinePrediction()
 
         // for development: `open Homeword.app --args -show prompts` opens a Settings tab, `-demoProofread file` runs the
         // proofread panel on a file's text (no selection, Replace disabled)
@@ -58,6 +59,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     func applicationWillTerminate(_ note: Notification) { Metrics.shared.flushKeys() }
+
+    /// Once: if macOS's own inline predictive text is on, explain the clash and offer its settings (the menu and Settings keep
+    /// showing it while it stays on).
+    private func remindInlinePrediction() {
+        guard InlinePrediction.isOn, !Pref.d.bool(forKey: Pref.inlinePredictionReminded) else { return }
+        Pref.d.set(true, forKey: Pref.inlinePredictionReminded)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+            let a = NSAlert()
+            a.messageText = L("Turn off macOS inline predictive text?")
+            a.informativeText = L("macOS shows its own inline suggestions in many apps. With both on you see two suggestions, and Tab may "
+                                  + "go to either. In Keyboard settings, open Text Input and turn off \"Show inline predictive text\".")
+            a.addButton(withTitle: L("Open Keyboard Settings"))
+            a.addButton(withTitle: L("Not Now"))
+            NSApp.activate()
+            if a.runModal() == .alertFirstButtonReturn { InlinePrediction.openSettings() }
+        }
+    }
 
     /// Reading fields needs the Accessibility permission, the keyboard tap needs it too (and on some systems Input Monitoring);
     /// until both work, check again every 2 s.
@@ -120,6 +138,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if axTrusted && !tapRunning {
             menu.addItem(NSMenuItem(title: L("Keyboard: blocked (click to allow in Input Monitoring)"), action: #selector(openInputMonitoring), keyEquivalent: ""))
         }
+        if Pref.d.bool(forKey: Pref.predictions) && InlinePrediction.isOn {
+            let item = NSMenuItem(title: L("macOS inline predictions are on (click to open Keyboard settings)"),
+                                  action: #selector(openKeyboardSettings), keyEquivalent: "")
+            item.image = NSImage(systemSymbolName: "exclamationmark.triangle.fill", accessibilityDescription: nil)
+            menu.addItem(item)
+        }
         let e = Services.shared
         let engine = e.state == .stopped ? (e.stoppedByUser ? L("Engine: stopped (click to start)") : L("Engine: stopped, starts when needed (click to start)"))
             : L("Engine: %@", e.state.title)
@@ -154,6 +178,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent")!)
     }
     @objc private func startServices() { Services.shared.start(force: true) }
+    @objc private func openKeyboardSettings() { InlinePrediction.openSettings() }
     @objc private func showSettingsGeneral() { showSettings(tab: "general") }
     @objc private func showStats() { showSettings(tab: "stats") }
 

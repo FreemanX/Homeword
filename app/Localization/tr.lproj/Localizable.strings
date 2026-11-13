@@ -243,3 +243,9 @@
 "Continuation" = "Devamı";
 "Input" = "Girdi";
 "Output" = "Çıktı";
+"Turn off macOS inline predictive text?" = "macOS satır içi tahmin metni kapatılsın mı?";
+"macOS shows its own inline suggestions in many apps. With both on you see two suggestions, and Tab may go to either. In Keyboard settings, open Text Input and turn off \"Show inline predictive text\"." = "macOS birçok uygulamada kendi satır içi önerilerini gösterir. İkisi de açıkken iki öneri görürsünüz ve Sekme tuşu bunlardan herhangi birini kabul edebilir. Klavye ayarlarında Metin Girişi’ni açın ve “Satır içi tahmin metnini göster” seçeneğini kapatın.";
+"Open Keyboard Settings" = "Klavye Ayarlarını Aç";
+"Not Now" = "Sonra";
+"macOS inline predictions are on (click to open Keyboard settings)" = "macOS satır içi tahminleri açık (Klavye ayarlarını açmak için tıklayın)";
+"macOS inline predictive text is on" = "macOS satır içi tahmin metni açık";

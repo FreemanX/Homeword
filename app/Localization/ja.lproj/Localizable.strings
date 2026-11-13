@@ -243,3 +243,9 @@
 "Continuation" = "続き";
 "Input" = "入力";
 "Output" = "出力";
+"Turn off macOS inline predictive text?" = "macOSのインライン予測テキストをオフにしますか？";
+"macOS shows its own inline suggestions in many apps. With both on you see two suggestions, and Tab may go to either. In Keyboard settings, open Text Input and turn off \"Show inline predictive text\"." = "macOSは多くのAppで独自のインライン候補を表示します。両方がオンだと候補が2つ表示され、Tabキーでどちらの候補が確定されるかわかりません。「キーボード」設定で「テキスト入力」を開き、「インライン予測テキストを表示」をオフにしてください。";
+"Open Keyboard Settings" = "キーボード設定を開く";
+"Not Now" = "今はしない";
+"macOS inline predictions are on (click to open Keyboard settings)" = "macOSのインライン予測がオンです（クリックしてキーボード設定を開く）";
+"macOS inline predictive text is on" = "macOSのインライン予測テキストがオンです";

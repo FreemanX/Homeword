@@ -243,3 +243,9 @@
 "Continuation" = "Fortsettelse";
 "Input" = "Inndata";
 "Output" = "Utdata";
+"Turn off macOS inline predictive text?" = "Vil du slå av integrerte skriveforslag i macOS?";
+"macOS shows its own inline suggestions in many apps. With both on you see two suggestions, and Tab may go to either. In Keyboard settings, open Text Input and turn off \"Show inline predictive text\"." = "macOS viser sine egne integrerte forslag i mange apper. Når begge er slått på, ser du to forslag, og Tab kan godta det ene eller det andre. Åpne Tekstskriving i innstillingene for Tastatur, og slå av «Vis integrerte skriveforslag».";
+"Open Keyboard Settings" = "Åpne innstillinger for Tastatur";
+"Not Now" = "Ikke nå";
+"macOS inline predictions are on (click to open Keyboard settings)" = "Integrerte forslag i macOS er slått på (klikk for å åpne innstillinger for Tastatur)";
+"macOS inline predictive text is on" = "Integrerte skriveforslag i macOS er slått på";

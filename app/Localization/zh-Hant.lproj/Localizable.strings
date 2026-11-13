@@ -243,3 +243,9 @@
 "Continuation" = "後續內容";
 "Input" = "輸入";
 "Output" = "輸出";
+"Turn off macOS inline predictive text?" = "要關閉 macOS 的內文預測字詞嗎？";
+"macOS shows its own inline suggestions in many apps. With both on you see two suggestions, and Tab may go to either. In Keyboard settings, open Text Input and turn off \"Show inline predictive text\"." = "macOS 會在許多 App 中顯示自己的內文建議。兩者都開啟時，你會看到兩個建議，按下 Tab 鍵可能會接受其中任一個。請在「鍵盤」設定中打開「文字輸入」，然後關閉「顯示內文預測字詞」。";
+"Open Keyboard Settings" = "打開鍵盤設定";
+"Not Now" = "稍後再說";
+"macOS inline predictions are on (click to open Keyboard settings)" = "macOS 內文預測已開啟（按一下來打開「鍵盤」設定）";
+"macOS inline predictive text is on" = "macOS 內文預測字詞已開啟";

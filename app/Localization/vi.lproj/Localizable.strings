@@ -243,3 +243,9 @@
 "Continuation" = "Phần tiếp theo";
 "Input" = "Đầu vào";
 "Output" = "Đầu ra";
+"Turn off macOS inline predictive text?" = "Tắt văn bản dự đoán trong dòng của macOS?";
+"macOS shows its own inline suggestions in many apps. With both on you see two suggestions, and Tab may go to either. In Keyboard settings, open Text Input and turn off \"Show inline predictive text\"." = "macOS hiển thị gợi ý trong dòng của riêng nó trong nhiều ứng dụng. Khi cả hai cùng bật, bạn sẽ thấy hai gợi ý và Tab có thể chọn một trong hai. Trong cài đặt Bàn phím, hãy mở Nhập văn bản và tắt “Hiển thị văn bản dự đoán trong dòng”.";
+"Open Keyboard Settings" = "Mở cài đặt Bàn phím";
+"Not Now" = "Để sau";
+"macOS inline predictions are on (click to open Keyboard settings)" = "Dự đoán trong dòng của macOS đang bật (bấm để mở cài đặt Bàn phím)";
+"macOS inline predictive text is on" = "Văn bản dự đoán trong dòng của macOS đang bật";

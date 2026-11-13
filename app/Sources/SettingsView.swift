@@ -160,6 +160,19 @@ struct LanguagesSheet: View {
     }
 }
 
+/// Whether macOS's own inline predictive text is on, checked again whenever the app comes back to the front (after a visit to
+/// System Settings).
+final class InlinePredictionModel: ObservableObject {
+    @Published var on = InlinePrediction.isOn
+    private var observer: Any?
+    init() {
+        observer = NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
+            self?.on = InlinePrediction.isOn
+        }
+    }
+    deinit { observer.map(NotificationCenter.default.removeObserver) }
+}
+
 final class ShortcutsModel: ObservableObject {
     let proofread = HotkeyRecorderModel(key: Pref.proofreadKey)
     let rewrite = HotkeyRecorderModel(key: Pref.rewriteKey)
@@ -176,10 +189,24 @@ struct GeneralTab: View {
     @StateObject private var keys = ShortcutsModel()
     @StateObject private var words = WordsModel()
     @StateObject private var languages = LanguagesModel()
+    @StateObject private var inline = InlinePredictionModel()
 
     var body: some View {
         Form {
             Section(L("Next-word suggestions")) {
+                if inline.on {
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack {
+                            Label(L("macOS inline predictive text is on"), systemImage: "exclamationmark.triangle.fill")
+                                .foregroundStyle(.orange)
+                            Spacer()
+                            Button(L("Open Keyboard Settings")) { InlinePrediction.openSettings() }
+                        }
+                        Text(L("macOS shows its own inline suggestions in many apps. With both on you see two suggestions, and Tab may "
+                               + "go to either. In Keyboard settings, open Text Input and turn off \"Show inline predictive text\"."))
+                            .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                    }
+                }
                 Toggle(L("Suggest while typing"), isOn: $predictions)
                 Picker(L("Pop-up position"), selection: $position) {
                     Text(L("Below the cursor")).tag("below")

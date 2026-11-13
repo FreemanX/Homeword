@@ -8,6 +8,7 @@ enum Pref {
     static let position = "popupPosition", chromium = "chromiumSupport", appStyles = "appStyles"
     static let proofreadKey = "proofreadShortcut", rewriteKey = "rewriteShortcut", stoppedByUser = "engineStoppedByUser"
     static let spaceAfterWord = "spaceAfterAcceptedWord", typedFallback = "typedKeysFallback"
+    static let inlinePredictionReminded = "inlinePredictionReminded"
 
     static func register() {
         UserDefaults.standard.register(defaults: [
@@ -60,6 +61,22 @@ enum Bundled {
         for case let rel as String in FileManager.default.enumerator(atPath: engine.path) ?? .init() {
             removexattr(engine.appendingPathComponent(rel).path, "com.apple.quarantine", XATTR_NOFOLLOW)
         }
+    }
+}
+
+/// macOS's own inline predictive text (System Settings → Keyboard → Text Input, macOS 14+). With it on, two suggestions show and
+/// Tab may go to either, so Homeword reminds the user to turn it off; the setting is the user's, so the app only opens the pane.
+enum InlinePrediction {
+    /// On unless the user turned it off (the key is absent until then).
+    static var isOn: Bool {
+        if let forced = UserDefaults(suiteName: UserDefaults.argumentDomain)?.object(forKey: "inlinePrediction") {
+            return (forced as? NSString)?.boolValue ?? false    // for development: `-inlinePrediction 1` shows the reminders
+        }
+        CFPreferencesAppSynchronize(kCFPreferencesAnyApplication)
+        return CFPreferencesCopyAppValue("NSAutomaticInlinePredictionEnabled" as CFString, kCFPreferencesAnyApplication) as? Bool ?? true
+    }
+    static func openSettings() {
+        NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.Keyboard-Settings.extension")!)
     }
 }
 
