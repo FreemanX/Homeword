@@ -195,7 +195,7 @@ A research prototype. Benchmark results (the best run per machine):
 |---|---|---|---|
 | Apple M4 Pro, 16-core GPU, 48 GB, macOS 27.2 | AFM 3 Core Advanced | 329 ms | 259 ms |
 | Apple M4 Max, 32-core GPU, 36 GB, macOS 27.0.1 | AFM 3 Core Advanced | 295 ms | 258 ms |
-| Apple M1 Pro, 14-core GPU, 16 GB, macOS 27.2 | AFM 3 Core | 517 ms | 354 ms |
+| Apple M1 Pro, 14-core GPU, 16 GB, macOS 27.2.1 | AFM 3 Core | 500 ms | 352 ms |
 | Apple M2, 8-core GPU, 16 GB, macOS 27.2.1 | AFM 3 Core | 286 ms | 256 ms |
 
 macOS runs a different version of the on-device model on M4 Macs ("Core Advanced") than on M1 and M2 Macs ("Core"): their
